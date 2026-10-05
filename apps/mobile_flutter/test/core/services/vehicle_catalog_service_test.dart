@@ -42,7 +42,10 @@ void main() {
             },
           ),
         );
-      final service = VehicleCatalogService(dio: dio);
+      final service = VehicleCatalogService(
+        dio: dio,
+        useBackendCatalog: false,
+      );
 
       await service.getModelsForMake('Land Rover');
 

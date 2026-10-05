@@ -38,6 +38,12 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Verify Flutter before deploy
+        env:
+          RUN_WEB_BUILDS: 0
+          RUN_MACOS_SMOKE: 0
+        run: bash scripts/verify_flutter_apps.sh
+
       - name: Build bundle
         env:
           INTERCITY_API_BASE_URL: ${{ secrets.INTERCITY_API_BASE_URL }}

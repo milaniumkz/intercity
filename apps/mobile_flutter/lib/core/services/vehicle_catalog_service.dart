@@ -4,44 +4,55 @@ import 'package:intercity_shared/intercity_shared.dart';
 import '../api/api_client.dart';
 
 class VehicleCatalogService {
-  VehicleCatalogService({Dio? dio})
-      : _dio = dio ??
+  VehicleCatalogService({
+    Dio? dio,
+    ApiClient? apiClient,
+    bool useBackendCatalog = true,
+  })  : _dio = dio ??
             Dio(
               BaseOptions(
                 baseUrl: 'https://vpic.nhtsa.dot.gov/api',
                 connectTimeout: const Duration(seconds: 15),
                 receiveTimeout: const Duration(seconds: 20),
               ),
-            );
+            ),
+        _apiClient = apiClient,
+        _useBackendCatalog = useBackendCatalog;
 
   static final VehicleCatalogService instance = VehicleCatalogService();
 
   final Dio _dio;
+  final ApiClient? _apiClient;
+  final bool _useBackendCatalog;
 
   List<Map<String, dynamic>>? _makesCache;
   final Map<String, List<String>> _modelsCache = <String, List<String>>{};
 
   Future<List<Map<String, dynamic>>> getMakes() async {
     if (_makesCache != null) return _makesCache!;
-    try {
-      final res = await ApiClient().get('/vehicle-catalog/makes');
-      final backendResults = (res.data as List? ?? const [])
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .map((e) => {
-                'id': e['id'],
-                'name': (e['name'] ?? '').toString().trim(),
-              })
-          .where((e) => (e['name'] as String).isNotEmpty)
-          .toList()
-        ..sort(
-          (a, b) => (a['name'] as String).compareTo(b['name'] as String),
+    if (_useBackendCatalog) {
+      try {
+        final res = await (_apiClient ?? ApiClient()).get(
+          '/vehicle-catalog/makes',
         );
-      if (backendResults.isNotEmpty) {
-        _makesCache = backendResults;
-        return backendResults;
-      }
-    } catch (_) {}
+        final backendResults = (res.data as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .map((e) => {
+                  'id': e['id'],
+                  'name': (e['name'] ?? '').toString().trim(),
+                })
+            .where((e) => (e['name'] as String).isNotEmpty)
+            .toList()
+          ..sort(
+            (a, b) => (a['name'] as String).compareTo(b['name'] as String),
+          );
+        if (backendResults.isNotEmpty) {
+          _makesCache = backendResults;
+          return backendResults;
+        }
+      } catch (_) {}
+    }
 
     final res = await _dio
         .get('/vehicles/GetMakesForVehicleType/car', queryParameters: {
@@ -71,22 +82,24 @@ class VehicleCatalogService {
     final cached = _modelsCache[key];
     if (cached != null) return cached;
 
-    try {
-      final res = await ApiClient().get(
-        '/vehicle-catalog/models',
-        queryParameters: {'make': makeName.trim()},
-      );
-      final backendResults = (res.data as List? ?? const [])
-          .map((e) => e.toString().trim())
-          .where((e) => e.isNotEmpty)
-          .toSet()
-          .toList()
-        ..sort();
-      if (backendResults.isNotEmpty) {
-        _modelsCache[key] = backendResults;
-        return backendResults;
-      }
-    } catch (_) {}
+    if (_useBackendCatalog) {
+      try {
+        final res = await (_apiClient ?? ApiClient()).get(
+          '/vehicle-catalog/models',
+          queryParameters: {'make': makeName.trim()},
+        );
+        final backendResults = (res.data as List? ?? const [])
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+        if (backendResults.isNotEmpty) {
+          _modelsCache[key] = backendResults;
+          return backendResults;
+        }
+      } catch (_) {}
+    }
 
     final encodedMake = Uri.encodeComponent(makeName.trim());
 

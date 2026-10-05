@@ -289,13 +289,15 @@ void main() {
         const MaterialApp(
           home: Scaffold(
             body: OrderScreen(
+              routeStage: 'mode',
               enableLiveMap: false,
               autoLocateOnStart: false,
             ),
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
 
       expect(find.text('ЗАКАЗ'), findsOneWidget);
       expect(find.text('Город'), findsOneWidget);
@@ -329,13 +331,15 @@ void main() {
         const MaterialApp(
           home: Scaffold(
             body: OrderScreen(
+              routeStage: 'mode',
               enableLiveMap: false,
               autoLocateOnStart: false,
             ),
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
 
       final fixedMode = find.text('Город');
       final auctionMode = find.text('Аукцион');
