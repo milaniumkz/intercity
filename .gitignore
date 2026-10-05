@@ -98,3 +98,5 @@ tmp-order-mobile.png
 !/firebase.mobile_web.json
 
 *.pfx
+
+.tmp/
