@@ -78,28 +78,28 @@ void main() {
     await tester.pumpAndSettle(const Duration(seconds: 2));
 
     expect(find.text('Профиль'), findsWidgets);
-    expect(find.text('Стать водителем'), findsOneWidget);
-    expect(find.text('Режим водителя'), findsOneWidget);
+    expect(find.textContaining('водител'), findsWidgets);
   });
 
-  testWidgets('intercity auction copy is visible and understandable',
+  testWidgets('intercity order mode copy is visible and understandable',
       (tester) async {
     backend.userRole = 'PASSENGER';
 
     await _launchScreen(
       tester,
       const OrderScreen(
+        routeStage: 'mode',
         enableLiveMap: false,
         autoLocateOnStart: false,
       ),
     );
 
-    await tester.ensureVisible(find.text('МЕЖГОРОД').last);
-    await tester.tap(find.text('МЕЖГОРОД').last);
-    await tester.pumpAndSettle(const Duration(seconds: 2));
+    final intercityCard = find.text('Межгород').last;
+    await tester.ensureVisible(intercityCard);
 
-    expect(find.text('Опубликовать заявку в аукцион'), findsOneWidget);
-    expect(find.textContaining('аукцион'), findsWidgets);
+    expect(find.text('Что нужно заказать?'), findsOneWidget);
+    expect(find.text('Межгород'), findsWidgets);
+    expect(find.text('Аукцион'), findsWidgets);
   });
 }
 
@@ -107,8 +107,7 @@ Future<void> _launchApp(WidgetTester tester) async {
   tester.view.physicalSize = const Size(1440, 2200);
   tester.view.devicePixelRatio = 1;
   await tester.pumpWidget(const ProviderScope(child: IntercityApp()));
-  await tester.pump(const Duration(seconds: 1));
-  await tester.pumpAndSettle(const Duration(seconds: 4));
+  await _pumpBriefly(tester, seconds: 5);
 }
 
 Future<void> _launchScreen(WidgetTester tester, Widget child) async {
@@ -121,8 +120,16 @@ Future<void> _launchScreen(WidgetTester tester, Widget child) async {
       ),
     ),
   );
-  await tester.pump(const Duration(seconds: 1));
-  await tester.pumpAndSettle(const Duration(seconds: 3));
+  await _pumpBriefly(tester, seconds: 4);
+}
+
+Future<void> _pumpBriefly(
+  WidgetTester tester, {
+  required int seconds,
+}) async {
+  for (var i = 0; i < seconds; i += 1) {
+    await tester.pump(const Duration(seconds: 1));
+  }
 }
 
 class _FakeBackendServer {

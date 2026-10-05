@@ -2178,17 +2178,22 @@ class _SideNavigation extends StatelessWidget {
                   final selected = currentRoute == item.$1;
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(18)),
-                      selected: selected,
-                      selectedTileColor: const Color(0xFF123B5B),
-                      iconColor: Colors.white,
-                      textColor: Colors.white,
-                      selectedColor: Colors.white,
-                      leading: Icon(item.$3),
-                      title: Text(item.$2),
-                      onTap: () => onNavigate(item.$1),
+                    child: Material(
+                      color: Colors.transparent,
+                      borderRadius: BorderRadius.circular(18),
+                      clipBehavior: Clip.antiAlias,
+                      child: ListTile(
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(18)),
+                        selected: selected,
+                        selectedTileColor: const Color(0xFF123B5B),
+                        iconColor: Colors.white,
+                        textColor: Colors.white,
+                        selectedColor: Colors.white,
+                        leading: Icon(item.$3),
+                        title: Text(item.$2),
+                        onTap: () => onNavigate(item.$1),
+                      ),
                     ),
                   );
                 }).toList(),
