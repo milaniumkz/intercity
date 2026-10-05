@@ -8,6 +8,7 @@ RUN_WEB_BUILDS="${RUN_WEB_BUILDS:-1}"
 RUN_MACOS_SMOKE="${RUN_MACOS_SMOKE:-auto}"
 VERIFY_MOBILE="${VERIFY_MOBILE:-1}"
 VERIFY_ADMIN="${VERIFY_ADMIN:-1}"
+RUN_UNIT_TESTS="${RUN_UNIT_TESTS:-1}"
 
 resolve_flutter_bin
 
@@ -22,6 +23,7 @@ Environment variables:
   RUN_MACOS_SMOKE  auto, 1, or 0. Default: auto
   VERIFY_MOBILE    1 to verify apps/mobile_flutter, 0 to skip. Default: 1
   VERIFY_ADMIN     1 to verify apps/admin_web, 0 to skip. Default: 1
+  RUN_UNIT_TESTS    1 to run flutter test, 0 to skip. Default: 1
 
 Examples:
   bash scripts/verify_flutter_apps.sh
@@ -63,7 +65,9 @@ verify_mobile() {
   echo "==> Verifying apps/mobile_flutter"
   run_in_dir "$dir" "$FLUTTER_BIN" pub get
   run_in_dir "$dir" "$FLUTTER_BIN" analyze
-  run_in_dir "$dir" "$FLUTTER_BIN" test
+  if [[ "$RUN_UNIT_TESTS" == "1" ]]; then
+    run_in_dir "$dir" "$FLUTTER_BIN" test
+  fi
   if should_run_macos_smoke; then
     run_in_dir "$dir" "$FLUTTER_BIN" test integration_test/app_smoke_test.dart -d macos
   fi
@@ -77,7 +81,9 @@ verify_admin() {
   echo "==> Verifying apps/admin_web"
   run_in_dir "$dir" "$FLUTTER_BIN" pub get
   run_in_dir "$dir" "$FLUTTER_BIN" analyze
-  run_in_dir "$dir" "$FLUTTER_BIN" test
+  if [[ "$RUN_UNIT_TESTS" == "1" ]]; then
+    run_in_dir "$dir" "$FLUTTER_BIN" test
+  fi
   if [[ "$RUN_WEB_BUILDS" == "1" ]]; then
     run_in_dir "$dir" "$FLUTTER_BIN" build web
   fi

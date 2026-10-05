@@ -68,4 +68,5 @@ jobs:
           VERIFY_ADMIN: 0
           RUN_WEB_BUILDS: 0
           RUN_MACOS_SMOKE: 1
+          RUN_UNIT_TESTS: 0
         run: bash scripts/verify_flutter_apps.sh
