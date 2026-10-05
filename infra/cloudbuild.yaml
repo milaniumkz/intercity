@@ -1,0 +1,41 @@
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/intercity-backend:$COMMIT_SHA', '-f', 'backend/Dockerfile.cloudrun', '.']
+
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/intercity-backend:$COMMIT_SHA']
+
+  # Deploy container image to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'intercity-backend'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/intercity-backend:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--set-env-vars'
+      - 'DATABASE_URL=$_DATABASE_URL,JWT_SECRET=$_JWT_SECRET,JWT_REFRESH_SECRET=$_JWT_REFRESH_SECRET,OSRM_URL=$_OSRM_URL,NOMINATIM_URL=$_NOMINATIM_URL,YANDEX_GEOCODER_API_KEY=$_YANDEX_GEOCODER_API_KEY,KASSA24_FUNCTION_URL=$_KASSA24_FUNCTION_URL,CORS_ORIGINS=$_CORS_ORIGINS'
+
+images:
+  - 'gcr.io/$PROJECT_ID/intercity-backend:$COMMIT_SHA'
+
+substitutions:
+  _DATABASE_URL: ''
+  _JWT_SECRET: 'change-me-in-production'
+  _JWT_REFRESH_SECRET: 'change-me-in-production'
+  _OSRM_URL: 'http://router.project-osrm.org'
+  _NOMINATIM_URL: 'https://nominatim.openstreetmap.org'
+  _YANDEX_GEOCODER_API_KEY: ''
+  _KASSA24_FUNCTION_URL: 'https://us-central1-inter-city-pkzpps.cloudfunctions.net/kassa24'
+  _CORS_ORIGINS: '*'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

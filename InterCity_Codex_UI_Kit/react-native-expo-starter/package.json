@@ -1,0 +1,27 @@
+{
+  "name": "intercity-ui-starter",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo start --ios",
+    "android": "expo start --android",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-navigation/bottom-tabs": "latest",
+    "@react-navigation/native": "latest",
+    "@react-navigation/native-stack": "latest",
+    "expo": "latest",
+    "expo-linear-gradient": "latest",
+    "react": "latest",
+    "react-native": "latest",
+    "react-native-safe-area-context": "latest",
+    "react-native-screens": "latest"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "@types/react": "latest"
+  }
+}

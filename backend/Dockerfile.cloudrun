@@ -1,0 +1,27 @@
+# Cloud Run optimized Dockerfile
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install all dependencies (including dev for building)
+COPY package*.json ./
+RUN npm ci
+
+# Copy Prisma schema
+COPY prisma ./prisma
+
+# Generate Prisma client
+RUN npx prisma generate
+
+# Copy source
+COPY . .
+
+# Build the application
+RUN npm run build
+
+ENV NODE_ENV=production
+ENV PORT=8080
+
+EXPOSE 8080
+
+CMD ["node", "dist/main.js"]

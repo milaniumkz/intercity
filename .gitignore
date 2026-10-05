@@ -1,0 +1,100 @@
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+.firebase/
+
+# Flutter / Dart local state
+**/.dart_tool/
+**/.flutter-plugins-dependencies
+**/.pub/
+**/.pub-cache/
+**/build/
+**/coverage/
+apps/mobile_flutter/web_deploy/
+apps/admin_web/web_deploy/
+infra/vps/web/
+
+# Android local machine state
+**/android/local.properties
+**/android/key.properties
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+
+# Apple / CocoaPods generated artifacts
+**/.build/
+**/.swiftpm/
+**/Pods/
+
+# Generated deploy artifacts should be rebuilt, not hand-edited in VCS.
+backend/node_modules/
+backend/dist/
+node_modules/
+dist/
+
+# Secrets and local runtime config
+.env
+.env.*
+!.env.example
+!**/.env.example
+infra/vps/.env
+infra/vps/.env.tmp
+*.pem
+*.key
+*.p8
+*credentials*
+firebase-service-account*.json
+
+# Runtime data
+uploads/
+backend/uploads/
+postgres_data/
+*.sqlite
+*.db
+
+# Local build/release output and archives
+output/
+releases/
+*.apk
+*.aab
+*.ipa
+*.xcarchive
+*.tar
+*.tar.gz
+*.zip
+Архив.zip
+
+# Local QA/browser captures
+.playwright-cli/
+.playwright-mcp/
+qa_screenshots/
+browser-*.png
+intercity_*_real*.png
+intercity_*_latest*.png
+startup-*.png
+login-*.png
+post-startup*.png
+current-route*.png
+passenger-order*.png
+tmp-order-mobile.png
+*.trace
+
+# Root-level QA screenshots/log snapshots from local browser work.
+/*.png
+/*.jpg
+/*.json
+/*.txt
+/*.md
+!/README.md
+!/AGENTS.md
+!/adaptive-icon.png
+!/app_launcher_icon.png
+!/splash.jpg
+!/firebase.admin_web.json
+!/firebase.mobile_web.json
+
+*.pfx

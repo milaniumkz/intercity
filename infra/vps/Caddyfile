@@ -1,0 +1,38 @@
+api.intercity.89-207-255-27.sslip.io {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy backend:3000
+	}
+
+	handle /uploads/* {
+		reverse_proxy backend:3000
+	}
+
+	handle /health {
+		respond "ok" 200
+	}
+
+	handle {
+		respond "INTERCITY API" 200
+	}
+}
+
+intercity.89-207-255-27.sslip.io {
+	encode gzip
+	root * /srv/intercity/mobile
+	header {
+		Cache-Control "no-cache, no-store, max-age=0, must-revalidate"
+		Pragma "no-cache"
+		Expires "0"
+	}
+	try_files {path} /index.html
+	file_server
+}
+
+admin.intercity.89-207-255-27.sslip.io {
+	encode gzip
+	root * /srv/intercity/admin
+	try_files {path} /index.html
+	file_server
+}

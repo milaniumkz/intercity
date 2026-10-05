@@ -1,0 +1,107 @@
+name: Mobile Android Release
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mobile_android_release.yml'
+      - 'apps/mobile_flutter/**'
+      - 'packages/**'
+      - 'scripts/**'
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - '.github/workflows/mobile_android_release.yml'
+      - 'apps/mobile_flutter/**'
+      - 'packages/**'
+      - 'scripts/**'
+  workflow_dispatch:
+    inputs:
+      release_target:
+        description: Android artifact type
+        required: true
+        default: appbundle
+        type: choice
+        options:
+          - appbundle
+          - apk
+
+jobs:
+  android-release-preflight:
+    name: Android release preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Android release preflight
+        env:
+          ALLOW_MISSING_SIGNING: 1
+        run: bash scripts/verify_release_readiness.sh
+
+  android-release-build:
+    name: Android release build
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Assert release secrets are configured
+        env:
+          INTERCITY_ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.INTERCITY_ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          INTERCITY_ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.INTERCITY_ANDROID_RELEASE_STORE_PASSWORD }}
+          INTERCITY_ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.INTERCITY_ANDROID_RELEASE_KEY_ALIAS }}
+          INTERCITY_ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.INTERCITY_ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          missing=0
+          for key in \
+            INTERCITY_ANDROID_RELEASE_KEYSTORE_BASE64 \
+            INTERCITY_ANDROID_RELEASE_STORE_PASSWORD \
+            INTERCITY_ANDROID_RELEASE_KEY_ALIAS \
+            INTERCITY_ANDROID_RELEASE_KEY_PASSWORD; do
+            if [ -z "${!key:-}" ]; then
+              echo "Missing required secret: $key" >&2
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Build Android release artifact
+        env:
+          FLUTTER_BIN: flutter
+          RELEASE_TARGET: ${{ inputs.release_target }}
+          INTERCITY_ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.INTERCITY_ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          INTERCITY_ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.INTERCITY_ANDROID_RELEASE_STORE_PASSWORD }}
+          INTERCITY_ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.INTERCITY_ANDROID_RELEASE_KEY_ALIAS }}
+          INTERCITY_ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.INTERCITY_ANDROID_RELEASE_KEY_PASSWORD }}
+        run: bash scripts/build_mobile_android_release.sh
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-android-${{ inputs.release_target }}
+          path: |
+            apps/mobile_flutter/build/app/outputs/bundle/release/*.aab
+            apps/mobile_flutter/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error

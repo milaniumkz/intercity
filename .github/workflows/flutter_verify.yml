@@ -1,0 +1,71 @@
+name: Flutter Verify
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/flutter_verify.yml'
+      - 'apps/mobile_flutter/**'
+      - 'apps/admin_web/**'
+      - 'packages/intercity_shared/**'
+      - 'scripts/**'
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - '.github/workflows/flutter_verify.yml'
+      - 'apps/mobile_flutter/**'
+      - 'apps/admin_web/**'
+      - 'packages/intercity_shared/**'
+      - 'scripts/**'
+
+jobs:
+  flutter-verify:
+    name: Analyze, test, and web-build both apps
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Print Flutter version
+        run: flutter --version
+
+      - name: Verify Flutter apps
+        env:
+          FLUTTER_BIN: flutter
+          RUN_MACOS_SMOKE: 0
+        run: bash scripts/verify_flutter_apps.sh
+
+  mobile-smoke-macos:
+    name: macOS smoke test for mobile app
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Enable macOS desktop
+        run: flutter config --enable-macos-desktop
+
+      - name: Run mobile macOS smoke test
+        env:
+          FLUTTER_BIN: flutter
+          VERIFY_ADMIN: 0
+          RUN_WEB_BUILDS: 0
+          RUN_MACOS_SMOKE: 1
+        run: bash scripts/verify_flutter_apps.sh

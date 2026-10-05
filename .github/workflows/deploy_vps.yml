@@ -1,0 +1,101 @@
+name: Deploy VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy
+        required: false
+        default: main
+
+concurrency:
+  group: intercity-production-vps
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build release bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build bundle
+        env:
+          INTERCITY_API_BASE_URL: ${{ secrets.INTERCITY_API_BASE_URL }}
+          INTERCITY_FIREBASE_WEB_VAPID_KEY: ${{ secrets.INTERCITY_FIREBASE_WEB_VAPID_KEY }}
+        run: |
+          test -n "$INTERCITY_API_BASE_URL"
+          bash scripts/build_vps_release_bundle.sh
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: intercity-vps-${{ github.sha }}
+          path: |
+            output/intercity-vps-${{ github.sha }}.tar.gz
+            output/intercity-vps-${{ github.sha }}.tar.gz.sha256
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy to VPS
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: intercity-vps-${{ github.sha }}
+          path: output
+
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+      - name: Copy and deploy
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          bundle="output/intercity-vps-${GITHUB_SHA}.tar.gz"
+          scp "$bundle" "scripts/vps_deploy_release.sh" "$VPS_USER@$VPS_HOST:/tmp/"
+          ssh "$VPS_USER@$VPS_HOST" "bash /tmp/vps_deploy_release.sh /tmp/$(basename "$bundle") '$GITHUB_SHA'"
+
+      - name: Health check
+        env:
+          INTERCITY_API_HEALTH_URL: ${{ secrets.INTERCITY_API_HEALTH_URL }}
+        run: |
+          curl -fsS "${INTERCITY_API_HEALTH_URL:-https://api.intercity.89-207-255-27.sslip.io/health}"

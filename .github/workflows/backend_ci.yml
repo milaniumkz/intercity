@@ -1,0 +1,35 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/backend_ci.yml'
+      - 'backend/**'
+      - 'infra/**'
+      - 'scripts/**'
+  push:
+    branches: [main, master]
+    paths:
+      - '.github/workflows/backend_ci.yml'
+      - 'backend/**'
+      - 'infra/**'
+      - 'scripts/**'
+
+jobs:
+  backend:
+    name: Build backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install and build
+        working-directory: backend
+        run: |
+          npm ci
+          npx prisma generate
+          npm run build

@@ -1,0 +1,52 @@
+[
+  {
+    "id": 1,
+    "file": "assets/design-boards/01_start_auth_light_dark.png",
+    "description": "Старт, онбординг, выбор роли, вход и SMS. Светлая и тёмная тема."
+  },
+  {
+    "id": 2,
+    "file": "assets/design-boards/02_passenger_home_city_start.png",
+    "description": "Главная пассажира, выбор режима город, поиск адреса, выбор точки, начало fixed-заказа."
+  },
+  {
+    "id": 3,
+    "file": "assets/design-boards/03_city_fixed_fare_flow.png",
+    "description": "Город fixed: маршрут, цена, класс авто, оплата, подтверждение, поиск водителя."
+  },
+  {
+    "id": 4,
+    "file": "assets/design-boards/04_city_auction_flow.png",
+    "description": "Город аукцион: создание, ручной адрес, ожидание, предложения, подтверждение."
+  },
+  {
+    "id": 5,
+    "file": "assets/design-boards/05_intercity_passenger_flow.png",
+    "description": "Межгород пассажира: заявка, опции, ручной адрес, ожидание, детали поездки."
+  },
+  {
+    "id": 6,
+    "file": "assets/design-boards/06_passenger_active_history_bonus_profile.png",
+    "description": "Активная поездка, межгород в пути, мои поездки, бонусы, профиль пассажира."
+  },
+  {
+    "id": 7,
+    "file": "assets/design-boards/07_driver_onboarding_home_orders.png",
+    "description": "Регистрация водителя, авто, документы, главный экран, список заказов."
+  },
+  {
+    "id": 8,
+    "file": "assets/design-boards/08_driver_city_order_flow.png",
+    "description": "Водитель: fixed-заказ, auction-заказ, предложение цены, пассажир выбрал, активная поездка."
+  },
+  {
+    "id": 9,
+    "file": "assets/design-boards/09_driver_intercity_wallet_flow.png",
+    "description": "Водитель межгород: доступные заявки, детали, списание комиссии, недостаточно средств, кошелёк."
+  },
+  {
+    "id": 10,
+    "file": "assets/design-boards/10_common_utility_states_settings.png",
+    "description": "Поиск адреса, адрес не найден, нет интернета, поддержка, настройки и тема."
+  }
+]

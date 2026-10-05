@@ -1,0 +1,86 @@
+export const interCityTokens = {
+  brand: {
+    name: 'InterCity',
+    primary: '#7C2DFF',
+    secondary: '#9D5CFF',
+    deep: '#3B0A6D',
+  },
+  light: {
+    background: {
+      primary: '#F8F6FF',
+      secondary: '#FFFFFF',
+      elevated: '#FFFFFF',
+      soft: '#EFE9FF',
+    },
+    text: {
+      primary: '#111322',
+      secondary: '#5D6073',
+      tertiary: '#8B8FA3',
+      inverse: '#FFFFFF',
+    },
+    accent: {
+      primary: '#7C2DFF',
+      secondary: '#9D5CFF',
+      deep: '#3B0A6D',
+      soft: '#EFE3FF',
+    },
+    border: {
+      light: '#E3DCF3',
+      medium: '#CBBCE8',
+    },
+  },
+  dark: {
+    background: {
+      primary: '#090814',
+      secondary: '#11101D',
+      elevated: '#171426',
+      soft: '#201735',
+    },
+    text: {
+      primary: '#F8F4FF',
+      secondary: '#C9BFE0',
+      tertiary: '#8D83A3',
+      inverse: '#090814',
+    },
+    accent: {
+      primary: '#8B35FF',
+      secondary: '#B17AFF',
+      deep: '#4A1388',
+      soft: '#2B1748',
+    },
+    border: {
+      light: '#2B2640',
+      medium: '#3B3358',
+    },
+  },
+  status: {
+    success: '#23A36B',
+    warning: '#D99A1E',
+    danger: '#E24A5A',
+    info: '#4C8DFF',
+  },
+  radius: {
+    sm: 10,
+    md: 14,
+    lg: 16,
+    card: 20,
+    sheet: 28,
+    pill: 999,
+  },
+  spacing: {
+    xs: 4,
+    sm: 8,
+    md: 12,
+    lg: 16,
+    xl: 24,
+    xxl: 32,
+    xxxl: 40,
+  },
+  button: {
+    height: 54,
+    radius: 16,
+  },
+} as const;
+
+export type InterCityThemeMode = 'light' | 'dark';
+export type InterCityTheme = typeof interCityTokens.light;

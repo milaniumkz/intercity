@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "176647550231",
+    "project_id": "inter-city-pkzpps",
+    "storage_bucket": "inter-city-pkzpps.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:176647550231:android:fcc297a0ecdb070c6d7352",
+        "android_client_info": {
+          "package_name": "com.milanium.intercity"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC1DhcnvHMItFX_pxJfBXG-geQTmhd3QHw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,7 @@
+name: intercity_shared
+description: Shared INTERCITY configuration and value objects.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
