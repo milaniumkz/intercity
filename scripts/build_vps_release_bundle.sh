@@ -32,7 +32,7 @@ git cat-file -e "$BASE_COMMIT_SHA^{commit}" 2>/dev/null || git fetch --depth=1 o
 
 echo "==> Backend build"
 (cd "$ROOT_DIR/backend" && npm ci && npm run build)
-(cd "$ROOT_DIR/backend" && node --test test/ride-currency.test.js)
+(cd "$ROOT_DIR/backend" && node --test test/*.test.js)
 
 echo "==> Mobile web build"
 OUTPUT_DIR="$ROOT_DIR/infra/vps/web/mobile" \

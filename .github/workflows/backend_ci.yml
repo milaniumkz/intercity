@@ -33,3 +33,4 @@ jobs:
           npm ci
           npx prisma generate
           npm run build
+          node --test test/*.test.js

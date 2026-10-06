@@ -1,4 +1,5 @@
 import { moneyField, bonusField } from '../common/currency';
+import { requireNoActivePassengerOrder } from '../common/active-passenger-order';
 import { GeoService } from '../geo/geo.service';
 import {
   BadRequestException,
@@ -210,7 +211,9 @@ export class IntercityService {
         : 0;
 
     const currency = await this.geoService.departureCurrency(fromLat, fromLng, data.fromCity);
-    return this.prisma.intercityRequest.create({
+    return this.prisma.$transaction(async (tx) => {
+      await requireNoActivePassengerOrder(tx, userId);
+      return tx.intercityRequest.create({
       data: {
         passengerId: userId,
         currency,
@@ -240,6 +243,7 @@ export class IntercityService {
         recipientContact: this.coerceNonEmptyString(data.recipientContact),
         status: "OPEN",
       },
+      });
     });
   }
 

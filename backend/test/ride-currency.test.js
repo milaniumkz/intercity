@@ -45,7 +45,8 @@ test('city preview uses only configured city rates and returns its currency', as
 });
 
 test('intercity requests preserve departure currency including cross-border trips', async () => {
-    const service = new IntercityService({ intercityRequest: { create: async ({ data }) => data } }, {
+    const tx = { $queryRaw: async () => [{ id: 'passenger' }], order: { findFirst: async () => null }, intercityRequest: { findFirst: async () => null, create: async ({ data }) => data } };
+    const service = new IntercityService({ $transaction: async run => run(tx) }, {
         departureCurrency: async (_lat, _lng, city) => city === 'Москва' ? 'RUB' : 'KZT',
     });
     const date = new Date(Date.now() + 86400000).toISOString();
@@ -153,8 +154,12 @@ test('local database stores city rates and immutable order/request currencies', 
         assert.equal(order.currency, 'RUB');
         assert.equal(order.price, 500);
         const intercity = new IntercityService(prisma, geo);
+        await assert.rejects(intercity.createRequest(user.id, { fromCity: ru.name, toCity: kz.name, price: 2000, date: new Date(Date.now() + 86400000).toISOString() }), /активный заказ/);
+        await orders.cancelOrder(order.id, user.id);
         const request = await intercity.createRequest(user.id, { fromCity: ru.name, toCity: kz.name, price: 2000, date: new Date(Date.now() + 86400000).toISOString() });
         assert.equal(request.currency, 'RUB');
+        await assert.rejects(orders.createOrder(user.id, dto), /активный заказ/);
+        await intercity.cancelRequest(user.id, request.id);
         const { WalletService } = require('../dist/src/wallet/wallet.service');
         const wallets = new WalletService(prisma);
         const original = await prisma.wallet.create({ data: { userId: user.id, money: 7000, bonus: 8000, moneyRub: 2000, bonusRub: 3000 } });
@@ -178,6 +183,7 @@ test('local database stores city rates and immutable order/request currencies', 
         await prisma.$transaction(tx => intercity.refundPassengerBonusForCancelledRequest(tx, user.id, bonusRequest.id));
         await prisma.$transaction(tx => intercity.refundPassengerBonusForCancelledRequest(tx, user.id, bonusRequest.id));
         assert.equal((await wallets.getWallet(user.id, 'RUB')).bonus, 2900);
+        await intercity.cancelRequest(user.id, bonusRequest.id);
         await prisma.driverProfile.create({ data: { userId: user.id } });
         const auctionDriver = await prisma.driverProfile.create({ data: { userId: recipient.id } });
         const auction = await orders.createOrder(user.id, { ...dto, requestType: 'CITY_AUCTION', paymentMethod: 'BONUSES' });
@@ -188,6 +194,18 @@ test('local database stores city rates and immutable order/request currencies', 
         await assert.rejects(orders.acceptOrderOffer(offer.id, user.id));
         await orders.cancelOrder(auction.id, user.id);
         assert.equal((await wallets.getWallet(user.id, 'RUB')).bonus, 2900);
+        const createCity = () => orders.createOrder(user.id, dto);
+        const createIntercity = () => intercity.createRequest(user.id, { fromCity: ru.name, toCity: kz.name, price: 2000, date: new Date(Date.now() + 86400000).toISOString() });
+        for (const creators of [[createCity, createCity], [createCity, createIntercity], [createIntercity, createIntercity]]) {
+            const outcomes = await Promise.allSettled(creators.map(create => create()));
+            assert.equal(outcomes.filter(x => x.status === 'fulfilled').length, 1);
+            assert.equal(outcomes.find(x => x.status === 'rejected').reason.getStatus(), 409);
+            const cityOrders = await prisma.order.findMany({ where: { passengerId: user.id, status: { notIn: ['COMPLETED', 'CANCELLED'] } } });
+            const requests = await prisma.intercityRequest.findMany({ where: { passengerId: user.id, status: { notIn: ['COMPLETED', 'CANCELLED'] } } });
+            assert.equal(cityOrders.length + requests.length, 1);
+            for (const item of cityOrders) await orders.cancelOrder(item.id, user.id);
+            for (const item of requests) await intercity.cancelRequest(user.id, item.id);
+        }
         const topup = await wallets.createTopupRequest(user.id, { amount: 400, currency: 'RUB' }, 'DRIVER');
         assert.equal(topup.provider, 'MANUAL');
         assert.equal((await wallets.handleTopupPaymentCallback({ topupRequestId: topup.id, paid: true })).ignored, true);
