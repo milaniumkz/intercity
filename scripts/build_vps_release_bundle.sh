@@ -31,6 +31,9 @@ print(base)
 PYBASE
 )}"
 git cat-file -e "$BASE_COMMIT_SHA^{commit}" 2>/dev/null || git fetch --depth=1 origin "$BASE_COMMIT_SHA"
+if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+  git fetch --unshallow origin
+fi
 git merge-base --is-ancestor "$BASE_COMMIT_SHA" HEAD || {
   echo 'Published production commit is not an ancestor of this release' >&2
   exit 1
