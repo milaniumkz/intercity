@@ -1301,6 +1301,25 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
                 TextField(
                     controller: _keyCtrl,
                     decoration: const InputDecoration(labelText: 'Key')),
+                const SizedBox(height: 8),
+                Wrap(spacing: 8, children: [
+                  for (final preset in const {
+                    'referralCommissionPercent': 'Бонус от комиссии, %',
+                    'appStoreUrl': 'Ссылка App Store',
+                    'googlePlayUrl': 'Ссылка Google Play',
+                  }.entries)
+                    ActionChip(
+                        label: Text(preset.value),
+                        onPressed: () {
+                          _keyCtrl.text = preset.key;
+                          final stored = _settings
+                              .whereType<Map>()
+                              .where((item) => item['key'] == preset.key);
+                          _valueCtrl.text = stored.isEmpty
+                              ? ''
+                              : stored.first['value'].toString();
+                        }),
+                ]),
                 const SizedBox(height: 12),
                 TextField(
                     controller: _valueCtrl,

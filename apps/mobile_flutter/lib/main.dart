@@ -79,7 +79,15 @@ GoRouter createRouter({
           builder: (context, state) => RegisterPage(
             role: state.pathParameters['role'] ?? 'passenger',
             referralCode: state.uri.queryParameters['ref'],
+            downloadAfterRegistration:
+                state.uri.queryParameters['download'] == '1',
           ),
+        ),
+        GoRoute(
+          path: '/ref/:code/download',
+          builder: (context, state) => ReferralLandingPage(
+              referralCode: state.pathParameters['code'] ?? '',
+              downloadOnly: true),
         ),
         GoRoute(
           path: '/ref/:code',

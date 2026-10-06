@@ -1,3 +1,4 @@
+import { creditRideReferrals } from '../common/referral-bonus';
 import { moneyField, bonusField } from '../common/currency';
 import { requireNoActivePassengerOrder } from '../common/active-passenger-order';
 import { GeoService } from '../geo/geo.service';
@@ -511,11 +512,18 @@ export class IntercityService {
 
     if (target === "COMPLETED") {
       return this.prisma.$transaction(async (tx) => {
+        const changed = await tx.intercityRequest.updateMany({ where: { id: requestId, status: request.status }, data: { status: target } });
+        if (changed.count !== 1) return tx.intercityRequest.findUniqueOrThrow({ where: { id: requestId } });
         await this.chargeDriverForCompletedIntercityRequest(
           tx,
           request,
           driverUserId,
         );
+        await creditRideReferrals(tx, {
+          id: requestId, currency: request.currency,
+          commissionAmount: await this.getIntercityAcceptedRequestFee(request, driverUserId),
+          passengerId: request.passengerId, driverUserId, intercity: true,
+        });
         return tx.intercityRequest.update({
           where: { id: requestId },
           data: { status: target },

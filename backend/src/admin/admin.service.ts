@@ -605,6 +605,16 @@ export class AdminService {
     }
 
     async setSetting(key: string, value: string) {
+        if (key === 'referralCommissionPercent') {
+            const percent = Number(value);
+            if (!value.trim() || !Number.isFinite(percent) || percent < 0 || percent > 100) throw new BadRequestException('Referral commission percentage must be between 0 and 100');
+        }
+        if (['appStoreUrl', 'googlePlayUrl'].includes(key) && value.trim()) {
+            let url: URL;
+            try { url = new URL(value); } catch { throw new BadRequestException('Invalid app store URL'); }
+            const host = key === 'appStoreUrl' ? 'apps.apple.com' : 'play.google.com';
+            if (url.protocol !== 'https:' || url.hostname !== host) throw new BadRequestException('Invalid app store URL');
+        }
         return this.prisma.appSettings.upsert({
             where: { key },
             update: { value },

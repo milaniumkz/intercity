@@ -443,6 +443,7 @@ class OrderScreen extends StatefulWidget {
     this.enableLiveMap = true,
     this.autoLocateOnStart = true,
     this.initialStep,
+    this.apiClient,
   });
 
   final String? resetToken;
@@ -450,13 +451,14 @@ class OrderScreen extends StatefulWidget {
   final bool enableLiveMap;
   final bool autoLocateOnStart;
   final int? initialStep;
+  final ApiClient? apiClient;
 
   @override
   State<OrderScreen> createState() => _OrderScreenState();
 }
 
 class _OrderScreenState extends State<OrderScreen> {
-  final ApiClient _api = ApiClient();
+  late final ApiClient _api = widget.apiClient ?? ApiClient();
   final TextEditingController _fromController = TextEditingController();
   final TextEditingController _toController = TextEditingController();
   final TextEditingController _commentController = TextEditingController();
@@ -480,6 +482,8 @@ class _OrderScreenState extends State<OrderScreen> {
   String _toAddress = '';
   String? _currentCityId;
   String _currentCityName = '';
+  LatLng? _selectedCityPoint;
+  late final Future<void> _cityPreferenceReady;
   List<Map<String, dynamic>> _cityOptions = const [];
   bool _cityOptionsLoading = false;
   String? _intercityFromCityId;
@@ -668,7 +672,7 @@ class _OrderScreenState extends State<OrderScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSearchCityPreference();
+    _cityPreferenceReady = _loadSearchCityPreference();
     _loadCityOptions();
     _loadPassengerRuntimeSettings();
     unawaited(_restoreBoardDraft());
@@ -1165,6 +1169,22 @@ class _OrderScreenState extends State<OrderScreen> {
 
   Future<void> _loadSearchCityPreference() async {
     try {
+      final selected = await AppPreferences.getOrderCity();
+      if (selected != null &&
+          selected['lat'] is num &&
+          selected['lng'] is num) {
+        if (!mounted) return;
+        setState(() {
+          _selectedCityPoint = LatLng((selected['lat'] as num).toDouble(),
+              (selected['lng'] as num).toDouble());
+          _mapCenter = _selectedCityPoint!;
+          _currentCityName =
+              (selected['name'] ?? _cityTitleFromGeo(selected)).toString();
+          _currentCityId = selected['id']?.toString();
+          _rideCurrency = rideCurrencyCode(selected);
+        });
+        return;
+      }
       final storedCityId = await AppPreferences.getCurrentCityId();
       final storedCityName = await AppPreferences.getCurrentCityName();
       if (!mounted) return;
@@ -1202,6 +1222,9 @@ class _OrderScreenState extends State<OrderScreen> {
       setState(() {
         _currentCityId = cityId;
         _currentCityName = cityName;
+        if (city is Map) {
+          _rideCurrency = rideCurrencyCode(Map<String, dynamic>.from(city));
+        }
         _intercityFromCityId ??= cityId;
         if (_intercityFromCityName.trim().isEmpty) {
           _intercityFromCityName = cityName;
@@ -1213,7 +1236,9 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Future<void> _syncSearchCityFromCoords(LatLng point) async {
-    if (!_shouldRestrictSearchToCurrentCity) return;
+    if (!_shouldRestrictSearchToCurrentCity || _selectedCityPoint != null) {
+      return;
+    }
     try {
       final res = await _api.get(
         '/geo/reverse',
@@ -1221,15 +1246,21 @@ class _OrderScreenState extends State<OrderScreen> {
       );
       final cityId = (res.data['cityId'] ?? '').toString().trim();
       final cityName = (res.data['city'] ?? '').toString().trim();
-      if (cityId.isEmpty) return;
-      await AppPreferences.setCurrentCityId(cityId);
+      if (cityId.isEmpty && cityName.isEmpty) return;
+      if (cityId.isEmpty) {
+        await AppPreferences.clearCurrentCityId();
+      } else {
+        await AppPreferences.setCurrentCityId(cityId);
+      }
       if (cityName.isNotEmpty) {
         await AppPreferences.setCurrentCityName(cityName);
       }
       if (!mounted) return;
       setState(() {
-        _currentCityId = cityId;
+        _currentCityId = cityId.isEmpty ? null : cityId;
         _currentCityName = cityName;
+        _rideCurrency =
+            rideCurrencyCode(Map<String, dynamic>.from(res.data as Map));
         _intercityFromCityId ??= cityId;
         if (_intercityFromCityName.trim().isEmpty) {
           _intercityFromCityName = cityName;
@@ -1279,6 +1310,8 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Future<void> _loadCityOptions() async {
+    await _cityPreferenceReady;
+    if (!mounted) return;
     setState(() => _cityOptionsLoading = true);
     try {
       final res = await _api.get('/geo/cities');
@@ -1294,7 +1327,7 @@ class _OrderScreenState extends State<OrderScreen> {
       if (!mounted) return;
       setState(() {
         _cityOptions = cities;
-        if (_currentCityId == null) {
+        if (_currentCityId == null && _selectedCityPoint == null) {
           final defaultCity = cities.cast<Map<String, dynamic>?>().firstWhere(
                 (city) =>
                     (city?['name'] ?? '').toString().trim().toLowerCase() ==
@@ -1307,6 +1340,7 @@ class _OrderScreenState extends State<OrderScreen> {
           if (defaultCityId.isNotEmpty) {
             _currentCityId = defaultCityId;
             _currentCityName = defaultCityName;
+            _rideCurrency = rideCurrencyCode(defaultCity);
             _intercityFromCityId ??= defaultCityId;
             if (_intercityFromCityName.trim().isEmpty) {
               _intercityFromCityName = defaultCityName;
@@ -2024,6 +2058,19 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
+  Widget _citySelectionButton() => TextButton.icon(
+        key: const ValueKey('city-ride-selector'),
+        onPressed: () =>
+            _openIntercityCitySearch(isFrom: true, forCityRide: true),
+        icon: const Icon(Icons.location_city_rounded),
+        label: Text(
+            _currentCityName.isEmpty
+                ? 'Выбрать город поездки'
+                : 'Город: $_currentCityName · $_currencySymbol',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis),
+      );
+
   Widget _passengerMapHomeScreen() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -2060,36 +2107,20 @@ class _OrderScreenState extends State<OrderScreen> {
                         ),
                       ],
                     ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.location_on_rounded,
-                          color: AppTheme.primaryColor,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _fromAddress.trim().isEmpty
-                                ? 'Определяем точку подачи'
-                                : _compactAddress(_fromAddress),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: theme.colorScheme.onSurface,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                    child: _citySelectionButton(),
                   ),
                 ),
-                const SizedBox(width: 10),
-                _mapHomeRoundButton(
-                  icon: Icons.my_location_rounded,
-                  onTap: _locating ? null : _initMapCenterByLocation,
-                ),
               ],
+            ),
+          ),
+          Positioned(
+            right: 16,
+            top: MediaQuery.of(context).padding.top + 90,
+            child: _mapHomeRoundButton(
+              icon: Icons.my_location_rounded,
+              onTap: _locating
+                  ? null
+                  : () => _initMapCenterByLocation(forceCurrentLocation: true),
             ),
           ),
           Positioned(
@@ -2428,7 +2459,8 @@ class _OrderScreenState extends State<OrderScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 28),
+                _citySelectionButton(),
+                const SizedBox(height: 12),
                 Text(
                   'Что нужно заказать?',
                   style: theme.textTheme.headlineSmall?.copyWith(
@@ -2999,7 +3031,8 @@ class _OrderScreenState extends State<OrderScreen> {
                 onTap: _locating
                     ? null
                     : () async {
-                        await _initMapCenterByLocation(fillFromIfEmpty: false);
+                        await _initMapCenterByLocation(
+                            fillFromIfEmpty: false, forceCurrentLocation: true);
                         if (_userLocation != null) {
                           setState(() => _mapCenter = _userLocation!);
                         }
@@ -7890,14 +7923,18 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-  Future<void> _openIntercityCitySearch({required bool isFrom}) async {
+  Future<void> _openIntercityCitySearch(
+      {required bool isFrom, bool forCityRide = false}) async {
+    var dialogOpen = true;
     final selected = await showDialog<Map<String, dynamic>>(
       context: context,
       useSafeArea: false,
       builder: (dialogContext) {
         final theme = Theme.of(dialogContext);
         final controller = TextEditingController(
-          text: _intercityCityName(isFrom: isFrom),
+          text: forCityRide
+              ? _currentCityName
+              : _intercityCityName(isFrom: isFrom),
         );
         Timer? debounce;
         var loading = false;
@@ -7910,6 +7947,7 @@ class _OrderScreenState extends State<OrderScreen> {
           String query,
           void Function(void Function()) setSheetState,
         ) async {
+          if (!dialogOpen) return;
           final normalized = query.trim();
           if (normalized.length < 2) {
             setSheetState(() {
@@ -7925,7 +7963,9 @@ class _OrderScreenState extends State<OrderScreen> {
           });
           try {
             final found = await _searchCitiesOnMap(normalized);
-            if (!mounted) return;
+            if (!mounted || !dialogOpen || controller.text.trim() != normalized) {
+              return;
+            }
             setSheetState(() {
               results = found;
               message =
@@ -7933,7 +7973,9 @@ class _OrderScreenState extends State<OrderScreen> {
               loading = false;
             });
           } catch (e) {
-            if (!mounted) return;
+            if (!mounted || !dialogOpen || controller.text.trim() != normalized) {
+              return;
+            }
             setSheetState(() {
               results = [];
               message = 'Не удалось выполнить поиск. Попробуйте ещё раз.';
@@ -7960,7 +8002,11 @@ class _OrderScreenState extends State<OrderScreen> {
                           ),
                           Expanded(
                             child: Text(
-                              isFrom ? 'Город отправления' : 'Город назначения',
+                              forCityRide
+                                  ? 'Город поездки'
+                                  : (isFrom
+                                      ? 'Город отправления'
+                                      : 'Город назначения'),
                               textAlign: TextAlign.center,
                               style: theme.textTheme.titleLarge?.copyWith(
                                 fontWeight: FontWeight.w900,
@@ -8072,11 +8118,32 @@ class _OrderScreenState extends State<OrderScreen> {
           },
         );
       },
-    );
+    ).whenComplete(() => dialogOpen = false);
 
     if (selected == null || !mounted) return;
     final point = _pointFromGeoItem(selected);
     final name = _cityTitleFromGeo(selected);
+    if (forCityRide) {
+      if (point == null) return;
+      _clearRoute();
+      setState(() {
+        _selectedCityPoint = point;
+        _mapCenter = point;
+        _userLocation = null;
+        _currentCityId = selected['id']?.toString();
+        _currentCityName = (selected['name'] ?? name).toString();
+        _rideCurrency = rideCurrencyCode(selected);
+      });
+      await AppPreferences.setOrderCity(selected);
+      await AppPreferences.setCurrentCityName(_currentCityName);
+      if (_currentCityId == null) {
+        await AppPreferences.clearCurrentCityId();
+      } else {
+        await AppPreferences.setCurrentCityId(_currentCityId!);
+      }
+      await _saveBoardDraft();
+      return;
+    }
     _clearAddressField(isFrom: isFrom);
     setState(() {
       if (isFrom) {
@@ -11577,8 +11644,12 @@ class _OrderScreenState extends State<OrderScreen> {
     unawaited(_saveBoardDraft());
   }
 
-  Future<void> _initMapCenterByLocation({bool fillFromIfEmpty = true}) async {
-    if (_locating) return;
+  Future<void> _initMapCenterByLocation(
+      {bool fillFromIfEmpty = true, bool forceCurrentLocation = false}) async {
+    await _cityPreferenceReady;
+    if (!mounted || _locating) return;
+    final selectedAtStart = _selectedCityPoint;
+    if (_selectedCityPoint != null && !forceCurrentLocation) return;
     setState(() => _locating = true);
     try {
       var permission = await Geolocator.checkPermission();
@@ -11625,7 +11696,17 @@ class _OrderScreenState extends State<OrderScreen> {
           : LatLng(browserPos!.latitude, browserPos.longitude);
       final accuracy = pos?.accuracy ?? browserPos?.accuracy ?? 9999;
       final isPrecise = _isPrecisePassengerAccuracy(accuracy);
-      if (!mounted) return;
+      if (!mounted ||
+          (_selectedCityPoint != selectedAtStart && _selectedCityPoint != null)) {
+        return;
+      }
+      if (forceCurrentLocation && isPrecise) {
+        await AppPreferences.clearOrderCity();
+        if (!mounted) return;
+        _clearRoute();
+        _selectedCityPoint = null;
+        _currentCityId = null;
+      }
 
       setState(() {
         if (isPrecise) {
@@ -11822,6 +11903,7 @@ class _OrderScreenState extends State<OrderScreen> {
                               : () async {
                                   await _initMapCenterByLocation(
                                     fillFromIfEmpty: false,
+                                    forceCurrentLocation: true,
                                   );
                                   final next = _userLocation ?? selected;
                                   setDialogState(() => selected = next);
@@ -12138,7 +12220,8 @@ class _OrderScreenState extends State<OrderScreen> {
 
   LatLng? _searchAnchor({required bool isFrom}) {
     if (_shouldRestrictSearchToCurrentCity) {
-      final currentAnchor = _userLocation ?? _currentCityPointFromOptions();
+      final currentAnchor =
+          _selectedCityPoint ?? _userLocation ?? _currentCityPointFromOptions();
       if (currentAnchor != null) return currentAnchor;
     }
     final explicitAnchor = isFrom
@@ -12152,6 +12235,7 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   LatLng? _currentCityPointFromOptions() {
+    if (_selectedCityPoint != null) return _selectedCityPoint;
     final currentCityId = _currentCityId;
     if (currentCityId == null) return null;
     final city = _cityOptions.cast<Map<String, dynamic>?>().firstWhere(

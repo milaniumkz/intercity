@@ -1,3 +1,4 @@
+import 'dart:convert';
 import '../constants/app_constants.dart';
 import 'secure_store.dart';
 
@@ -44,6 +45,22 @@ class AppPreferences {
     return (await _storage.read(AppConstants.languageExplicitSelectionKey)) ==
         '1';
   }
+
+  static Future<void> setOrderCity(Map<String, dynamic> city) =>
+      _storage.write('order_city_selection', jsonEncode(city));
+
+  static Future<Map<String, dynamic>?> getOrderCity() async {
+    final value = await _storage.read('order_city_selection');
+    if (value == null) return null;
+    try {
+      return Map<String, dynamic>.from(jsonDecode(value) as Map);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> clearOrderCity() =>
+      _storage.delete('order_city_selection');
 
   static Future<void> setCurrentCityId(String cityId) {
     return _storage.write(AppConstants.currentCityIdKey, cityId);

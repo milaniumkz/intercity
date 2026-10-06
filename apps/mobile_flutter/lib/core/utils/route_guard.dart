@@ -18,6 +18,10 @@ String? resolveAuthRedirect({
     return null;
   }
 
+  if (!hasToken && path.startsWith('/ref/') && path.endsWith('/download')) {
+    return path.substring(0, path.length - '/download'.length);
+  }
+
   final publicRoute = isPublicRoute(path);
   final adminRoute = path.startsWith('/admin/') && path != '/admin/login';
 
@@ -25,7 +29,10 @@ String? resolveAuthRedirect({
     return adminRoute ? '/admin/login' : '/login';
   }
 
-  if (hasToken && publicRoute && path != '/startup') {
+  if (hasToken &&
+      publicRoute &&
+      path != '/startup' &&
+      !(path.startsWith('/ref/') && path.endsWith('/download'))) {
     return '/startup';
   }
 
