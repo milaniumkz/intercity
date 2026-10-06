@@ -30,6 +30,15 @@ PY
 )}"
 git cat-file -e "$BASE_COMMIT_SHA^{commit}" 2>/dev/null || git fetch --depth=1 origin "$BASE_COMMIT_SHA"
 
+# CI-only commits are not deployed (workflow paths-ignore). Compare with the
+# preceding application release, keeping production source/commit checks intact.
+while ! git show --format= --name-only "$BASE_COMMIT_SHA" | rg -qv '^\.github/'; do
+  parent_sha="$(git show -s --format=%P "$BASE_COMMIT_SHA" | cut -d ' ' -f 1)"
+  [[ -n "$parent_sha" ]] || break
+  git cat-file -e "$parent_sha^{commit}" 2>/dev/null || git fetch --depth=2 origin "$BASE_COMMIT_SHA"
+  BASE_COMMIT_SHA="$parent_sha"
+done
+
 echo "==> Backend build"
 (cd "$ROOT_DIR/backend" && npm ci && npm run build)
 (cd "$ROOT_DIR/backend" && node --test test/*.test.js)
