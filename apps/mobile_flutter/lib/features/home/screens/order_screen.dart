@@ -12435,7 +12435,7 @@ class _OrderScreenState extends State<OrderScreen> {
         'format': 'jsonv2',
         'addressdetails': 1,
         'limit': 8,
-        'countrycodes': 'kz',
+        'countrycodes': (_rideCurrency == 'RUB' ? 'ru' : 'kz'),
         'accept-language': 'ru',
       };
       if (anchor != null) {
