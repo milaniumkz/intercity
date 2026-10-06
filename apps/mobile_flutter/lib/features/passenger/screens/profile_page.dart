@@ -2162,7 +2162,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
-          child: Column(
+          child: ListView(
             children: [
               if (_loading) ...[
                 ClipRRect(
@@ -2230,6 +2230,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
                 ],
               ),
               const SizedBox(height: 22),
+              ReferralProfileCard(user: _user),
+              const SizedBox(height: 12),
               _boardProfileRow(
                 icon: Icons.location_on_outlined,
                 title: 'Избранные адреса',
