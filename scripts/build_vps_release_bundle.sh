@@ -17,27 +17,24 @@ trap cleanup EXIT
 mkdir -p "$OUT_DIR"
 resolve_flutter_bin
 
-BASE_COMMIT_SHA="${BASE_COMMIT_SHA:-$(python3 - <<'PY'
-import json, os, subprocess
-event_path = os.environ.get('GITHUB_EVENT_PATH')
-event = json.load(open(event_path)) if event_path else {}
-base = event.get('before', '')
-if not base or set(base) == {'0'}:
-    commit = subprocess.check_output(['git', 'cat-file', '-p', 'HEAD']).decode()
-    base = next(line.split()[1] for line in commit.splitlines() if line.startswith('parent '))
+# The GitHub event's parent may have never been published (CI-only commits,
+# cancelled/failed builds). Read the last published marker; the SSH deployment
+# still verifies this exact marker and every changed source hash before writes.
+BASE_COMMIT_SHA="${BASE_COMMIT_SHA:-$(python3 - <<'PYBASE'
+import json, os, re, urllib.request
+web_url = os.environ.get('PRODUCTION_WEB_URL', 'https://intercity.89-207-255-27.sslip.io').rstrip('/')
+with urllib.request.urlopen(web_url + '/version.json', timeout=15) as response:
+    base = json.load(response).get('commit', '')
+if not re.fullmatch(r'[0-9a-f]{40}', base):
+    raise SystemExit('Invalid production release marker')
 print(base)
-PY
+PYBASE
 )}"
 git cat-file -e "$BASE_COMMIT_SHA^{commit}" 2>/dev/null || git fetch --depth=1 origin "$BASE_COMMIT_SHA"
-
-# CI-only commits are not deployed (workflow paths-ignore). Compare with the
-# preceding application release, keeping production source/commit checks intact.
-while ! git show --format= --name-only "$BASE_COMMIT_SHA" | rg -qv '^\.github/'; do
-  parent_sha="$(git show -s --format=%P "$BASE_COMMIT_SHA" | cut -d ' ' -f 1)"
-  [[ -n "$parent_sha" ]] || break
-  git cat-file -e "$parent_sha^{commit}" 2>/dev/null || git fetch --depth=2 origin "$BASE_COMMIT_SHA"
-  BASE_COMMIT_SHA="$parent_sha"
-done
+git merge-base --is-ancestor "$BASE_COMMIT_SHA" HEAD || {
+  echo 'Published production commit is not an ancestor of this release' >&2
+  exit 1
+}
 
 echo "==> Backend build"
 (cd "$ROOT_DIR/backend" && npm ci && npm run build)
