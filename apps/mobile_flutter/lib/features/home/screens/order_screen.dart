@@ -1,3 +1,4 @@
+import '../../../core/utils/current_location.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -445,6 +446,7 @@ class OrderScreen extends StatefulWidget {
     this.autoLocateOnStart = true,
     this.initialStep,
     this.apiClient,
+    this.locationProvider,
   });
 
   final String? resetToken;
@@ -453,6 +455,7 @@ class OrderScreen extends StatefulWidget {
   final bool autoLocateOnStart;
   final int? initialStep;
   final ApiClient? apiClient;
+  final Future<BrowserLocation?> Function()? locationProvider;
 
   @override
   State<OrderScreen> createState() => _OrderScreenState();
@@ -473,9 +476,9 @@ class _OrderScreenState extends State<OrderScreen> {
   final TextEditingController _deliveryRecipientController =
       TextEditingController();
   final Distance _distance = const Distance();
-  static const double _maxAutofillLocationAccuracyMeters = 250;
+  static bool _automaticWebLocationAttempted = false;
 
-  LatLng _mapCenter = const LatLng(43.2220, 76.8512);
+  LatLng _mapCenter = const LatLng(48.0, 68.0);
   LatLng? _userLocation;
   LatLng? _fromLocation;
   LatLng? _toLocation;
@@ -485,6 +488,7 @@ class _OrderScreenState extends State<OrderScreen> {
   String _currentCityName = '';
   LatLng? _selectedCityPoint;
   late final Future<void> _cityPreferenceReady;
+  late final Future<void> _draftReady;
   List<Map<String, dynamic>> _cityOptions = const [];
   bool _cityOptionsLoading = false;
   String? _intercityFromCityId;
@@ -676,9 +680,9 @@ class _OrderScreenState extends State<OrderScreen> {
     _cityPreferenceReady = _loadSearchCityPreference();
     _loadCityOptions();
     _loadPassengerRuntimeSettings();
-    unawaited(_restoreBoardDraft());
-    if (widget.autoLocateOnStart && !kIsWeb) {
-      _initMapCenterByLocation();
+    _draftReady = _restoreBoardDraft();
+    if (widget.autoLocateOnStart) {
+      unawaited(_startAutomaticLocation());
     }
   }
 
@@ -1186,58 +1190,22 @@ class _OrderScreenState extends State<OrderScreen> {
         });
         return;
       }
-      final storedCityId = await AppPreferences.getCurrentCityId();
-      final storedCityName = await AppPreferences.getCurrentCityName();
-      if (!mounted) return;
-      setState(() {
-        _currentCityId =
-            storedCityId?.trim().isEmpty ?? true ? null : storedCityId!.trim();
-        _currentCityName = (storedCityName ?? '').trim();
-        _intercityFromCityId ??= _currentCityId;
-        if (_intercityFromCityName.trim().isEmpty) {
-          _intercityFromCityName = _currentCityName;
-        }
-      });
-      if (_currentCityId == null) {
-        await _seedSearchCityFromProfile();
-      }
     } catch (_) {
-      await _seedSearchCityFromProfile();
+      // A saved profile city is not the current device location.
     }
   }
 
-  Future<void> _seedSearchCityFromProfile() async {
-    try {
-      final res = await _api.get('/me');
-      final user = Map<String, dynamic>.from(res.data as Map);
-      final cityId = (user['cityId'] ?? '').toString().trim();
-      final city = user['city'];
-      final cityName =
-          city is Map ? (city['name'] ?? '').toString().trim() : '';
-      if (cityId.isEmpty) return;
-      await AppPreferences.setCurrentCityId(cityId);
-      if (cityName.isNotEmpty) {
-        await AppPreferences.setCurrentCityName(cityName);
-      }
-      if (!mounted) return;
-      setState(() {
-        _currentCityId = cityId;
-        _currentCityName = cityName;
-        if (city is Map) {
-          _rideCurrency = rideCurrencyCode(Map<String, dynamic>.from(city));
-        }
-        _intercityFromCityId ??= cityId;
-        if (_intercityFromCityName.trim().isEmpty) {
-          _intercityFromCityName = cityName;
-        }
-      });
-    } catch (_) {
-      // Non-blocking. Search can still fall back to anchor-only behavior.
-    }
+  Future<void> _startAutomaticLocation() async {
+    await _cityPreferenceReady;
+    await _draftReady;
+    if (!mounted || _selectedCityPoint != null) return;
+    if (kIsWeb && _automaticWebLocationAttempted) return;
+    if (kIsWeb) _automaticWebLocationAttempted = true;
+    await _initMapCenterByLocation();
   }
 
   Future<void> _syncSearchCityFromCoords(LatLng point) async {
-    if (!_shouldRestrictSearchToCurrentCity || _selectedCityPoint != null) {
+    if (_selectedCityPoint != null) {
       return;
     }
     try {
@@ -1245,6 +1213,14 @@ class _OrderScreenState extends State<OrderScreen> {
         '/geo/reverse',
         queryParameters: {'lat': point.latitude, 'lng': point.longitude},
       );
+      if (!mounted || _selectedCityPoint != null) return;
+      if (res.data['cityResolved'] == false) {
+        setState(() {
+          _currentCityId = null;
+          _currentCityName = '';
+        });
+        return;
+      }
       final cityId = (res.data['cityId'] ?? '').toString().trim();
       final cityName = (res.data['city'] ?? '').toString().trim();
       if (cityId.isEmpty && cityName.isEmpty) return;
@@ -1328,31 +1304,6 @@ class _OrderScreenState extends State<OrderScreen> {
       if (!mounted) return;
       setState(() {
         _cityOptions = cities;
-        if (_currentCityId == null && _selectedCityPoint == null) {
-          final defaultCity = cities.cast<Map<String, dynamic>?>().firstWhere(
-                (city) =>
-                    (city?['name'] ?? '').toString().trim().toLowerCase() ==
-                    'алматы',
-                orElse: () => cities.isEmpty ? null : cities.first,
-              );
-          final defaultCityId = (defaultCity?['id'] ?? '').toString().trim();
-          final defaultCityName =
-              (defaultCity?['name'] ?? '').toString().trim();
-          if (defaultCityId.isNotEmpty) {
-            _currentCityId = defaultCityId;
-            _currentCityName = defaultCityName;
-            _rideCurrency = rideCurrencyCode(defaultCity);
-            _intercityFromCityId ??= defaultCityId;
-            if (_intercityFromCityName.trim().isEmpty) {
-              _intercityFromCityName = defaultCityName;
-            }
-            final lat = defaultCity?['lat'];
-            final lng = defaultCity?['lng'];
-            if (lat is num && lng is num) {
-              _mapCenter = LatLng(lat.toDouble(), lng.toDouble());
-            }
-          }
-        }
         if (_intercityFromCityId == null &&
             _currentCityId != null &&
             cities.any((city) => city['id'] == _currentCityId)) {
@@ -11659,54 +11610,38 @@ class _OrderScreenState extends State<OrderScreen> {
     if (_selectedCityPoint != null && !forceCurrentLocation) return;
     setState(() => _locating = true);
     try {
-      var permission = await Geolocator.checkPermission()
-          .timeout(const Duration(seconds: 3));
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission()
-            .timeout(const Duration(seconds: 15));
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        if (mounted) {
-          final fallback = _currentCityPointFromOptions();
-          setState(
-            () {
-              if (fallback != null) {
-                _mapCenter = fallback;
-              }
-              _statusText =
-                  'Разрешите геолокацию или выберите точку подачи на карте.';
-            },
-          );
+      BrowserLocation? location;
+      if (widget.locationProvider != null) {
+        location = await widget.locationProvider!();
+      } else if (kIsWeb) {
+        // Browser geolocation requests permission once and a fresh high-accuracy fix.
+        location = await getBrowserLocation();
+      } else {
+        var permission = await Geolocator.checkPermission()
+            .timeout(const Duration(seconds: 3));
+        if (permission == LocationPermission.denied) {
+          permission = await Geolocator.requestPermission()
+              .timeout(const Duration(seconds: 15));
         }
-        return;
-      }
-
-      Position? pos;
-      BrowserLocation? browserPos;
-      try {
-        pos = await Geolocator.getCurrentPosition(
+        if (permission == LocationPermission.denied ||
+            permission == LocationPermission.deniedForever) {
+          throw StateError('Location permission unavailable');
+        }
+        final pos = await Geolocator.getCurrentPosition(
           locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.high,
-            timeLimit: Duration(seconds: 12),
-          ),
+              accuracy: LocationAccuracy.high,
+              timeLimit: Duration(seconds: 12)),
         ).timeout(const Duration(seconds: 15));
-      } catch (_) {
-        if (kIsWeb) rethrow;
-        final last = await Geolocator.getLastKnownPosition();
-        if (last != null) {
-          pos = last;
-        } else {
-          browserPos = await getBrowserLocation();
-          if (browserPos == null) rethrow;
-        }
+        location = BrowserLocation(
+            latitude: pos.latitude,
+            longitude: pos.longitude,
+            accuracy: pos.accuracy,
+            timestamp: pos.timestamp);
       }
-
-      final point = pos != null
-          ? LatLng(pos.latitude, pos.longitude)
-          : LatLng(browserPos!.latitude, browserPos.longitude);
-      final accuracy = pos?.accuracy ?? browserPos?.accuracy ?? 9999;
-      final isPrecise = _isPrecisePassengerAccuracy(accuracy);
+      if (location == null) throw StateError('Location unavailable');
+      final point = LatLng(location.latitude, location.longitude);
+      final accuracy = location.accuracy;
+      final isPrecise = isReliableCurrentLocation(location);
       if (!mounted ||
           (_selectedCityPoint != selectedAtStart &&
               _selectedCityPoint != null)) {
@@ -11730,7 +11665,7 @@ class _OrderScreenState extends State<OrderScreen> {
       if (!isPrecise) {
         setState(
           () => _statusText =
-              'Браузер вернул неточное местоположение (${_locationAccuracyText(accuracy)}). Выберите точку на карте или введите адрес вручную.',
+              'Местоположение недостаточно точное (${_locationAccuracyText(accuracy)}). Выберите город и уточните точку подачи на карте.',
         );
         return;
       }
@@ -11762,12 +11697,6 @@ class _OrderScreenState extends State<OrderScreen> {
 
   void _moveMap(LatLng point, double zoom) {
     _mapCenter = point;
-  }
-
-  bool _isPrecisePassengerAccuracy(double accuracy) {
-    return accuracy.isFinite &&
-        accuracy > 0 &&
-        accuracy <= _maxAutofillLocationAccuracyMeters;
   }
 
   String _locationAccuracyText(double accuracy) {
@@ -11998,7 +11927,7 @@ class _OrderScreenState extends State<OrderScreen> {
     required LatLng point,
   }) async {
     try {
-      final res = await ApiClient().get(
+      final res = await _api.get(
         '/geo/reverse',
         queryParameters: {'lat': point.latitude, 'lng': point.longitude},
       );
@@ -12041,6 +11970,11 @@ class _OrderScreenState extends State<OrderScreen> {
     Map<String, dynamic> data, {
     required bool isFrom,
   }) {
+    if (data['addressResolved'] == false) {
+      return isFrom
+          ? 'Точка подачи выбрана — адрес уточняется'
+          : 'Точка назначения выбрана — адрес уточняется';
+    }
     final rawAddress = (data['address'] ?? '').toString().trim();
     final compactAddress = _compactAddress(rawAddress);
     if (compactAddress.isNotEmpty &&

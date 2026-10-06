@@ -102,7 +102,12 @@ export class GeoService {
             );
             const data = await response.json();
             const addressParts = data?.address || {};
-            const city = this.extractCity(addressParts) || nearestCity?.name || null;
+            const rawCity = this.extractCity(addressParts);
+            const reportedCountry = (addressParts.country_code || '').toUpperCase();
+            const matchedCity = rawCity ? cityCatalog.find(entry => entry.countryCode === reportedCountry &&
+                [entry.name, ...entry.aliases].some(name => this.normalizeCityToken(name) === this.normalizeCityToken(rawCity)) &&
+                this.haversine(lat, lng, entry.lat, entry.lng) < 50) : null;
+            const city = matchedCity?.name || rawCity || nearestCity?.name || null;
             const region = this.extractRegion(addressParts) || nearestCity?.region || null;
             const countryCode = (addressParts.country_code || nearestCity?.countryCode || countryCodeFromRegion(region)).toUpperCase();
             const displayAddress = this.buildReverseAddress(data, nearestCity);
@@ -110,10 +115,11 @@ export class GeoService {
             // Try to find city in database
             let cityRecord = nearestCity;
             if (city) {
-                if (!cityRecord?.id || cityRecord.name.toLowerCase() !== city.toLowerCase()) {
+                if (!cityRecord?.id || cityRecord.name.toLowerCase() !== city.toLowerCase() || cityRecord.countryCode !== countryCode) {
                     cityRecord = await this.prisma.city.findFirst({
                         where: {
-                            name: { contains: city, mode: 'insensitive' },
+                            name: { equals: city, mode: 'insensitive' },
+                            countryCode,
                             isActive: true,
                         },
                     });
@@ -131,7 +137,8 @@ export class GeoService {
                     }).catch(async () => {
                         return this.prisma.city.findFirst({
                             where: {
-                                name: { contains: city, mode: 'insensitive' },
+                                name: { equals: city, mode: 'insensitive' },
+                                countryCode,
                                 isActive: true,
                             },
                         });
@@ -145,6 +152,8 @@ export class GeoService {
                 countryCode: cityRecord?.countryCode || countryCode,
                 currency: currencyForCountry(cityRecord?.countryCode || countryCode),
                 address: displayAddress,
+                cityResolved: Boolean(rawCity),
+                addressResolved: Boolean(addressParts.road || addressParts.house_number || addressParts.pedestrian || addressParts.amenity),
                 lat,
                 lng,
             };
@@ -155,6 +164,8 @@ export class GeoService {
                 countryCode: nearestCity?.countryCode || 'KZ',
                 currency: currencyForCountry(nearestCity?.countryCode),
                 address: this.buildNearestCityAddress(nearestCity),
+                cityResolved: false,
+                addressResolved: false,
                 lat,
                 lng,
             };
