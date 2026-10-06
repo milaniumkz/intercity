@@ -1,4 +1,5 @@
 import { moneyField, bonusField } from '../common/currency';
+import { requireNoActivePassengerOrder } from '../common/active-passenger-order';
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { GeoService } from '../geo/geo.service';
@@ -156,6 +157,7 @@ export class OrdersService {
         }
 
         const order = await this.prisma.$transaction(async (tx) => {
+            await requireNoActivePassengerOrder(tx, userId);
             let userWalletId: string | null = null;
             if (bonusUsedAmount > 0) {
                 const wallet = await tx.wallet.findUnique({
