@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - status
+          - inspect-account
           - logs
           - restart
           - redeploy-current

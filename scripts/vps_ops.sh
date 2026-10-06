@@ -11,6 +11,21 @@ compose() {
 }
 
 case "$ACTION" in
+  inspect-account)
+    [[ "$TARGET" =~ ^[0-9]{10}$ ]] || { echo 'Expected 10-digit phone'; exit 1; }
+    docker exec -i intercity-backend node - "$TARGET" <<'JS'
+const {PrismaClient}=require('@prisma/client');
+const db=new PrismaClient();
+(async()=>{
+ const users=await db.user.findMany({where:{phone:{endsWith:process.argv[2]}},select:{id:true,role:true}});
+ if(users.length!==1)throw Error('Expected exactly one account; found '+users.length);
+ const user=users[0];
+ const orders=await db.order.findMany({where:{passengerId:user.id,status:{notIn:['COMPLETED','CANCELLED']}},select:{id:true,status:true,mode:true,bonusUsedAmount:true,currency:true,createdAt:true}});
+ const requests=await db.intercityRequest.findMany({where:{passengerId:user.id,status:{notIn:['COMPLETED','CANCELLED']}},select:{id:true,status:true,createdAt:true}});
+ console.log(JSON.stringify({user,orders,requests}));
+})().catch(e=>{console.error(e.message);process.exitCode=1}).finally(()=>db.$disconnect());
+JS
+    ;;
   status)
     cat "$APP_ROOT/current_commit" 2>/dev/null || true
     compose ps
