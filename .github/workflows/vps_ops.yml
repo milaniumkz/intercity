@@ -10,6 +10,7 @@ on:
         options:
           - status
           - inspect-account
+          - cancel-account-active
           - logs
           - restart
           - redeploy-current

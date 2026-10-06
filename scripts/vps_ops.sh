@@ -11,6 +11,47 @@ compose() {
 }
 
 case "$ACTION" in
+  cancel-account-active)
+    [[ "$TARGET" =~ ^[0-9]{10}$ ]] || { echo 'Expected 10-digit phone'; exit 1; }
+    [[ "$(cat "$APP_ROOT/current_commit")" == '0a2f26ab9b0e9f72b2d7a1b5bb6dd52ee44be66e' ]] || { echo 'Production version changed; review required'; exit 1; }
+    echo "ab6fb735531728569d6cd45f6cb2ca8d67b442b05783ebb5baaf07981ba2f78f  $APP_ROOT/current/backend/src/orders/orders.service.ts" | sha256sum --check --status
+    echo "22fa79e44ac3622b02e3fb3c84f54bfa30f4513dacba8a9b23e7b02470ca995a  $APP_ROOT/current/backend/src/intercity/intercity.service.ts" | sha256sum --check --status
+    backup_dir="$APP_ROOT/backups/$(date -u +%Y%m%d-%H%M%S)-account-order-cancel"
+    mkdir -m 700 "$backup_dir"
+    (umask 077; docker exec intercity-postgres sh -c 'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup_dir/database.sql")
+    test -s "$backup_dir/database.sql"
+    grep -q 'PostgreSQL database dump complete' "$backup_dir/database.sql"
+    echo 'Database backup verified'
+    docker exec -i intercity-backend node - "$TARGET" <<'JS'
+const {PrismaClient}=require('@prisma/client');
+const {JwtService}=require('@nestjs/jwt');
+const db=new PrismaClient();
+(async()=>{
+ const users=await db.user.findMany({where:{phone:{endsWith:process.argv[2]}},select:{id:true,role:true}});
+ if(users.length!==1)throw Error('Expected exactly one account');
+ const user=users[0];
+ const orders=await db.order.findMany({where:{passengerId:user.id,status:{notIn:['COMPLETED','CANCELLED']}},select:{id:true,status:true}});
+ const requests=await db.intercityRequest.findMany({where:{passengerId:user.id,status:{notIn:['COMPLETED','CANCELLED']}},select:{id:true,status:true}});
+ const expectedOrders=['b46a944c-bf95-40fd-ae0f-dd25940a0e58'];
+ const expectedRequests=['fbdc4438-0e1d-4587-8900-e7ef70b71855'];
+ if(process.argv[2]!=='7052597368' || orders.some(x=>!expectedOrders.includes(x.id)) || requests.some(x=>!expectedRequests.includes(x.id)))throw Error('Account/order scope changed; review required');
+ const token=new JwtService({secret:process.env.JWT_SECRET}).sign({sub:user.id,role:user.role},{expiresIn:'60s'});
+ for(const [items,model,prefix] of [[orders,db.order,'orders'],[requests,db.intercityRequest,'intercity/requests']]) {
+  for(const item of items){
+   const response=await fetch(`http://127.0.0.1:${process.env.PORT||3000}/api/${prefix}/${item.id}/cancel`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});
+   if(!response.ok)throw Error('Cancellation API returned HTTP '+response.status);
+   const result=await model.findUnique({where:{id:item.id},select:{id:true,status:true}});
+   if(result.status!=='CANCELLED')throw Error('Cancellation verification failed');
+   console.log(JSON.stringify(result));
+  }
+ }
+ const remainingActiveOrders=await db.order.count({where:{passengerId:user.id,status:{notIn:['COMPLETED','CANCELLED']}}});
+ const remainingActiveRequests=await db.intercityRequest.count({where:{passengerId:user.id,status:{notIn:['COMPLETED','CANCELLED']}}});
+ console.log(JSON.stringify({remainingActiveOrders,remainingActiveRequests}));
+ if(remainingActiveOrders||remainingActiveRequests)throw Error('Active records remain');
+})().catch(e=>{console.error(e.message);process.exitCode=1}).finally(()=>db.$disconnect());
+JS
+    ;;
   inspect-account)
     [[ "$TARGET" =~ ^[0-9]{10}$ ]] || { echo 'Expected 10-digit phone'; exit 1; }
     docker exec -i intercity-backend node - "$TARGET" <<'JS'
