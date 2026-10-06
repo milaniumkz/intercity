@@ -13,8 +13,9 @@ class _AddressApi extends ApiClient {
       {Map<String, dynamic>? queryParameters, Options? options}) async {
     dynamic data = <String, dynamic>{};
     if (path == '/geo/cities') data = <dynamic>[];
-    if (path == '/app/runtime-settings')
+    if (path == '/app/runtime-settings') {
       data = {'passengerMapHomeEnabled': false};
+    }
     if (path == '/geo/search') {
       search = queryParameters;
       data = [
