@@ -32,6 +32,11 @@ intercity.89-207-255-27.sslip.io {
 
 admin.intercity.89-207-255-27.sslip.io {
 	encode gzip
+	header {
+		Cache-Control "no-cache, no-store, max-age=0, must-revalidate"
+		Pragma "no-cache"
+		Expires "0"
+	}
 	root * /srv/intercity/admin
 	try_files {path} /index.html
 	file_server

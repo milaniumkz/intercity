@@ -306,7 +306,7 @@ Data locations on VPS:
 
 - PostgreSQL: Docker volume `postgres_data`.
 - User uploads: `/opt/intercity/shared/uploads`.
-- Backups created before deploy: `/opt/intercity/backups`.
+- Backups created before deploy: `/opt/intercity/backups`. Deployment verifies the previous commit and source files, requires successful database/uploads backups, applies migrations before restarting the backend, and rolls back the application if live checks fail. It never falls back to `prisma db push`.
 
 GitHub Actions release automation lives in
 `.github/workflows/mobile_android_release.yml`.
