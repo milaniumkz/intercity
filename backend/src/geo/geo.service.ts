@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma.service';
+import { verifiedAddresses } from './verified-addresses';
 import { cityCatalog } from './city-catalog';
 import { currencyForCountry, countryCodeFromRegion } from '../common/currency';
 
@@ -371,6 +372,10 @@ export class GeoService {
                 : Number.isFinite(nearLat) && Number.isFinite(nearLng)
                     ? await this.findNearestCity(nearLat!, nearLng!)
                     : null;
+            const verified = this.findVerifiedAddresses(query, cityContext || undefined)
+                .filter(address => !Number.isFinite(nearLat) || !Number.isFinite(nearLng) ||
+                    this.haversine(nearLat!, nearLng!, address.lat, address.lng) <= this.addressSearchRadiusKm);
+            if (verified.length > 0) return verified;
             const context = cityContext ? { city: cityContext.name, region: cityContext.region, countryCode: cityContext.countryCode.toLowerCase() } : Number.isFinite(nearLat) && Number.isFinite(nearLng)
                 ? await this.getSearchContext(nearLat!, nearLng!)
                 : null;
@@ -681,6 +686,23 @@ export class GeoService {
             .map((value: string) => this.normalizeLocalityName(value))
             .filter((value: string) => value.length > 0);
         return displayTokens.some((token: string) => token === normalizedContext);
+    }
+
+    private findVerifiedAddresses(query: string, city?: {name: string; lat: number; lng: number}) {
+        const normalized = this.normalizeCityToken(query)
+            .replace(/(?:улица|ул\.|дом|д\.)/gu, ' ')
+            .replace(/[,]/g, ' ').replace(/\s+/g, ' ').trim();
+        const house = normalized.match(/(?:^|\s)(\d+[\p{L}]?(?:\/\d+)?)(?:\s|$)/u)?.[1];
+        const street = normalized.replace(/(?:^|\s)\d+[\p{L}]?(?:\/\d+)?(?:\s|$)/gu, ' ').trim();
+        if (street.length < 3) return [];
+        return verifiedAddresses.filter(address => {
+            if (house && house !== address.house) return false;
+            if (city && this.haversine(city.lat, city.lng, address.lat, address.lng) > this.addressSearchRadiusKm) return false;
+            return address.streetAliases.some(alias => alias.includes(street));
+        }).map(address => ({
+            displayName: address.displayName, lat: address.lat, lng: address.lng,
+            countryCode: address.countryCode, source: address.source,
+        }));
     }
 
     private normalizeLocalityName(value: string) {
