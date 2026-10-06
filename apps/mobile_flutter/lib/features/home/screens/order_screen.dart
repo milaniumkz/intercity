@@ -1002,7 +1002,7 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Future<void> _useCurrentLocationAsBoardPickup() async {
-    await _initMapCenterByLocation();
+    await _initMapCenterByLocation(forceCurrentLocation: true);
     if (_userLocation == null) {
       if (!mounted) return;
       setState(() {
@@ -7434,7 +7434,8 @@ class _OrderScreenState extends State<OrderScreen> {
                   onTap: _locating
                       ? null
                       : () async {
-                          await _initMapCenterByLocation();
+                          await _initMapCenterByLocation(
+                              forceCurrentLocation: true);
                           if (_userLocation != null) {
                             setState(() {
                               _fromLocation = _userLocation;
@@ -7729,7 +7730,8 @@ class _OrderScreenState extends State<OrderScreen> {
                   onPressed: _locating
                       ? null
                       : () async {
-                          await _initMapCenterByLocation();
+                          await _initMapCenterByLocation(
+                              forceCurrentLocation: true);
                           if (_userLocation != null) {
                             setState(() {
                               _fromLocation = _userLocation;
@@ -7963,7 +7965,9 @@ class _OrderScreenState extends State<OrderScreen> {
           });
           try {
             final found = await _searchCitiesOnMap(normalized);
-            if (!mounted || !dialogOpen || controller.text.trim() != normalized) {
+            if (!mounted ||
+                !dialogOpen ||
+                controller.text.trim() != normalized) {
               return;
             }
             setSheetState(() {
@@ -7973,7 +7977,9 @@ class _OrderScreenState extends State<OrderScreen> {
               loading = false;
             });
           } catch (e) {
-            if (!mounted || !dialogOpen || controller.text.trim() != normalized) {
+            if (!mounted ||
+                !dialogOpen ||
+                controller.text.trim() != normalized) {
               return;
             }
             setSheetState(() {
@@ -11697,7 +11703,8 @@ class _OrderScreenState extends State<OrderScreen> {
       final accuracy = pos?.accuracy ?? browserPos?.accuracy ?? 9999;
       final isPrecise = _isPrecisePassengerAccuracy(accuracy);
       if (!mounted ||
-          (_selectedCityPoint != selectedAtStart && _selectedCityPoint != null)) {
+          (_selectedCityPoint != selectedAtStart &&
+              _selectedCityPoint != null)) {
         return;
       }
       if (forceCurrentLocation && isPrecise) {
