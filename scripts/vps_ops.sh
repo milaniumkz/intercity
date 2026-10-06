@@ -21,7 +21,10 @@ SELECT u.id, u.name, right(u.phone,4),
 FROM "User" u WHERE lower(u.name) LIKE '%олег%' OR lower(u.name) LIKE '%oleg%';
 SELECT o.id,o.status,o."createdAt",o.price,o.currency,o."paymentMethod",right(u.phone,4)
 FROM "Order" o JOIN "User" u ON u.id=o."passengerId"
-WHERE lower(u.name) LIKE '%олег%' OR lower(u.name) LIKE '%oleg%' ORDER BY o."createdAt" DESC LIMIT 10;
+WHERE (lower(u.name) LIKE '%олег%' OR lower(u.name) LIKE '%oleg%') AND o.status::text NOT IN ('COMPLETED','CANCELLED') ORDER BY o."createdAt" DESC;
+SELECT r.id,r.status,r."createdAt",r."driverId",right(u.phone,4)
+FROM "IntercityRequest" r JOIN "User" u ON u.id=r."passengerId"
+WHERE (lower(u.name) LIKE '%олег%' OR lower(u.name) LIKE '%oleg%') AND r.status::text NOT IN ('COMPLETED','CANCELLED') ORDER BY r."createdAt" DESC;
 ROLLBACK;
 SQL
       exit 0
