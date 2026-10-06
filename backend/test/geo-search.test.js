@@ -45,8 +45,8 @@ test('real Omsk street result is retained when OSM labels municipality instead o
  assert(geo.belongsToCityContext(osm,{name:'Омск'}));
 });
 
-test('four user street searches stay anchored to Ust-Kamenogorsk and preserve names',async()=>{
- for(const q of ['Оралхан Бокей','Аль-Фараби','Казыбек Би','Сатпаева']){
+test('three provider street searches stay anchored to Ust-Kamenogorsk and preserve names',async()=>{
+ for(const q of ['Аль-Фараби','Казыбек Би','Сатпаева']){
   const geo=makeGeo();const city={id:'ust',name:'Усть-Каменогорск',countryCode:'KZ',region:'Казахстан',lat:49.948986,lng:82.627945};
   geo.findNearestCity=async()=>city;
   geo.fetchSearchResults=async(candidate,country,context)=>{
@@ -57,4 +57,14 @@ test('four user street searches stay anchored to Ust-Kamenogorsk and preserve na
   const results=await geo.searchLocations(q,city.lat,city.lng);
   assert.equal(results[0].displayName,q+', Усть-Каменогорск');
  }
+});
+
+test('Bokey 24 uses the verified house, never substitutes it for another number or city',async()=>{
+ const geo=makeGeo();const city={name:'Усть-Каменогорск',lat:49.948986,lng:82.627945};
+ for(const q of ['Оралхан Бокей 24','Оралхана Бокея 24','улица Оралхана Бокея, 24','Оралхан Бокей']){
+  const rows=geo.findVerifiedAddresses(q,city);
+  assert.equal(rows.length,1);assert.equal(rows[0].lat,49.902631);assert.equal(rows[0].lng,82.609936);
+ }
+ assert.equal(geo.findVerifiedAddresses('Оралхана Бокея 25',city).length,0);
+ assert.equal(geo.findVerifiedAddresses('Оралхана Бокея 24',{name:'Алматы',lat:43.238949,lng:76.889709}).length,0);
 });
