@@ -1,3 +1,4 @@
+import '../../referral/widgets/referral_profile_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1446,6 +1447,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
                 children: [
+                  ReferralProfileCard(user: _user),
+                  const SizedBox(height: 12),
                   if (_loading)
                     ClipRRect(
                       borderRadius: BorderRadius.circular(999),

@@ -41,6 +41,11 @@ export class AuthController {
         return this.authService.validateUser(req.user.sub);
     }
 
+    @Get('referral')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    async referral(@Request() req) { return this.authService.getReferralSummary(req.user.sub); }
+
     @Post('push-token')
     @UseGuards(JwtAuthGuard)
     @ApiBearerAuth()

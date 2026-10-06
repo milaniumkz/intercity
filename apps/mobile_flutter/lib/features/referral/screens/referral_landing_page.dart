@@ -1,3 +1,5 @@
+import 'package:url_launcher/url_launcher.dart';
+import '../../../core/api/api_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -8,9 +10,15 @@ import '../../../core/theme/theme_controller.dart';
 import '../../../core/widgets/ic_premium.dart';
 
 class ReferralLandingPage extends StatefulWidget {
-  const ReferralLandingPage({super.key, required this.referralCode});
+  const ReferralLandingPage(
+      {super.key,
+      required this.referralCode,
+      this.downloadOnly = false,
+      this.apiClient});
 
   final String referralCode;
+  final bool downloadOnly;
+  final ApiClient? apiClient;
 
   @override
   State<ReferralLandingPage> createState() => _ReferralLandingPageState();
@@ -19,11 +27,45 @@ class ReferralLandingPage extends StatefulWidget {
 class _ReferralLandingPageState extends State<ReferralLandingPage> {
   late final String _code = _normalizeCode(widget.referralCode);
   bool _saved = false;
+  String? _appStoreUrl;
+  String? _googlePlayUrl;
 
   @override
   void initState() {
     super.initState();
-    _saveReferral();
+    if (!widget.downloadOnly) _saveReferral();
+    _loadStores();
+  }
+
+  Future<void> _loadStores() async {
+    try {
+      final response =
+          await (widget.apiClient ?? ApiClient()).get('/app/runtime-settings');
+      if (!mounted || response.data is! Map) return;
+      setState(() {
+        _appStoreUrl = response.data['appStoreUrl'] as String?;
+        final play = response.data['googlePlayUrl'] as String?;
+        if (play != null) {
+          final uri = Uri.parse(play);
+          _googlePlayUrl = uri.replace(queryParameters: {
+            ...uri.queryParameters,
+            'referrer': Uri(queryParameters: {'ref': _code}).query,
+          }).toString();
+        }
+      });
+    } catch (_) {
+      // Registration remains available independently of store settings.
+    }
+  }
+
+  Future<void> _openStore(String url) async {
+    final opened =
+        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось открыть магазин приложений')),
+      );
+    }
   }
 
   String _normalizeCode(String raw) {
@@ -110,7 +152,9 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
                       ),
                       const SizedBox(height: 18),
                       Text(
-                        'Ваш реферал сохранён',
+                        widget.downloadOnly
+                            ? 'Приглашение закреплено'
+                            : 'Вас пригласили в INTERCITY',
                         style: TextStyle(
                           color: colorScheme.onSurface,
                           fontSize: 28,
@@ -120,9 +164,11 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        _saved
-                            ? 'При регистрации по этой ссылке приглашение будет закреплено автоматически.'
-                            : 'Сохраняем приглашение...',
+                        widget.downloadOnly
+                            ? 'Скачайте приложение и войдите с номером телефона и паролем, указанными при регистрации. Приглашение уже сохранено в вашем аккаунте.'
+                            : _saved
+                                ? 'При регистрации здесь приглашение закрепится автоматически. После скачивания войдите в тот же аккаунт. Код приглашения: $_code.'
+                                : 'Сохраняем приглашение...',
                         style: TextStyle(
                           color: colorScheme.onSurfaceVariant,
                           fontSize: 15,
@@ -152,13 +198,51 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
                         ),
                       ),
                       const SizedBox(height: 18),
-                      ICGradientButton(
-                        label: 'Зарегистрироваться',
-                        icon: Icons.arrow_forward_rounded,
-                        onPressed: () =>
-                            context.go('/register/passenger?ref=$_code'),
-                      ),
+                      if (!widget.downloadOnly)
+                        ICGradientButton(
+                          label: 'Зарегистрироваться',
+                          icon: Icons.arrow_forward_rounded,
+                          onPressed: () => context
+                              .go('/register/passenger?ref=$_code&download=1'),
+                        ),
                       const SizedBox(height: 10),
+                      if (widget.downloadOnly && _googlePlayUrl != null) ...[
+                        ICGradientButton(
+                            label: 'Скачать в Google Play',
+                            icon: Icons.android,
+                            onPressed: () => _openStore(_googlePlayUrl!)),
+                        const SizedBox(height: 10),
+                      ],
+                      if (widget.downloadOnly && _appStoreUrl != null) ...[
+                        ICGradientButton(
+                            label: 'Скачать в App Store',
+                            icon: Icons.apple,
+                            onPressed: () => _openStore(_appStoreUrl!)),
+                        const SizedBox(height: 10),
+                      ],
+                      ICPremiumTextButton(
+                          label: 'Скопировать код приглашения',
+                          icon: Icons.copy,
+                          onPressed: () async {
+                            await Clipboard.setData(ClipboardData(text: _code));
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content:
+                                        Text('Код приглашения скопирован')));
+                          }),
+                      const SizedBox(height: 10),
+                      if (widget.downloadOnly)
+                        ICGradientButton(
+                          label: 'Продолжить в веб-версии',
+                          icon: Icons.public,
+                          onPressed: () => context.go('/order'),
+                        ),
+                      if (widget.downloadOnly &&
+                          _appStoreUrl == null &&
+                          _googlePlayUrl == null)
+                        const Text(
+                            'Скачивание пока недоступно. Вы можете пользоваться веб-версией.'),
                       Row(
                         children: [
                           Expanded(

@@ -27,7 +27,7 @@ class AppConstants {
   static const String secureStoreNamespace = 'intercity.mobile.secure';
   static const String publicWebUrl = String.fromEnvironment(
     'INTERCITY_PUBLIC_WEB_URL',
-    defaultValue: 'https://inter-city-pkzpps.web.app',
+    defaultValue: 'https://intercity.89-207-255-27.sslip.io',
   );
 
   // Theme Colors

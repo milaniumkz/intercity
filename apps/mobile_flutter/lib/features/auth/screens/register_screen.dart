@@ -12,10 +12,15 @@ import '../../../core/utils/navigation_back.dart';
 import '../../../core/utils/phone_input_formatter.dart';
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key, this.role = 'passenger', this.referralCode});
+  const RegisterScreen(
+      {super.key,
+      this.role = 'passenger',
+      this.referralCode,
+      this.downloadAfterRegistration = false});
 
   final String role;
   final String? referralCode;
+  final bool downloadAfterRegistration;
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -156,7 +161,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
         }
         await AppPreferences.clearPendingReferralCode();
         if (mounted) {
-          context.go(_isDriver ? '/driver/verification' : '/order');
+          final code = _normalizeReferralInput(_referralController.text);
+          context.go(widget.downloadAfterRegistration && code != null
+              ? '/ref/$code/download'
+              : (_isDriver ? '/driver/verification' : '/order'));
         }
       }
     } catch (e) {

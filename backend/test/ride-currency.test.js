@@ -221,7 +221,8 @@ test('local database stores city rates and immutable order/request currencies', 
         assert.equal((await wallets.getWallet(user.id, 'RUB')).money, 2350);
         await orders.applyDriverOrderCommissionDebit({ id: order.id, price: 500, currency: 'RUB', commissionAmount: 50, driver: { userId: user.id } });
         assert.equal((await wallets.getWallet(user.id, 'RUB')).money, 2350);
-        await orders.applyReferralCommissionBonuses({ id: order.id, currency: 'RUB', price: 500, commissionAmount: 50, passenger: { referredBy: recipient.refCode } });
+        await prisma.user.update({ where: { id: user.id }, data: { referredBy: recipient.refCode } });
+        await orders.applyReferralCommissionBonuses({ id: order.id, currency: 'RUB', price: 500, commissionAmount: 50, passengerId: user.id });
         assert.equal((await wallets.getWallet(recipient.id, 'RUB')).bonus, 112.5);
         const bonusPayout = await wallets.createPayoutRequest(user.id, { amount: 2500, currency: 'RUB', cardNumber: '4400430154321098' }, 'DRIVER');
         assert.equal(bonusPayout.source, 'BONUS');

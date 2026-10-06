@@ -1,3 +1,4 @@
+import '../../referral/widgets/referral_profile_card.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -572,6 +573,8 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
             children: [
+              ReferralProfileCard(user: _user),
+              const SizedBox(height: 12),
               Row(
                 children: [
                   IconButton(

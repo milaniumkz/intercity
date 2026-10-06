@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+import { creditRideReferrals } from '../common/referral-bonus';
 import { moneyField, bonusField } from '../common/currency';
 import { requireNoActivePassengerOrder } from '../common/active-passenger-order';
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
@@ -745,9 +747,11 @@ export class OrdersService {
             updateData.completedAt = new Date();
         }
 
-        const updatedOrder = await this.prisma.order.update({
-            where: { id: orderId },
-            data: updateData,
+        const updatedOrder = await this.prisma.$transaction(async tx => {
+            const changed = await tx.order.updateMany({ where: { id: orderId, status: order.status }, data: updateData });
+            if (changed.count !== 1) throw new BadRequestException('Order status changed. Refresh the order.');
+            if (targetStatus === 'COMPLETED') await this.applyReferralCommissionBonuses(order, tx);
+            return tx.order.findUniqueOrThrow({ where: { id: orderId } });
         });
         await this.recordRideEventSafe({
             orderId: order.id,
@@ -776,7 +780,6 @@ export class OrdersService {
         // inviter of passenger and inviter of driver.
         if (targetStatus === 'COMPLETED' && order.status !== 'COMPLETED') {
             await this.applyDriverOrderCommissionDebit(order);
-            await this.applyReferralCommissionBonuses(order);
         }
 
         return updatedOrder;
@@ -995,95 +998,20 @@ export class OrdersService {
         });
     }
 
-    private async applyReferralCommissionBonuses(order: any) {
-        const settings = await this.prisma.appSettings.findMany({
-            where: {
-                key: {
-                    in: [
-                        'referralCommissionPercent',
-                        'referralPercent',
-                        'orderCommissionPercent',
-                    ],
-                },
-            },
-        });
-        const referralCommissionPercent = parseFloat(
-            settings.find((s) => s.key === 'referralCommissionPercent')?.value || '25'
-        );
-        const orderCommissionPercent = parseFloat(
-            settings.find((s) => s.key === 'orderCommissionPercent')?.value || '10'
-        );
-
-        const commissionAmount =
-            typeof order.commissionAmount === 'number' && order.commissionAmount > 0
-                ? order.commissionAmount
-                : ((order.price || 0) * orderCommissionPercent) / 100;
-        if (commissionAmount <= 0 || referralCommissionPercent <= 0) return;
-
-        const bonusAmount = (commissionAmount * referralCommissionPercent) / 100;
-        if (bonusAmount <= 0) return;
-
-        const referralCredits = [
-            {
-                side: 'PASSENGER',
-                code: this.normalizeReferralCode(order.passenger?.referredBy),
-            },
-            {
-                side: 'DRIVER',
-                code: this.normalizeReferralCode(order.driver?.user?.referredBy),
-            },
-        ].filter((item) => item.code);
-        if (referralCredits.length === 0) return;
-
-        const referrers = await this.prisma.user.findMany({
-            where: { refCode: { in: referralCredits.map((item) => item.code!) } },
-            select: { id: true, refCode: true },
-        });
-        const referrerByCode = new Map(
-            referrers.map((referrer) => [
-                this.normalizeReferralCode(referrer.refCode),
-                referrer,
-            ])
-        );
-
-        await Promise.all(
-            referralCredits.map(async (credit) => {
-                const referrer = referrerByCode.get(credit.code!);
-                if (!referrer) return;
-                const idempotencyKey = `referral:${order.id}:${credit.side}`;
-                if (await this.walletTransactionExists(idempotencyKey)) return;
-
-                const wallet = await this.prisma.wallet.findUnique({
-                    where: { userId: referrer.id },
-                    select: {
-                        id: true,
-                    },
-                });
-                if (!wallet) return;
-                await this.prisma.wallet.update({
-                    where: { userId: referrer.id },
-                    data: { [bonusField(order.currency)]: { increment: bonusAmount } },
-                });
-                await this.recordWalletTransactionSafe({
-                    walletId: wallet.id,
-                    type: 'REFERRAL_ORDER_BONUS',
-                    direction: 'CREDIT',
-                    balanceSource: 'BONUS',
-                    amount: bonusAmount,
-                    currency: order.currency,
-                    actorUserId: referrer.id,
-                    orderId: order.id,
-                    idempotencyKey,
-                    note: `Referral bonus for ${credit.side.toLowerCase()} side of completed order ${order.id}`,
-                });
-            })
-        );
+    private async applyReferralCommissionBonuses(order: any, tx?: Prisma.TransactionClient) {
+        const setting = await (tx ?? this.prisma).appSettings.findUnique({ where: { key: 'orderCommissionPercent' } });
+        const percent = Number(setting?.value ?? '10');
+        const commissionAmount = typeof order.commissionAmount === 'number'
+            ? order.commissionAmount : ((order.price || 0) * percent) / 100;
+        const ride = {
+            id: order.id, currency: order.currency ?? 'KZT', commissionAmount,
+            passengerId: order.passengerId ?? order.passenger?.id,
+            driverUserId: order.driver?.userId ?? order.driver?.user?.id,
+        };
+        if (tx) await creditRideReferrals(tx, ride);
+        else await this.prisma.$transaction(transaction => creditRideReferrals(transaction, ride));
     }
 
-    private normalizeReferralCode(raw?: string | null): string | null {
-        const normalized = (raw || '').trim().toUpperCase();
-        return normalized.length > 0 ? normalized : null;
-    }
 
     private async recordWalletTransactionSafe(input: {
         walletId: string;

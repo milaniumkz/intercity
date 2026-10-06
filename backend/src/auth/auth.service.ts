@@ -38,6 +38,7 @@ export class AuthService {
         const normalizedReferralCode = this.normalizeReferralCode(dto.referralCode);
 
         let cityId = null;
+        let referredBy: string | null = null;
 
         if (dto.lat !== undefined && dto.lng !== undefined) {
             const reverse = await this.geoService.reverseGeocode(dto.lat, dto.lng);
@@ -50,6 +51,7 @@ export class AuthService {
                 where: { refCode: normalizedReferralCode },
             });
             if (referrer) {
+                referredBy = referrer.refCode;
                 cityId = referrer.cityId;
             }
         }
@@ -62,7 +64,7 @@ export class AuthService {
                 name: dto.name,
                 refCode,
                 refLink,
-                referredBy: normalizedReferralCode,
+                referredBy,
                 cityId,
                 role: 'PASSENGER',
             },
@@ -84,7 +86,7 @@ export class AuthService {
                 name: user.name,
                 role: user.role,
                 refCode: user.refCode,
-                refLink: user.refLink,
+                refLink: this.buildReferralLink(user.refCode),
             },
             ...tokens,
         };
@@ -193,7 +195,20 @@ export class AuthService {
         });
         if (!user) return null;
         const { password, ...safeUser } = user;
-        return safeUser;
+        return { ...safeUser, refLink: this.buildReferralLink(user.refCode) };
+    }
+
+    async getReferralSummary(userId: string) {
+        const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { refCode: true } });
+        if (!user) throw new UnauthorizedException('User not found');
+        const invitedCount = await this.prisma.user.count({ where: { referredBy: user.refCode } });
+        const amounts = await this.prisma.walletTransaction.groupBy({
+            by: ['currency'], where: { wallet: { userId }, type: 'REFERRAL_ORDER_BONUS', direction: 'CREDIT' },
+            _sum: { amount: true },
+        });
+        return { refCode: user.refCode, refLink: this.buildReferralLink(user.refCode), invitedCount,
+            earned: { KZT: amounts.find(x => x.currency === 'KZT')?._sum.amount ?? 0,
+                      RUB: amounts.find(x => x.currency === 'RUB')?._sum.amount ?? 0 } };
     }
 
     async savePushToken(userId: string, token: string, platform?: string) {
@@ -310,11 +325,12 @@ export class AuthService {
     }
 
     private buildReferralLink(refCode: string): string {
-        const baseUrl = (
+        let baseUrl = (
             this.configService.get<string>('PUBLIC_WEB_URL') ||
             process.env.PUBLIC_WEB_URL ||
-            'https://inter-city-pkzpps.web.app'
+            'https://intercity.89-207-255-27.sslip.io'
         ).replace(/\/+$/, '');
+        if (baseUrl === 'https://inter-city-pkzpps.web.app') baseUrl = 'https://intercity.89-207-255-27.sslip.io';
         return `${baseUrl}/#/ref/${refCode}`;
     }
 }
