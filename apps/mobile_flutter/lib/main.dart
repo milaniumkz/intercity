@@ -35,6 +35,7 @@ import 'features/referral/screens/referral_landing_page.dart';
 GoRouter createRouter({
   String initialLocation = '/startup',
   bool disableAuthRedirect = false,
+  ApiClient? orderApiClient,
 }) =>
     GoRouter(
       initialLocation: initialLocation,
@@ -102,6 +103,7 @@ GoRouter createRouter({
         GoRoute(
           path: '/order',
           builder: (context, state) => OrderPage(
+            apiClient: orderApiClient,
             key: ValueKey(state.uri.toString()),
             resetToken: state.uri.queryParameters['reset'],
             initialStep: int.tryParse(state.uri.queryParameters['step'] ?? ''),
@@ -110,6 +112,7 @@ GoRouter createRouter({
         GoRoute(
           path: '/order/:stage',
           builder: (context, state) => OrderPage(
+            apiClient: orderApiClient,
             key: ValueKey(state.uri.toString()),
             resetToken: state.uri.queryParameters['reset'],
             routeStage: state.pathParameters['stage'],

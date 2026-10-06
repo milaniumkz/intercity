@@ -1291,6 +1291,17 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                         onPressed: _copyTripShareLink,
                       ),
                     ),
+                    if (order != null &&
+                        !_isFinal((order['status'] ?? '').toString())) ...[
+                      const SizedBox(height: 10),
+                      _premiumActionButton(
+                        label: _cancelling
+                            ? 'Отменяем заказ...'
+                            : 'Отменить заказ',
+                        icon: Icons.close_rounded,
+                        onPressed: _cancelling ? null : _cancelOrder,
+                      ),
+                    ],
                   ],
                 ),
               ),

@@ -8,6 +8,23 @@ import 'package:intercity_mobile/core/services/sse_service.dart';
 import 'package:intercity_mobile/features/passenger/screens/order_searching_page.dart';
 
 void main() {
+  testWidgets('ongoing city trip has a cancellation action', (tester) async {
+    tester.view.physicalSize = const Size(1440, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+        home: OrderSearchingPage(
+      orderId: 'order-1',
+      apiClient: _FakeApiClient(status: 'IN_PROGRESS'),
+      enableLiveMap: false,
+      realtimeConnector:
+          (String path, {Map<String, dynamic>? queryParameters}) async => null,
+    )));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Отменить заказ'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
   for (final currency in ['RUB', 'KZT']) {
     testWidgets('passenger order displays its saved $currency currency',
         (tester) async {
@@ -102,7 +119,7 @@ void main() {
 }
 
 class _FakeApiClient extends ApiClient {
-  _FakeApiClient({this.currency = 'KZT'})
+  _FakeApiClient({this.currency = 'KZT', this.status = 'SEARCHING_DRIVER'})
       : super(
           dio: Dio(),
           refreshDio: Dio(),
@@ -112,6 +129,7 @@ class _FakeApiClient extends ApiClient {
 
   int getCalls = 0;
   final String currency;
+  final String status;
 
   @override
   Future<Response<dynamic>> get(
@@ -124,7 +142,7 @@ class _FakeApiClient extends ApiClient {
       requestOptions: RequestOptions(path: path),
       data: <String, dynamic>{
         'id': 'order-1',
-        'status': 'SEARCHING_DRIVER',
+        'status': status,
         'currency': currency,
         'price': 1500,
         'fromAddress': 'Точка A',

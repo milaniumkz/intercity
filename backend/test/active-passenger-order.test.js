@@ -26,3 +26,17 @@ test('allows creation when both order tables have no active order', async () => 
         intercityRequest: { findFirst: async () => null },
     }, 'account');
 });
+
+const { OrdersService } = require('../dist/src/orders/orders.service');
+for (const kind of ['CITY','INTERCITY','NONE']) {
+ test(`active order lookup returns ${kind} for the authenticated passenger`,async()=>{
+  const makeFinder=(type)=>async({where,select})=>{
+   assert.equal(where.passengerId,'account');assert.deepEqual(where.status.notIn,['COMPLETED','CANCELLED']);
+   assert.deepEqual(select,{id:true,status:true});
+   return kind===type?{id:'existing',status:type==='CITY'?'SEARCHING_DRIVER':'OPEN'}:null;
+  };
+  const service=new OrdersService({order:{findFirst:makeFinder('CITY')},intercityRequest:{findFirst:makeFinder('INTERCITY')}},null,null,null,null);
+  const result=await service.getActivePassengerOrder('account');
+  if(kind==='NONE')assert.equal(result,null);else {assert.equal(result.type,kind);assert.equal(result.id,'existing');}
+ });
+}

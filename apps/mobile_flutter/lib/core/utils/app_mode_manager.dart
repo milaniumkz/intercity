@@ -22,10 +22,12 @@ class AppModeManager {
   static Future<String> resolveHomeRoute(
     ApiClient api, {
     required String role,
+    String? userId,
     AppModeReader? readLastMode,
     AppModeWriter? writeLastMode,
     DriverStatusLoader? loadDriverStatus,
   }) async {
+    if (userId != null) await AppPreferences.setAppModeUser(userId);
     final normalizedRole = role.toUpperCase();
     if (normalizedRole == 'ADMIN') {
       return '/admin/dashboard';

@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
-import '../../../core/services/app_preferences.dart';
 import '../../../core/theme/theme_controller.dart';
 import '../../../core/utils/app_mode_manager.dart';
 import '../../../core/utils/driver_access.dart';
@@ -205,8 +204,8 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   }
 
   Future<void> _logout() async {
+    await AppModeManager.rememberDriverMode();
     await ApiClient().clearTokens();
-    await AppPreferences.clearLastAppMode();
     if (!mounted) return;
     context.go('/login');
   }
