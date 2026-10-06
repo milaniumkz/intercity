@@ -56,6 +56,7 @@ JS
     [[ "$TARGET" =~ ^[0-9]{10}$ ]] || { echo 'Expected 10-digit phone'; exit 1; }
     docker exec -i intercity-backend node - "$TARGET" <<'JS'
 const {PrismaClient}=require('@prisma/client');
+const {JwtService}=require('@nestjs/jwt');
 const db=new PrismaClient();
 (async()=>{
  const users=await db.user.findMany({where:{phone:{endsWith:process.argv[2]}},select:{id:true,role:true}});
@@ -63,7 +64,14 @@ const db=new PrismaClient();
  const user=users[0];
  const orders=await db.order.findMany({where:{passengerId:user.id,status:{notIn:['COMPLETED','CANCELLED']}},select:{id:true,status:true,mode:true,bonusUsedAmount:true,currency:true,createdAt:true}});
  const requests=await db.intercityRequest.findMany({where:{passengerId:user.id,status:{notIn:['COMPLETED','CANCELLED']}},select:{id:true,status:true,createdAt:true}});
- console.log(JSON.stringify({user,orders,requests}));
+ const token=new JwtService({secret:process.env.JWT_SECRET}).sign({sub:user.id,role:user.role},{expiresIn:'60s'});
+ const response=await fetch(`http://127.0.0.1:${process.env.PORT||3000}/api/auth/referral`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(10000)});
+ if(!response.ok)throw Error('Referral API returned HTTP '+response.status);
+ const referral=await response.json();
+ if(!referral.refLink.startsWith('https://intercity.89-207-255-27.sslip.io/#/ref/'))throw Error('Unexpected referral link address');
+ const cancelledOrders=await db.order.findMany({where:{passengerId:user.id,id:{in:['b46a944c-bf95-40fd-ae0f-dd25940a0e58']}},select:{id:true,status:true}});
+ const cancelledRequests=await db.intercityRequest.findMany({where:{passengerId:user.id,id:{in:['fbdc4438-0e1d-4587-8900-e7ef70b71855']}},select:{id:true,status:true}});
+ console.log(JSON.stringify({activeOrderCount:orders.length,activeRequestCount:requests.length,cancelledOrders,cancelledRequests,referralApiVerified:true,referralLinkVerified:true}));
 })().catch(e=>{console.error(e.message);process.exitCode=1}).finally(()=>db.$disconnect());
 JS
     ;;
