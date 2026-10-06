@@ -98,3 +98,18 @@ test('Ridder is displayed by current name while historical name remains searchab
   assert(!rows.some(c=>c.name==='Лениногорск' && c.countryCode==='KZ'));
  }
 });
+
+
+test('reverse lookup failure marks nearest city and address as unconfirmed', async()=>{
+ const geo=makeGeo();geo.findNearestCity=async()=>({id:'nearest',name:'Алматы',countryCode:'KZ'});
+ geo.fetchGeo=async()=>{throw Error('timeout')};
+ const result=await geo.reverseGeocode(49.9,82.6);
+ assert.equal(result.cityResolved,false);assert.equal(result.addressResolved,false);
+});
+test('reverse lookup canonicalizes historical Ridder name and uses exact country-scoped lookup', async()=>{
+ const geo=makeGeo();geo.findNearestCity=async()=>null;
+ geo.fetchGeo=async()=>({json:async()=>({address:{city:'Лениногорск',country_code:'kz',road:'улица Гагарина',house_number:'10'}})});
+ geo.prisma.city.findFirst=async({where})=>{assert.equal(where.name.equals,'Риддер');assert.equal(where.countryCode,'KZ');return {id:'ridder',name:'Риддер',countryCode:'KZ'}};
+ const result=await geo.reverseGeocode(50.344,83.513);
+ assert.equal(result.city,'Риддер');assert.equal(result.cityId,'ridder');assert.equal(result.cityResolved,true);assert.equal(result.addressResolved,true);
+});
