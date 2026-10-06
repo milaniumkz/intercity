@@ -113,3 +113,13 @@ test('reverse lookup canonicalizes historical Ridder name and uses exact country
  const result=await geo.reverseGeocode(50.344,83.513);
  assert.equal(result.city,'Риддер');assert.equal(result.cityId,'ridder');assert.equal(result.cityResolved,true);assert.equal(result.addressResolved,true);
 });
+
+test('reverse lookup normalizes administrative city labels and preserves verified house address', async()=>{
+ for(const [raw,name,lat,lng] of [['городской округ Омск','Омск',54.989,73.368],['Городская администрация Риддера','Риддер',50.344,83.513],['Усть-Каменогорск','Усть-Каменогорск',49.902631,82.609936]]){
+  const geo=makeGeo();const country=name==='Омск'?'RU':'KZ';
+  geo.findNearestCity=async()=>({id:'city',name,countryCode:country});
+  geo.fetchGeo=async()=>({json:async()=>({address:{city:raw,country_code:country.toLowerCase(),road:'Утепова улица',house_number:'24'}})});
+  const result=await geo.reverseGeocode(lat,lng);assert.equal(result.city,name);
+  if(name==='Усть-Каменогорск')assert.match(result.address,/Оралхана Бокея, 24/);
+ }
+});
