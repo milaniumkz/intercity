@@ -59,7 +59,7 @@ void main() {
     expect(api.search!['lat'], 54.989);
     expect(api.search!['lng'], 73.368);
     expect(api.search!.containsKey('cityId'), isFalse);
-    expect(find.text('Омск, улица Ленина, 10'), findsWidgets);
+    expect(find.text('улица Ленина, 10'), findsWidgets);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }
