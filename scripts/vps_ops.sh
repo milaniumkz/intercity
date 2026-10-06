@@ -12,6 +12,20 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "inspect-oleg" ]]; then
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+BEGIN READ ONLY;
+SELECT u.id, u.name, right(u.phone,4),
+ (SELECT count(*) FROM "Order" o WHERE o."passengerId"=u.id AND o.status::text NOT IN ('COMPLETED','CANCELLED')) AS active_city,
+ (SELECT count(*) FROM "IntercityRequest" r WHERE r."passengerId"=u.id AND r.status::text NOT IN ('COMPLETED','CANCELLED')) AS active_intercity
+FROM "User" u WHERE lower(u.name) LIKE '%олег%' OR lower(u.name) LIKE '%oleg%';
+SELECT o.id,o.status,o."createdAt",o.price,o.currency,o."paymentMethod",right(u.phone,4)
+FROM "Order" o JOIN "User" u ON u.id=o."passengerId"
+WHERE lower(u.name) LIKE '%олег%' OR lower(u.name) LIKE '%oleg%' ORDER BY o."createdAt" DESC LIMIT 10;
+ROLLBACK;
+SQL
+      exit 0
+    fi
     cat "$APP_ROOT/current_commit" 2>/dev/null || true
     compose ps
     command -v python3
