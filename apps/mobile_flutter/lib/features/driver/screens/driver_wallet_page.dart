@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:intercity_shared/intercity_shared.dart';
 import 'package:flutter/services.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/theme/theme_controller.dart';
@@ -83,9 +84,11 @@ const _boardWalletOperationData = <_BoardWalletOperation>[
 ];
 
 class DriverWalletPage extends StatefulWidget {
-  const DriverWalletPage({super.key, this.routeStage});
+  const DriverWalletPage({super.key, this.routeStage, this.apiClient});
 
   final String? routeStage;
+
+  final ApiClient? apiClient;
 
   @override
   State<DriverWalletPage> createState() => _DriverWalletPageState();
@@ -93,6 +96,8 @@ class DriverWalletPage extends StatefulWidget {
 
 class _DriverWalletPageState extends State<DriverWalletPage> {
   Map<String, dynamic>? _wallet;
+  String _currency = 'KZT';
+  String get _currencySymbol => _currency == 'RUB' ? '₽' : '₸';
   final _topupCtrl = TextEditingController(text: '1000');
   final _payoutCtrl = TextEditingController(text: '1000');
   final _cardCtrl = TextEditingController();
@@ -102,7 +107,7 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
   bool _initialized = false;
   int _boardWalletTab = 0;
   String _boardWalletFilter = 'Все';
-  int _bonusBalance = 2450;
+  num _bonusBalance = 0;
 
   @override
   void initState() {
@@ -135,19 +140,20 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
 
   bool get _useIntercityBoardUi => true;
 
-  int _asInt(Object? value, {required int fallback}) {
-    if (value is num) return value.round();
-    return int.tryParse((value ?? '').toString()) ?? fallback;
+  num _asAmount(Object? value, {required num fallback}) {
+    if (value is num) return value;
+    return num.tryParse((value ?? '').toString()) ?? fallback;
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final res = await ApiClient().get('/wallet');
+      final res = await (widget.apiClient ?? ApiClient())
+          .get('/wallet?currency=$_currency');
       if (!mounted) return;
       setState(() {
         _wallet = Map<String, dynamic>.from(res.data as Map);
-        _bonusBalance = _asInt(
+        _bonusBalance = _asAmount(
           _wallet?['bonuses'] ??
               _wallet?['bonusBalance'] ??
               _wallet?['points'] ??
@@ -176,8 +182,10 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
         _topupBusy = true;
         _message = 'Создаём заявку на пополнение...';
       });
-      final res = await ApiClient().post('/wallet/topup-request', data: {
+      final res = await (widget.apiClient ?? ApiClient())
+          .post('/wallet/topup-request', data: {
         'amount': amount,
+        'currency': _currency,
       });
       final data = res.data is Map
           ? Map<String, dynamic>.from(res.data as Map)
@@ -233,8 +241,10 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
         );
         return;
       }
-      final res = await ApiClient().post('/wallet/payout-request', data: {
+      final res = await (widget.apiClient ?? ApiClient())
+          .post('/wallet/payout-request', data: {
         'amount': amount,
+        'currency': _currency,
         'cardNumber': _cardCtrl.text.trim(),
       });
       final data = res.data is Map
@@ -612,7 +622,7 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
                       ),
                     ),
                     Text(
-                      '1 бонус = 1 ₸',
+                      '1 бонус = 1 $_currencySymbol',
                       style: TextStyle(
                         color: muted,
                         fontWeight: FontWeight.w700,
@@ -832,7 +842,7 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
             ),
             child: _heroAmountTile(
               label: 'Доступно на балансе',
-              value: '$money ₸',
+              value: '$money $_currencySymbol',
               color: AppTheme.primaryColor,
             ),
           ),
@@ -875,6 +885,25 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
     );
   }
 
+  Widget _currencySelector() => SegmentedButton<String>(
+        segments: const [
+          ButtonSegment(value: 'KZT', label: Text('Тенге ₸')),
+          ButtonSegment(value: 'RUB', label: Text('Рубли ₽')),
+        ],
+        selected: {_currency},
+        onSelectionChanged: _loading
+            ? null
+            : (values) {
+                setState(() {
+                  _currency = values.single;
+                  _bonusBalance = 0;
+                  _wallet = null;
+                  _loading = true;
+                });
+                _load();
+              },
+      );
+
   @override
   Widget build(BuildContext context) {
     if (_routeStage('seed') || _useIntercityBoardUi) {
@@ -913,6 +942,7 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
                   ),
                 ],
               ),
+              _currencySelector(),
               if (_loading) const LinearProgressIndicator(),
               const SizedBox(height: 8),
               _driverWalletHero(money: money),
@@ -1014,13 +1044,20 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
     final muted = isDark ? Colors.white70 : const Color(0xFF7C7590);
     final money = _moneyText(_wallet?['money']);
     final blocked = _moneyText(
-      _wallet?['blocked'] ?? _wallet?['locked'] ?? _wallet?['reserved'] ?? 540,
+      _wallet?['blocked'] ??
+          _wallet?['locked'] ??
+          _wallet?['reserved'] ??
+          (_routeStage('seed') && _currency == 'KZT' ? 540 : 0),
     );
     final payout = _moneyText(
-      _wallet?['payout'] ?? _wallet?['availablePayout'] ?? 5130,
+      _wallet?['payout'] ??
+          _wallet?['availablePayout'] ??
+          (_routeStage('seed') && _currency == 'KZT' ? 5130 : 0),
     );
     final earned = _moneyText(
-      _wallet?['earnedTotal'] ?? _wallet?['totalEarned'] ?? 45680,
+      _wallet?['earnedTotal'] ??
+          _wallet?['totalEarned'] ??
+          (_routeStage('seed') && _currency == 'KZT' ? 45680 : 0),
     );
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -1050,6 +1087,7 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
                   const SizedBox(width: 48),
                 ],
               ),
+              _currencySelector(),
               const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.all(14),
@@ -1075,7 +1113,7 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '$money ₸',
+                            '$money $_currencySymbol',
                             style: TextStyle(
                               color: text,
                               fontSize: 28,
@@ -1099,12 +1137,16 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
               Row(
                 children: [
                   Expanded(
-                      child: _boardStatCard('Заблокировано', '$blocked ₸')),
-                  const SizedBox(width: 8),
-                  Expanded(child: _boardStatCard('К выплате', '$payout ₸')),
+                      child: _boardStatCard(
+                          'Заблокировано', '$blocked $_currencySymbol')),
                   const SizedBox(width: 8),
                   Expanded(
-                      child: _boardStatCard('Всего заработано', '$earned ₸')),
+                      child: _boardStatCard(
+                          'К выплате', '$payout $_currencySymbol')),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: _boardStatCard(
+                          'Всего заработано', '$earned $_currencySymbol')),
                 ],
               ),
               const SizedBox(height: 10),
@@ -1173,17 +1215,7 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
     );
   }
 
-  String _moneyText(dynamic value) {
-    final number = value is num ? value : num.tryParse(value?.toString() ?? '');
-    final normalized = (number ?? 0).round().toString();
-    final buffer = StringBuffer();
-    for (var i = 0; i < normalized.length; i++) {
-      final left = normalized.length - i;
-      buffer.write(normalized[i]);
-      if (left > 1 && left % 3 == 1) buffer.write(' ');
-    }
-    return buffer.toString();
-  }
+  String _moneyText(dynamic value) => formatWalletAmount(value);
 
   Widget _boardStatCard(String label, String value) {
     final theme = Theme.of(context);
@@ -1301,6 +1333,35 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
   }
 
   List<Widget> _boardWalletOperations() {
+    if (!_routeStage('seed') || _currency == 'RUB') {
+      final rows = (_wallet?['transactions'] as List? ?? []).whereType<Map>();
+      final visible = rows.where((row) {
+        final type = row['type'].toString();
+        return _boardWalletFilter == 'Все' ||
+            (_boardWalletFilter == 'Пополнения' && type.startsWith('TOPUP')) ||
+            (_boardWalletFilter == 'Списания' && row['direction'] == 'DEBIT') ||
+            (_boardWalletFilter == 'Выплаты' && type.startsWith('PAYOUT')) ||
+            (_boardWalletFilter == 'Комиссии' &&
+                (type.contains('COMMISSION') || type.contains('INTERCITY')));
+      }).toList();
+      if (visible.isEmpty) {
+        return [
+          const ICPremiumInfoBanner(text: 'Операций по выбранному фильтру нет.')
+        ];
+      }
+      return visible
+          .map((row) => _boardOperationCard(
+                icon: Icons.account_balance_wallet_rounded,
+                iconColor: AppTheme.primaryColor,
+                title: (row['note'] ?? row['type']).toString(),
+                subtitle: row['balanceSource'] == 'BONUS' ? 'Бонусы' : 'Деньги',
+                amount:
+                    '${row['direction'] == 'DEBIT' ? '-' : '+'}${_moneyText(row['amount'])} $_currencySymbol',
+                amountColor: AppTheme.primaryColor,
+                time: (row['createdAt'] ?? '').toString().split('T').first,
+              ))
+          .toList();
+    }
     final items = _boardWalletOperationData.where((item) {
       return _boardWalletFilter == 'Все' || item.type == _boardWalletFilter;
     }).toList();
@@ -1343,7 +1404,7 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
           iconColor: AppTheme.primaryColor,
           title: 'Заблокировано под комиссии',
           subtitle: 'Средства резервируются при принятии заявок',
-          amount: '$blocked ₸',
+          amount: '$blocked $_currencySymbol',
           amountColor: AppTheme.primaryColor,
           time: 'сейчас',
         ),
@@ -1352,7 +1413,7 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
           iconColor: const Color(0xFF26B36A),
           title: 'Доступно к выплате',
           subtitle: 'Можно вывести на карту',
-          amount: '$payout ₸',
+          amount: '$payout $_currencySymbol',
           amountColor: const Color(0xFF26B36A),
           time: 'сейчас',
         ),
@@ -1361,7 +1422,7 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
           iconColor: const Color(0xFF7C2DFF),
           title: 'Всего заработано',
           subtitle: 'Сумма завершённых поездок',
-          amount: '$earned ₸',
+          amount: '$earned $_currencySymbol',
           amountColor: const Color(0xFF7C2DFF),
           time: 'всего',
         ),

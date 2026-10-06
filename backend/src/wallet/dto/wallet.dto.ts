@@ -1,13 +1,20 @@
-import { IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsNumber, IsOptional, IsString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-export class TopupRequestDto {
+class CurrencyDto {
+    @ApiPropertyOptional({ enum: ['KZT', 'RUB'], default: 'KZT' })
+    @IsOptional()
+    @IsIn(['KZT', 'RUB'])
+    currency?: string;
+}
+
+export class TopupRequestDto extends CurrencyDto {
     @ApiProperty()
     @IsNumber()
     amount: number;
 }
 
-export class PayoutRequestDto {
+export class PayoutRequestDto extends CurrencyDto {
     @ApiProperty()
     @IsNumber()
     amount: number;
@@ -18,7 +25,7 @@ export class PayoutRequestDto {
     cardNumber?: string;
 }
 
-export class BonusTransferDto {
+export class BonusTransferDto extends CurrencyDto {
     @ApiProperty({ example: '+77001234567' })
     @IsString()
     phone: string;

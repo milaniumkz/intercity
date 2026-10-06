@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intercity_shared/intercity_shared.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
@@ -59,6 +60,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   List<Map<String, dynamic>> _myIntercityTrips = const [];
   Map<String, dynamic>? _activeOrder;
   String _message = '';
+  String _offerCurrencySymbol = '₸';
   Timer? _locationTimer;
   Timer? _activeOrderPollTimer;
   Timer? _nearbyPollTimer;
@@ -683,6 +685,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _showOfferAcceptDialog(Map<String, dynamic> order) async {
+    _offerCurrencySymbol = rideCurrencySymbol(order);
     if (!mounted || _offerDialogOpen || _activeOrder != null || !_isOnline) {
       return;
     }
@@ -712,8 +715,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         : isAuction
             ? Icons.gavel_rounded
             : Icons.local_taxi_rounded;
-    final priceLabel =
-        requiresPriceOffer ? 'Предложите цену' : '${order['price'] ?? '-'} ₸';
+    final priceLabel = requiresPriceOffer
+        ? 'Предложите цену'
+        : '${order['price'] ?? '-'} ${rideCurrencySymbol(order)}';
     final fromAddress = (order['fromAddress'] ?? 'Точка подачи').toString();
     final toAddress = (order['toAddress'] ?? 'Точка назначения').toString();
     final paymentLabel = paymentMethodLabel(order['paymentMethod']?.toString());
@@ -1097,7 +1101,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                                   ),
                                   decoration: InputDecoration(
                                     labelText: 'Ваша цена',
-                                    suffixText: '₸',
+                                    suffixText: rideCurrencySymbol(order),
                                     labelStyle: const TextStyle(
                                       color: Colors.white70,
                                     ),
@@ -1573,7 +1577,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '$price ₸',
+              '$price $_offerCurrencySymbol',
               style: TextStyle(
                 color: selected ? Colors.white : const Color(0xFF171122),
                 fontWeight: FontWeight.w900,
@@ -3284,7 +3288,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                   Expanded(
                     child: _driverStatTile(
                       label: 'Баланс',
-                      value: '${_formatDriverMoney(_driverWallet?['money'])} ₸',
+                      value:
+                          '${formatWalletAmount(_driverWallet?['money'])} ₸ / ${formatWalletAmount(_driverWallet?['moneyRub'])} ₽',
                       icon: Icons.account_balance_wallet_rounded,
                       accent: AppTheme.primaryColor,
                     ),
@@ -3407,7 +3412,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
           const SizedBox(width: 10),
           Text(
-            '$price ₸',
+            '$price ${rideCurrencySymbol(order)}',
             style: const TextStyle(
               color: AppTheme.primaryColor,
               fontWeight: FontWeight.w900,
@@ -3528,7 +3533,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       title:
           '${request['fromAddress'] ?? request['fromCity'] ?? '-'} → ${request['toAddress'] ?? request['toCity'] ?? '-'}',
       subtitle: 'Пассажир: ${passenger['name'] ?? 'Пассажир'} • $seats мест(а)',
-      trailing: price == null ? 'принято' : '${_formatDriverMoney(price)} ₸',
+      trailing: price == null
+          ? 'принято'
+          : '${_formatDriverMoney(price)} ${rideCurrencySymbol(request)}',
       onTap: () async {
         setState(() {
           _activeOrder = request;
@@ -3820,7 +3827,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final card = isDark ? const Color(0xFF111426) : Colors.white;
     final text = isDark ? Colors.white : const Color(0xFF15162C);
     final muted = isDark ? Colors.white60 : const Color(0xFF77768A);
-    final balance = _formatDriverMoney(_driverWallet?['money']);
+    final balance = formatWalletAmount(_driverWallet?['money']);
     final todayCompleted =
         int.tryParse((_driverProfileValue('todayCompletedOrders') ?? '0')) ?? 0;
     final todayOrders = '$todayCompleted заказов';
@@ -4007,7 +4014,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       '$from → $to',
       distance == null ? 'Сегодня' : 'Сегодня • $distance км',
       isAuction ? 'Бизнес' : 'Комфорт+',
-      '$price ₸',
+      '$price ${rideCurrencySymbol(order)}',
       text,
       muted,
       isDark,
@@ -4423,7 +4430,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '$price ₸',
+                      '$price ${rideCurrencySymbol(order)}',
                       style: theme.textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.w900,
                       ),
@@ -4574,7 +4581,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                       icon: Icons.payments_outlined,
                       title: 'Ваша цена',
                       value: 'Введите сумму',
-                      trailing: '₸',
+                      trailing: rideCurrencySymbol(order),
                     ),
                     const SizedBox(height: 12),
                     Row(
@@ -4697,9 +4704,9 @@ class _DriverHomePageState extends State<DriverHomePage>
                             ),
                           ),
                         ),
-                        const Text(
-                          '₸',
-                          style: TextStyle(
+                        Text(
+                          _offerCurrencySymbol,
+                          style: const TextStyle(
                             color: Color(0xFF4E4962),
                             fontSize: 22,
                             fontWeight: FontWeight.w700,
@@ -4721,22 +4728,22 @@ class _DriverHomePageState extends State<DriverHomePage>
                   Row(
                     children: [
                       _boardPriceChip(
-                        '1 400 ₸',
+                        '1 400 $_offerCurrencySymbol',
                         _boardOfferPriceCtrl.text.trim() == '1400',
                         price: '1400',
                       ),
                       _boardPriceChip(
-                        '1 600 ₸',
+                        '1 600 $_offerCurrencySymbol',
                         _boardOfferPriceCtrl.text.trim() == '1600',
                         price: '1600',
                       ),
                       _boardPriceChip(
-                        '1 800 ₸',
+                        '1 800 $_offerCurrencySymbol',
                         _boardOfferPriceCtrl.text.trim() == '1800',
                         price: '1800',
                       ),
                       _boardPriceChip(
-                        '2 000 ₸',
+                        '2 000 $_offerCurrencySymbol',
                         _boardOfferPriceCtrl.text.trim() == '2000',
                         price: '2000',
                       ),
@@ -4903,7 +4910,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      '$price ₸',
+                      '$price ${rideCurrencySymbol(order)}',
                       style: theme.textTheme.headlineMedium?.copyWith(
                         fontWeight: FontWeight.w900,
                       ),
@@ -5981,7 +5988,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     borderRadius: BorderRadius.circular(16),
                   ),
                   child: Text(
-                    price == '-' ? '-' : '$price ₸',
+                    price == '-' ? '-' : '$price ${rideCurrencySymbol(order)}',
                     style: const TextStyle(
                       color: AppTheme.primaryColor,
                       fontWeight: FontWeight.w900,

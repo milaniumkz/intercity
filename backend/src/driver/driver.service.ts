@@ -1,3 +1,4 @@
+import { currencyForCountry, moneyField } from '../common/currency';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { promises as fs } from 'fs';
 import { extname, join } from 'path';
@@ -161,16 +162,15 @@ export class DriverService {
         if (!profile) {
             throw new NotFoundException('Driver profile not found');
         }
-        if (profile.online?.isOnline) {
-            await this.ensureDriverCanStayOnline(driverUserId, profile.id);
-        }
-
         let cityId = dto.cityId || null;
         if (!cityId) {
             const reverse = await this.geoService.reverseGeocode(dto.lat, dto.lng);
             cityId = reverse.cityId;
         }
 
+        if (profile.online?.isOnline) {
+            await this.ensureDriverCanStayOnline(driverUserId, profile.id, cityId ?? undefined);
+        }
         const updated = await this.prisma.driverOnline.update({
             where: { driverId: profile.id },
             data: {
@@ -211,7 +211,7 @@ export class DriverService {
             throw new BadRequestException('Driver profile not approved');
         }
         if (dto.isOnline) {
-            await this.ensureDriverCanStayOnline(driverUserId, profile.id);
+            await this.ensureDriverCanStayOnline(driverUserId, profile.id, dto.cityId);
         }
 
         const resolvedCityId = dto.cityId ?? profile.online?.cityId ?? profile.user?.cityId ?? null;
@@ -474,6 +474,7 @@ export class DriverService {
                 date: request.date,
                 seats,
                 price: offer?.price ?? request.price ?? null,
+                currency: request.currency,
                 passenger: passengersById.get(request.passengerId) ?? null,
                 acceptedAt: request.acceptedAt,
             };
@@ -540,6 +541,7 @@ export class DriverService {
                     paymentMethod: request.paymentMethod,
                     comment: request.comment,
                     price: null,
+                    currency: request.currency,
                     seats: request.seats ?? 1,
                     driverRouteSeatsAvailable: route?.seatsAvailable ?? null,
                     distanceKm,
@@ -788,22 +790,28 @@ export class DriverService {
         return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
     }
 
-    private async getDriverMinOnlineBalance(): Promise<number> {
+    private async getDriverMinOnlineBalance(currency = 'KZT'): Promise<number> {
         const setting = await this.prisma.appSettings.findUnique({
-            where: { key: 'driverMinOnlineBalance' },
+            where: { key: currency === 'RUB' ? 'driverMinOnlineBalanceRub' : 'driverMinOnlineBalance' },
         });
         return this.parsePositiveNumber(setting?.value, 100);
     }
 
-    private async ensureDriverCanStayOnline(driverUserId: string, driverId: string) {
-        const minBalance = await this.getDriverMinOnlineBalance();
+    private async ensureDriverCanStayOnline(driverUserId: string, driverId: string, selectedCityId?: string) {
+        const online = await this.prisma.driverOnline.findUnique({ where: { driverId }, include: { city: true } });
+        const user = await this.prisma.user.findUnique({ where: { id: driverUserId }, select: { cityId: true } });
+        const cityId = selectedCityId ?? online?.cityId ?? user?.cityId;
+        const city = cityId ? await this.prisma.city.findUnique({ where: { id: cityId } }) : null;
+        const currency = currencyForCountry(city?.countryCode);
+        const symbol = currency === 'RUB' ? '₽' : '₸';
+        const minBalance = await this.getDriverMinOnlineBalance(currency);
         if (minBalance <= 0) return;
 
         const wallet = await this.prisma.wallet.findUnique({
             where: { userId: driverUserId },
-            select: { money: true },
+            select: { money: true, moneyRub: true },
         });
-        const balance = wallet?.money ?? 0;
+        const balance = wallet?.[moneyField(currency)] ?? 0;
         if (balance >= minBalance) return;
 
         await this.prisma.driverOnline.update({
@@ -823,7 +831,7 @@ export class DriverService {
             },
         });
         throw new BadRequestException(
-            `Для выхода на линию нужен баланс не меньше ${minBalance} ₸. Сейчас доступно ${balance} ₸. Пополните баланс.`,
+            `Для выхода на линию нужен баланс не меньше ${minBalance} ${symbol}. Сейчас доступно ${balance} ${symbol}. Пополните баланс.`,
         );
     }
 

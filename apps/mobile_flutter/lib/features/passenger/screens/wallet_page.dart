@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intercity_shared/intercity_shared.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/theme/theme_controller.dart';
@@ -7,9 +8,11 @@ import '../../../core/widgets/ic_premium.dart';
 import '../widgets/passenger_bottom_nav.dart';
 
 class WalletPage extends StatefulWidget {
-  const WalletPage({super.key, this.paymentsOnly = false});
+  const WalletPage({super.key, this.paymentsOnly = false, this.apiClient});
 
   final bool paymentsOnly;
+
+  final ApiClient? apiClient;
 
   @override
   State<WalletPage> createState() => _WalletPageState();
@@ -18,7 +21,9 @@ class WalletPage extends StatefulWidget {
 class _WalletPageState extends State<WalletPage> {
   String _selectedPayment = 'Наличные';
   String _message = '';
-  int _bonusBalance = 0;
+  num _bonusBalance = 0;
+  String _currency = 'KZT';
+  String get _currencySymbol => _currency == 'RUB' ? '₽' : '₸';
   bool _loading = true;
 
   @override
@@ -29,12 +34,13 @@ class _WalletPageState extends State<WalletPage> {
 
   Future<void> _loadWallet() async {
     try {
-      final res = await ApiClient().get('/wallet');
+      final res = await (widget.apiClient ?? ApiClient())
+          .get('/wallet?currency=$_currency');
       final data = res.data;
       if (!mounted) return;
       if (data is Map) {
         setState(() {
-          _bonusBalance = _asInt(
+          _bonusBalance = _asAmount(
             data['bonuses'] ??
                 data['bonusBalance'] ??
                 data['points'] ??
@@ -51,9 +57,9 @@ class _WalletPageState extends State<WalletPage> {
     }
   }
 
-  int _asInt(Object? value, {required int fallback}) {
-    if (value is num) return value.round();
-    return int.tryParse((value ?? '').toString()) ?? fallback;
+  num _asAmount(Object? value, {required num fallback}) {
+    if (value is num) return value;
+    return num.tryParse((value ?? '').toString()) ?? fallback;
   }
 
   void _selectPayment(String value) {
@@ -62,6 +68,25 @@ class _WalletPageState extends State<WalletPage> {
       _message = 'Основной способ оплаты: $value';
     });
   }
+
+  Widget _currencySelector() => SegmentedButton<String>(
+        segments: const [
+          ButtonSegment(value: 'KZT', label: Text('Тенге ₸')),
+          ButtonSegment(value: 'RUB', label: Text('Рубли ₽')),
+        ],
+        selected: {_currency},
+        onSelectionChanged: _loading
+            ? null
+            : (values) {
+                setState(() {
+                  _currency = values.single;
+                  _bonusBalance = 0;
+
+                  _loading = true;
+                });
+                _loadWallet();
+              },
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -95,6 +120,7 @@ class _WalletPageState extends State<WalletPage> {
                   ),
                 ],
               ),
+              _currencySelector(),
               if (_loading)
                 const Padding(
                   padding: EdgeInsets.only(top: 4, bottom: 10),
@@ -133,7 +159,7 @@ class _WalletPageState extends State<WalletPage> {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            '$_bonusBalance',
+                            formatWalletAmount(_bonusBalance),
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 32,
@@ -179,9 +205,9 @@ class _WalletPageState extends State<WalletPage> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    const _BonusRule(
+                    _BonusRule(
                       icon: Icons.currency_ruble,
-                      text: '1 бонус = 1 ₸',
+                      text: '1 бонус = 1 $_currencySymbol',
                     ),
                     const _BonusRule(
                       icon: Icons.percent_rounded,

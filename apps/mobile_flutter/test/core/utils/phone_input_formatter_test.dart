@@ -30,6 +30,21 @@ void main() {
     test('accepts fully formatted Kazakhstan number', () {
       expect(isValidKzPhone('+7 (701) 515-15-01'), isTrue);
     });
+
+    test('preserves valid numbers starting with plus seven seven seven', () {
+      for (final phone in ['+77771234567', '+77781234567', '+77761234567']) {
+        expect(normalizeKzPhone(phone), phone);
+        expect(isValidKzPhone(phone), isTrue);
+        expect(isValidKzPhone(formatKzPhone(phone)), isTrue);
+      }
+    });
+
+    test('rejects incomplete and overlong numbers without truncating them', () {
+      for (final phone in ['', '+7', '+7777123456', '+777712345678']) {
+        expect(isValidKzPhone(phone), isFalse);
+        expect(isValidKzPhone(normalizeKzLocalPhone(phone)), isFalse);
+      }
+    });
   });
 
   group('KzPhoneInputFormatter', () {
@@ -90,6 +105,37 @@ void main() {
   });
 
   group('KzLocalPhoneInputFormatter', () {
+    test('formats a local number incrementally and preserves all digits', () {
+      final formatter = KzLocalPhoneInputFormatter();
+      var value = const TextEditingValue();
+      for (final digit in '7771234567'.split('')) {
+        value = formatter.formatEditUpdate(
+          value,
+          TextEditingValue(text: '${value.text}$digit'),
+        );
+      }
+      expect(value.text, '(777) 123-45-67');
+      expect(normalizeKzLocalPhone(value.text), '+77771234567');
+      expect(isValidKzPhone(normalizeKzLocalPhone(value.text)), isTrue);
+    });
+
+    test('accepts pasted local, international and trunk-prefix numbers', () {
+      final formatter = KzLocalPhoneInputFormatter();
+      for (final phone in [
+        '7771234567',
+        '+77771234567',
+        '+7 (777) 123-45-67',
+        '87771234567',
+      ]) {
+        final value = formatter.formatEditUpdate(
+          const TextEditingValue(),
+          TextEditingValue(text: phone),
+        );
+        expect(value.text, '(777) 123-45-67');
+        expect(normalizeKzLocalPhone(value.text), '+77771234567');
+        expect(isValidKzPhone(normalizeKzLocalPhone(value.text)), isTrue);
+      }
+    });
     test('keeps country code outside editable value', () {
       final formatter = KzLocalPhoneInputFormatter();
       final value = formatter.formatEditUpdate(

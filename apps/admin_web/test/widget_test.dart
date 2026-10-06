@@ -86,8 +86,10 @@ void main() {
 
     await tester.tap(find.text('Тарифы').last);
     await tester.pumpAndSettle();
-    await tester.enterText(
-        find.widgetWithText(TextField, 'City ID for city tariff'), 'city-1');
+    await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Almaty — ₸').last);
+    await tester.pumpAndSettle();
     await tester.enterText(
         find.widgetWithText(TextField, 'City tariff ID to deactivate'), 'ct-1');
     await tester.enterText(
@@ -96,7 +98,7 @@ void main() {
     await tester.enterText(
         find.widgetWithText(TextField, 'Delivery tariff ID to deactivate'),
         'dl-1');
-    await tester.tap(_buttonFinder('Create city tariff'));
+    await tester.tap(_buttonFinder('Создать городской тариф'));
     await tester.pumpAndSettle();
     await tester.tap(_buttonFinder('Create cargo tariff'));
     await tester.pumpAndSettle();

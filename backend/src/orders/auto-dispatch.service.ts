@@ -1,3 +1,4 @@
+import { moneyField } from '../common/currency';
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
@@ -74,7 +75,8 @@ export class AutoDispatchService {
             order.fromLng,
             searchRadiusKm,
             minFreshSec,
-            settings.driverMinOnlineBalance,
+            order.currency === 'RUB' ? settings.driverMinOnlineBalanceRub : settings.driverMinOnlineBalance,
+            order.currency,
         );
 
         if (drivers.length === 0) {
@@ -139,6 +141,7 @@ export class AutoDispatchService {
         searchRadiusKm: number,
         minFreshSec: number,
         minDriverBalance: number,
+        currency = 'KZT',
     ) {
         const minLocationTime = new Date(Date.now() - minFreshSec * 1000);
 
@@ -178,7 +181,8 @@ export class AutoDispatchService {
             if (!hasActiveOrder) {
                 // Check if driver has approved profile
                 if (onlineDriver.driver.status === 'ACTIVE' || onlineDriver.driver.status === 'APPROVED') {
-                    const balance = onlineDriver.driver.user?.wallet?.money ?? 0;
+                    if (onlineDriver.cityId !== cityId) continue;
+                    const balance = onlineDriver.driver.user?.wallet?.[moneyField(currency)] ?? 0;
                     if (minDriverBalance > 0 && balance < minDriverBalance) {
                         await this.prisma.driverOnline.update({
                             where: { driverId: onlineDriver.driverId },
@@ -351,6 +355,7 @@ export class AutoDispatchService {
             referralPercent: parseFloat(settingsMap['referralPercent'] || '10'),
             cityAutoAssignEnabled: (settingsMap['cityAutoAssignEnabled'] || 'false').toLowerCase() === 'true',
             driverMinOnlineBalance: this.parsePositiveNumber(settingsMap['driverMinOnlineBalance'], 100),
+            driverMinOnlineBalanceRub: this.parsePositiveNumber(settingsMap['driverMinOnlineBalanceRub'], 100),
         };
     }
 

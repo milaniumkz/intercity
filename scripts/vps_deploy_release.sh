@@ -2,47 +2,88 @@
 set -euo pipefail
 
 APP_ROOT="${APP_ROOT:-/opt/intercity}"
-BUNDLE_PATH="${1:?Usage: vps_deploy_release.sh /tmp/intercity-vps-commit.tar.gz commit_sha}"
+BUNDLE_PATH="${1:?Usage: vps_deploy_release.sh bundle.tar.gz commit_sha}"
 COMMIT_SHA="${2:?commit sha is required}"
+[[ "$COMMIT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo 'Invalid release commit' >&2; exit 1; }
 RELEASE_DIR="$APP_ROOT/releases/$COMMIT_SHA"
 SHARED_DIR="$APP_ROOT/shared"
 BACKUP_DIR="$APP_ROOT/backups/$(date +%Y%m%d-%H%M%S)-$COMMIT_SHA"
+PREVIOUS_RELEASE="$(readlink -f "$APP_ROOT/current")"
+[[ -d "$PREVIOUS_RELEASE" && -f "$SHARED_DIR/.env" ]] || { echo 'Current release or shared environment is missing' >&2; exit 1; }
+[[ ! -e "$RELEASE_DIR" ]] || { echo 'Release directory already exists; refusing to overwrite it' >&2; exit 1; }
+PROJECT_NAME="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' intercity-postgres)"
+[[ -n "$PROJECT_NAME" ]] || { echo 'Cannot identify the existing database Compose project' >&2; exit 1; }
+PREVIOUS_IMAGE="$(docker inspect --format '{{.Image}}' intercity-backend)"
 
-mkdir -p "$APP_ROOT/releases" "$SHARED_DIR/uploads" "$APP_ROOT/backups"
-
-if [[ -d "$RELEASE_DIR" ]]; then
-  rm -rf "$RELEASE_DIR"
-fi
 mkdir -p "$RELEASE_DIR"
 tar -xzf "$BUNDLE_PATH" -C "$RELEASE_DIR" --strip-components=1
+python3 "$RELEASE_DIR/scripts/vps_release_manifest.py" check \
+  "$RELEASE_DIR/.release-manifest.json" "$PREVIOUS_RELEASE" "$COMMIT_SHA"
 
-if [[ -f "$APP_ROOT/infra/vps/.env" && ! -f "$SHARED_DIR/.env" ]]; then
-  cp "$APP_ROOT/infra/vps/.env" "$SHARED_DIR/.env"
-fi
-if [[ ! -f "$SHARED_DIR/.env" ]]; then
-  echo "Missing $SHARED_DIR/.env. Create it from infra/vps/.env.example first." >&2
-  exit 1
-fi
-cp "$SHARED_DIR/.env" "$RELEASE_DIR/infra/vps/.env"
-ln -sfn "$SHARED_DIR/uploads" "$RELEASE_DIR/uploads"
-
+# Keep backups on the VPS; never include runtime secrets in the release bundle.
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 cp "$SHARED_DIR/.env" "$BACKUP_DIR/env.backup"
-if docker ps --format '{{.Names}}' | grep -qx intercity-postgres; then
-  docker exec intercity-postgres pg_dump \
-    -U "$(grep '^POSTGRES_USER=' "$SHARED_DIR/.env" | cut -d= -f2-)" \
-    "$(grep '^POSTGRES_DB=' "$SHARED_DIR/.env" | cut -d= -f2-)" \
-    > "$BACKUP_DIR/postgres.sql" || true
-fi
-if [[ -d "$SHARED_DIR/uploads" ]]; then
-  tar -C "$SHARED_DIR" -czf "$BACKUP_DIR/uploads.tar.gz" uploads || true
-fi
+chmod 600 "$BACKUP_DIR/env.backup"
+printf '%s\n' "$PREVIOUS_RELEASE" > "$BACKUP_DIR/previous-release"
+docker exec intercity-postgres sh -c 'exec pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$BACKUP_DIR/postgres.sql"
+test -s "$BACKUP_DIR/postgres.sql"
+rg_footer='PostgreSQL database dump complete'
+grep -q "$rg_footer" "$BACKUP_DIR/postgres.sql"
+tar -C "$SHARED_DIR" -czf "$BACKUP_DIR/uploads.tar.gz" uploads
+tar -tzf "$BACKUP_DIR/uploads.tar.gz" >/dev/null
+printf 'Verified database and uploads backups: %s\n' "$BACKUP_DIR"
+
+cp "$SHARED_DIR/.env" "$RELEASE_DIR/infra/vps/.env"
+chmod 600 "$RELEASE_DIR/infra/vps/.env"
+ln -s "$SHARED_DIR/uploads" "$RELEASE_DIR/uploads"
+
+compose() {
+  docker compose -p "$PROJECT_NAME" -f docker-compose.prod.yml "$@"
+}
+
+switch_started=0
+response_file=""
+rollback_on_failure() {
+  status=$?
+  trap - EXIT
+  if [[ -n "$response_file" ]]; then rm -f "$response_file"; fi
+  if [[ "$status" -ne 0 && "$switch_started" -eq 1 ]]; then
+    echo 'Release health check failed; restoring the previous application release' >&2
+    docker tag "$PREVIOUS_IMAGE" intercity-backend:prod
+    cd "$PREVIOUS_RELEASE/infra/vps"
+    compose up -d --no-build backend caddy
+    ln -sfn "$PREVIOUS_RELEASE" "$APP_ROOT/current"
+  fi
+  exit "$status"
+}
+trap rollback_on_failure EXIT
 
 cd "$RELEASE_DIR/infra/vps"
-docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml exec -T backend npx prisma migrate deploy || \
-  docker compose -f docker-compose.prod.yml exec -T backend npx prisma db push
+# Build while the previous backend continues running. Additive migrations run
+# before the new application starts; never fall back to an unrestricted db push.
+compose build backend
+compose run --rm --no-deps backend npx prisma migrate deploy
+switch_started=1
+compose up -d --no-build backend caddy
 
+# /health is a Caddy response. Verify an actual API/database request as well.
+response_file="$(mktemp)"
+curl -fsS --retry 20 --retry-delay 2 --retry-all-errors --max-time 10 \
+  https://api.intercity.89-207-255-27.sslip.io/api/geo/cities > "$response_file"
+python3 - "$response_file" <<'PY'
+import json, sys
+assert isinstance(json.load(open(sys.argv[1])), list), 'Invalid cities API response'
+PY
+for site in intercity.89-207-255-27.sslip.io admin.intercity.89-207-255-27.sslip.io; do
+  curl -fsS --retry 10 --retry-delay 2 --retry-all-errors --max-time 10 \
+    "https://$site/version.json" > "$response_file"
+  python3 - "$response_file" "$COMMIT_SHA" <<'PY'
+import json, sys
+assert json.load(open(sys.argv[1]))['commit'] == sys.argv[2], 'Wrong published web release'
+PY
+done
 ln -sfn "$RELEASE_DIR" "$APP_ROOT/current"
 printf '%s\n' "$COMMIT_SHA" > "$APP_ROOT/current_commit"
-docker compose -f docker-compose.prod.yml ps
+compose ps
+printf 'Published and verified release: %s\n' "$COMMIT_SHA"

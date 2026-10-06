@@ -695,9 +695,10 @@ export class AdminController {
         @Request() req,
         @Query('from') from?: string,
         @Query('to') to?: string,
+        @Query('currency') currency?: string,
     ) {
         await this.ensurePermission(req, 'finance.view');
-        return this.adminService.getFinanceReport(from, to);
+        return this.adminService.getFinanceReport(from, to, currency);
     }
 
     @Get('reports/finance/csv')
@@ -706,13 +707,14 @@ export class AdminController {
         @Request() req,
         @Query('from') from?: string,
         @Query('to') to?: string,
+        @Query('currency') currency?: string,
     ) {
         await this.ensurePermission(req, 'finance.view');
         await this.trackAction(req, 'finance.report.export.csv', 'finance-report', { from, to });
         return {
             filename: `finance-report-${new Date().toISOString().slice(0, 10)}.csv`,
             contentType: 'text/csv; charset=utf-8',
-            csv: await this.adminService.exportFinanceReportCsv(from, to),
+            csv: await this.adminService.exportFinanceReportCsv(from, to, currency),
         };
     }
 

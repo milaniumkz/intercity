@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'package:intercity_shared/intercity_shared.dart';
 
 import '../../../core/api/admin_api_client.dart';
 
@@ -656,6 +657,7 @@ class _AdminCitiesPageState extends State<AdminCitiesPage> {
   final _latCtrl = TextEditingController(text: '43.2220');
   final _lngCtrl = TextEditingController(text: '76.8512');
   bool _isActive = true;
+  String _countryCode = 'KZ';
   String _message = '';
   bool _loading = false;
   String? _busyAction;
@@ -710,6 +712,7 @@ class _AdminCitiesPageState extends State<AdminCitiesPage> {
         await AdminApiClient.instance.post('/admin/cities', data: {
           'name': _nameCtrl.text.trim(),
           'region': _regionCtrl.text.trim(),
+          'countryCode': _countryCode,
           'lat': double.parse(_latCtrl.text),
           'lng': double.parse(_lngCtrl.text),
         });
@@ -730,6 +733,7 @@ class _AdminCitiesPageState extends State<AdminCitiesPage> {
         await AdminApiClient.instance.patch('/admin/cities/$id', data: {
           'name': _nameCtrl.text.trim(),
           'region': _regionCtrl.text.trim(),
+          'countryCode': _countryCode,
           'lat': double.parse(_latCtrl.text),
           'lng': double.parse(_lngCtrl.text),
           'isActive': _isActive,
@@ -761,6 +765,20 @@ class _AdminCitiesPageState extends State<AdminCitiesPage> {
                     controller: _nameCtrl,
                     decoration:
                         const InputDecoration(labelText: 'Название города')),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: _countryCode,
+                  key: ValueKey(_countryCode),
+                  decoration:
+                      const InputDecoration(labelText: 'Страна и валюта'),
+                  items: const [
+                    DropdownMenuItem(
+                        value: 'KZ', child: Text('Казахстан — тенге (₸)')),
+                    DropdownMenuItem(
+                        value: 'RU', child: Text('Россия — рубли (₽)')),
+                  ],
+                  onChanged: (value) => setState(() => _countryCode = value!),
+                ),
                 const SizedBox(height: 12),
                 TextField(
                     controller: _regionCtrl,
@@ -818,7 +836,19 @@ class _AdminCitiesPageState extends State<AdminCitiesPage> {
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(18)),
                           tileColor: const Color(0xFFF7FAFC),
-                          title: Text('${city['name']}'),
+                          onTap: () => setState(() {
+                            _cityIdCtrl.text = city['id'].toString();
+                            _nameCtrl.text = city['name'].toString();
+                            _regionCtrl.text =
+                                (city['region'] ?? '').toString();
+                            _latCtrl.text = city['lat'].toString();
+                            _lngCtrl.text = city['lng'].toString();
+                            _countryCode =
+                                (city['countryCode'] ?? 'KZ').toString();
+                            _isActive = city['isActive'] == true;
+                          }),
+                          title: Text(
+                              '${city['name']} • ${rideCurrencySymbol(city)}'),
                           subtitle: Text(
                               'ID ${city['id']} • ${city['region'] ?? '-'}\n${city['lat']}, ${city['lng']}'),
                           isThreeLine: true,
@@ -851,6 +881,16 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
   final _cityTariffIdCtrl = TextEditingController();
   final _cargoTariffIdCtrl = TextEditingController();
   final _deliveryTariffIdCtrl = TextEditingController();
+  List<dynamic> _cities = [];
+  final _tariffNameCtrl = TextEditingController(text: 'Стандарт');
+  final _baseCtrl = TextEditingController(text: '500');
+  final _kmCtrl = TextEditingController(text: '50');
+  final _minCtrl = TextEditingController(text: '5');
+  final _minimumCtrl = TextEditingController(text: '600');
+  String get _tariffSymbol => rideCurrencySymbol(_cities
+      .cast<Map?>()
+      .firstWhere((city) => city?['id'] == _cityIdCtrl.text,
+          orElse: () => null));
   List<dynamic> _city = [];
   List<dynamic> _cargo = [];
   List<dynamic> _delivery = [];
@@ -867,6 +907,15 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
   @override
   void dispose() {
     _cityIdCtrl.dispose();
+    for (final controller in [
+      _tariffNameCtrl,
+      _baseCtrl,
+      _kmCtrl,
+      _minCtrl,
+      _minimumCtrl
+    ]) {
+      controller.dispose();
+    }
     _cityTariffIdCtrl.dispose();
     _cargoTariffIdCtrl.dispose();
     _deliveryTariffIdCtrl.dispose();
@@ -889,12 +938,14 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
+      final citiesRes = await AdminApiClient.instance.get('/admin/cities');
       final cityRes = await AdminApiClient.instance.get('/admin/tariffs/city');
       final cargoRes =
           await AdminApiClient.instance.get('/admin/tariffs/cargo');
       final deliveryRes =
           await AdminApiClient.instance.get('/admin/tariffs/delivery');
       setState(() {
+        _cities = List<dynamic>.from(citiesRes.data as List);
         _city = List<dynamic>.from(cityRes.data as List);
         _cargo = List<dynamic>.from(cargoRes.data as List);
         _delivery = List<dynamic>.from(deliveryRes.data as List);
@@ -920,21 +971,58 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
         await _load();
       });
 
-  Future<void> _createCity() => _runAction('Create city tariff', () async {
-        final cityId = _cityIdCtrl.text.trim();
-        if (cityId.isEmpty) {
-          setState(() => _message = 'City ID is required for a city tariff');
+  Future<void> _createCity() => _saveCityTariff(update: false);
+
+  Future<void> _saveCityTariff({required bool update}) =>
+      _runAction('Сохранить городской тариф', () async {
+        if (_cityIdCtrl.text.isEmpty) {
+          setState(() => _message = 'Выберите город');
           return;
         }
-        await AdminApiClient.instance.post('/admin/tariffs/city', data: {
-          'cityId': cityId,
-          'name': 'City Standard',
-          'basePrice': 500,
-          'pricePerKm': 50,
-          'pricePerMin': 5,
-          'minPrice': 600,
-        });
+        final payload = <String, dynamic>{'name': _tariffNameCtrl.text.trim()};
+        for (final entry in {
+          'basePrice': _baseCtrl,
+          'pricePerKm': _kmCtrl,
+          'pricePerMin': _minCtrl,
+          'minPrice': _minimumCtrl
+        }.entries) {
+          final value = double.tryParse(entry.value.text.replaceAll(',', '.'));
+          if (value == null || !value.isFinite || value < 0) {
+            setState(() => _message = 'Укажите неотрицательные суммы тарифа');
+            return;
+          }
+          payload[entry.key] = value;
+        }
+        if ((payload['name'] as String).isEmpty) {
+          setState(() => _message = 'Введите название тарифа');
+          return;
+        }
+        if (update) {
+          if (!_city.any((tariff) =>
+              tariff['id'] == _cityTariffIdCtrl.text &&
+              tariff['cityId'] == _cityIdCtrl.text)) {
+            setState(() => _message =
+                'Выберите тариф города из списка для редактирования');
+            return;
+          }
+          await AdminApiClient.instance.patch(
+              '/admin/tariffs/city/${_cityTariffIdCtrl.text}',
+              data: payload);
+        } else {
+          await AdminApiClient.instance.post('/admin/tariffs/city',
+              data: {...payload, 'cityId': _cityIdCtrl.text});
+        }
         await _load();
+      });
+
+  void _editCityTariff(Map<String, dynamic> tariff) => setState(() {
+        _cityIdCtrl.text = tariff['cityId'].toString();
+        _cityTariffIdCtrl.text = tariff['id'].toString();
+        _tariffNameCtrl.text = tariff['name'].toString();
+        _baseCtrl.text = tariff['basePrice'].toString();
+        _kmCtrl.text = tariff['pricePerKm'].toString();
+        _minCtrl.text = tariff['pricePerMin'].toString();
+        _minimumCtrl.text = tariff['minPrice'].toString();
       });
 
   Future<void> _deleteCityTariff(String id) =>
@@ -1007,8 +1095,8 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
   @override
   Widget build(BuildContext context) {
     return AdminShell(
-      title: 'Tariffs',
-      subtitle: 'Create, disable and remove tariff presets.',
+      title: 'Тарифы',
+      subtitle: 'Городские цены в рублях для России и в тенге для Казахстана.',
       child: ListView(
         children: [
           _StatusBanner(message: _message),
@@ -1019,10 +1107,45 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
                 onPressed: _loading ? null : _load, loading: _loading),
             child: Column(
               children: [
+                DropdownButtonFormField<String>(
+                  key: ValueKey(_cityIdCtrl.text),
+                  initialValue:
+                      _cities.any((city) => city['id'] == _cityIdCtrl.text)
+                          ? _cityIdCtrl.text
+                          : null,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Город тарифа'),
+                  items: _cities
+                      .map((city) => DropdownMenuItem<String>(
+                            value: city['id'].toString(),
+                            child: Text(
+                                '${city['name']} — ${rideCurrencySymbol(city as Map)}'),
+                          ))
+                      .toList(),
+                  onChanged: (value) => setState(() {
+                    _cityIdCtrl.text = value!;
+                    _cityTariffIdCtrl.clear();
+                  }),
+                ),
+                const SizedBox(height: 12),
                 TextField(
-                    controller: _cityIdCtrl,
-                    decoration: const InputDecoration(
-                        labelText: 'City ID for city tariff')),
+                    controller: _tariffNameCtrl,
+                    decoration:
+                        const InputDecoration(labelText: 'Название тарифа')),
+                for (final entry in {
+                  'Базовая стоимость': _baseCtrl,
+                  'Цена за км': _kmCtrl,
+                  'Цена за минуту': _minCtrl,
+                  'Минимальная стоимость': _minimumCtrl
+                }.entries) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: entry.value,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                          labelText: entry.key, suffixText: _tariffSymbol)),
+                ],
                 const SizedBox(height: 12),
                 TextField(
                     controller: _cityTariffIdCtrl,
@@ -1045,7 +1168,12 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
                   children: [
                     FilledButton(
                         onPressed: _busyAction == null ? _createCity : null,
-                        child: const Text('Create city tariff')),
+                        child: const Text('Создать городской тариф')),
+                    FilledButton.tonal(
+                        onPressed: _busyAction == null
+                            ? () => _saveCityTariff(update: true)
+                            : null,
+                        child: const Text('Сохранить изменения тарифа')),
                     FilledButton(
                         onPressed: _busyAction == null ? _createCargo : null,
                         child: const Text('Create cargo tariff')),
@@ -1072,9 +1200,12 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
           ),
           const SizedBox(height: 16),
           _SectionCard(
-              title: 'City tariffs',
+              title: 'Городские тарифы — нажмите для редактирования',
               child: _TariffList(
-                  items: _city, onDelete: _deleteCityTariff, cityAware: true)),
+                  items: _city,
+                  onDelete: _deleteCityTariff,
+                  cityAware: true,
+                  onEdit: _editCityTariff)),
           const SizedBox(height: 16),
           _SectionCard(
               title: 'Cargo tariffs',
@@ -1298,7 +1429,8 @@ class _AdminTopupsPageState extends State<AdminTopupsPage> {
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(18)),
                           tileColor: const Color(0xFFF7FAFC),
-                          title: Text('Amount ${m['amount']}'),
+                          title: Text(
+                              'Сумма ${m['amount']} ${rideCurrencySymbol(m)}'),
                           subtitle: Text('ID ${m['id']} • ${m['status']}'),
                           trailing: Wrap(
                             spacing: 8,
@@ -1415,7 +1547,8 @@ class _AdminPayoutsPageState extends State<AdminPayoutsPage> {
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(18)),
                           tileColor: const Color(0xFFF7FAFC),
-                          title: Text('Amount ${m['amount']}'),
+                          title: Text(
+                              'Сумма ${m['amount']} ${rideCurrencySymbol(m)}'),
                           subtitle: Text('ID ${m['id']} • ${m['status']}'),
                           trailing: Wrap(
                             spacing: 8,
@@ -1566,7 +1699,8 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                               borderRadius: BorderRadius.circular(18)),
                           tileColor: const Color(0xFFF7FAFC),
                           title: Text('${m['mode']} • ${m['status']}'),
-                          subtitle: Text('ID $id • price ${m['price']}'),
+                          subtitle: Text(
+                              'ID $id • цена ${m['price']} ${rideCurrencySymbol(m)}'),
                           trailing: Wrap(
                             spacing: 8,
                             children: [
@@ -1992,7 +2126,7 @@ class _AdminFinanceAuditPageState extends State<AdminFinanceAuditPage> {
                               borderRadius: BorderRadius.circular(18)),
                           tileColor: const Color(0xFFF7FAFC),
                           title: Text(
-                              '${m['type']} • ${m['direction']} ${m['amount']}'),
+                              '${m['type']} • ${m['direction']} ${m['amount']} ${rideCurrencySymbol(m)}'),
                           subtitle: Text(
                               '${m['balanceSource']} • ${user?['phone'] ?? '-'} • ${m['createdAt']}'),
                         ),
@@ -2391,11 +2525,13 @@ class _TariffList extends StatelessWidget {
   final List<dynamic> items;
   final Future<void> Function(String id) onDelete;
   final bool cityAware;
+  final void Function(Map<String, dynamic>)? onEdit;
 
   const _TariffList({
     required this.items,
     required this.onDelete,
     this.cityAware = false,
+    this.onEdit,
   });
 
   @override
@@ -2412,10 +2548,11 @@ class _TariffList extends StatelessWidget {
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
             tileColor: const Color(0xFFF7FAFC),
+            onTap: onEdit == null ? null : () => onEdit!(m),
             title: Text('${m['name']}'),
             subtitle: Text(
               cityAware
-                  ? 'ID ${m['id']} • активен ${m['isActive']} • город ${((m['city'] as Map?)?['name'] ?? m['cityId'])}'
+                  ? 'ID ${m['id']} • активен ${m['isActive']} • город ${((m['city'] as Map?)?['name'] ?? m['cityId'])}\nБаза: ${m['basePrice']} ${rideCurrencySymbol(m)} • км: ${m['pricePerKm']} ${rideCurrencySymbol(m)} • мин: ${m['pricePerMin']} ${rideCurrencySymbol(m)} • минимум: ${m['minPrice']} ${rideCurrencySymbol(m)}'
                   : 'ID ${m['id']} • активен ${m['isActive']}',
             ),
             trailing: OutlinedButton(

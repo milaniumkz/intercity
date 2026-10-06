@@ -14,6 +14,30 @@ case "$ACTION" in
   status)
     cat "$APP_ROOT/current_commit" 2>/dev/null || true
     compose ps
+    command -v python3
+    df -h "$APP_ROOT"
+    current_release="$(readlink -f "$APP_ROOT/current")"
+    for file in backend/prisma/schema.prisma backend/src/orders/orders.service.ts backend/src/intercity/intercity.service.ts backend/src/wallet/wallet.service.ts apps/mobile_flutter/lib/core/utils/phone_input_formatter.dart apps/admin_web/lib/features/admin/screens/admin_dashboard_page.dart; do
+      (cd "$current_release" && sha256sum "$file")
+    done
+    docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+SELECT table_name, column_name FROM information_schema.columns
+WHERE table_schema = 'public' AND
+  ((table_name = 'Wallet' AND column_name IN ('money', 'bonus', 'moneyRub', 'bonusRub')) OR
+   (table_name = 'City' AND column_name = 'countryCode')) ORDER BY 1, 2;
+SELECT to_regclass('public._prisma_migrations');
+SELECT pg_size_pretty(pg_database_size(current_database()));
+SQL
+    migrations_table="$(docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+SELECT to_regclass('public._prisma_migrations');
+SQL
+    )"
+    if [[ -n "$migrations_table" ]]; then
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+SELECT migration_name, finished_at IS NOT NULL AS applied, rolled_back_at IS NOT NULL AS rolled_back
+FROM _prisma_migrations ORDER BY started_at;
+SQL
+    fi
     curl -fsS https://api.intercity.89-207-255-27.sslip.io/health
     ;;
   logs)

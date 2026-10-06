@@ -1,3 +1,5 @@
+import { moneyField, bonusField } from '../common/currency';
+import { GeoService } from '../geo/geo.service';
 import {
   BadRequestException,
   Injectable,
@@ -9,7 +11,7 @@ import { clientUserSelect } from "../common/public-user-select";
 
 @Injectable()
 export class IntercityService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private geoService: GeoService) {}
 
   private normalizePhoneDigits(value?: string | null) {
     let digits = (value || "").replace(/\D/g, "");
@@ -207,9 +209,11 @@ export class IntercityService {
         ? Number(data.price)
         : 0;
 
+    const currency = await this.geoService.departureCurrency(fromLat, fromLng, data.fromCity);
     return this.prisma.intercityRequest.create({
       data: {
         passengerId: userId,
+        currency,
         requestType,
         fromCity: route.from,
         toCity: route.to,
@@ -541,6 +545,7 @@ export class IntercityService {
     });
     if (!wallet) return;
 
+    await tx.wallet.update({ where: { id: wallet.id }, data: { [moneyField(request["currency"])]: { increment: 0 } } });
     const existing = await txAny.walletTransaction?.findFirst({
       where: {
         walletId: wallet.id,
@@ -553,7 +558,7 @@ export class IntercityService {
 
     await tx.wallet.update({
       where: { id: wallet.id },
-      data: { money: { decrement: fee } },
+      data: { [moneyField(request["currency"])]: { decrement: fee } },
     });
     await txAny.walletTransaction
       .create({
@@ -563,6 +568,7 @@ export class IntercityService {
           direction: "DEBIT",
           balanceSource: "MONEY",
           amount: fee,
+          currency: request["currency"] ?? "KZT",
           actorUserId: driverUserId,
           intercityRequestId: requestId,
           note: `Комиссия сервиса за выполненную межгородскую заявку (${requestId})`,
@@ -609,9 +615,9 @@ export class IntercityService {
     if (fee <= 0) return;
     const wallet = await this.prisma.wallet.findUnique({
       where: { userId: driverUserId },
-      select: { money: true },
+      select: { money: true, moneyRub: true },
     });
-    if (!wallet || wallet.money < fee) {
+    if (!wallet || wallet[moneyField(request["currency"])] < fee) {
       throw new BadRequestException(
         "Insufficient balance to respond to intercity request. Please top up wallet.",
       );
@@ -698,11 +704,12 @@ export class IntercityService {
     request: Record<string, any>,
     driverUserId: string,
   ) {
+    const rub = request['currency'] === 'RUB';
     const driver = await this.prisma.user.findUnique({
       where: { id: driverUserId },
       select: { phone: true },
     });
-    if (!this.isKazakhstanPhone(driver?.phone)) return 0;
+    if (!rub && !this.isKazakhstanPhone(driver?.phone)) return 0;
 
     const distanceKm = this.haversineKm(
       this.coerceNullableNumber(request["fromLat"]),
@@ -712,7 +719,7 @@ export class IntercityService {
     );
 
     const bandSetting = await this.prisma.appSettings.findUnique({
-      where: { key: "intercityCommissionByDistanceKm" },
+      where: { key: rub ? "intercityCommissionByDistanceKmRub" : "intercityCommissionByDistanceKm" },
     });
     if (bandSetting?.value) {
       try {
@@ -743,9 +750,9 @@ export class IntercityService {
     }
 
     const setting = await this.prisma.appSettings.findUnique({
-      where: { key: "intercityAcceptedRequestFee" },
+      where: { key: rub ? "intercityAcceptedRequestFeeRub" : "intercityAcceptedRequestFee" },
     });
-    const parsed = Number.parseFloat(setting?.value || "500");
+    const parsed = Number.parseFloat(setting?.value || (rub ? "0" : "500"));
     if (!Number.isFinite(parsed) || parsed < 0) return 0;
     return parsed;
   }
@@ -773,14 +780,15 @@ export class IntercityService {
     const txAny = tx as any;
     const wallet = await tx.wallet.findUnique({
       where: { userId: driverUserId },
-      select: { id: true, money: true },
+      select: { id: true, money: true, moneyRub: true },
     });
-    if (!wallet || wallet.money < fee) {
+    if (!wallet || wallet[moneyField(request["currency"])] < fee) {
       throw new BadRequestException(
         "Selected driver has insufficient balance for intercity request.",
       );
     }
 
+    await tx.wallet.update({ where: { id: wallet.id }, data: { [moneyField(request["currency"])]: { increment: 0 } } });
     const existing = await txAny.walletTransaction?.findFirst({
       where: {
         walletId: wallet.id,
@@ -792,10 +800,11 @@ export class IntercityService {
       return;
     }
 
-    await tx.wallet.update({
-      where: { id: wallet.id },
-      data: { money: { decrement: fee } },
+    const charged = await tx.wallet.updateMany({
+      where: { id: wallet.id, [moneyField(request["currency"])]: { gte: fee } },
+      data: { [moneyField(request["currency"])]: { decrement: fee } },
     });
+    if (charged.count !== 1) throw new BadRequestException("Selected driver has insufficient balance for intercity request.");
     await txAny.walletTransaction
       .create({
         data: {
@@ -804,6 +813,7 @@ export class IntercityService {
           direction: "DEBIT",
           balanceSource: "MONEY",
           amount: fee,
+          currency: request["currency"] ?? "KZT",
           actorUserId: driverUserId,
           intercityRequestId: requestId,
           note: `Списание за принятую межгородскую заявку (${requestId})`,
@@ -845,12 +855,13 @@ export class IntercityService {
     const txAny = tx as any;
     const wallet = await tx.wallet.findUnique({
       where: { userId: passengerId },
-      select: { id: true, bonus: true },
+      select: { id: true, bonus: true, bonusRub: true },
     });
-    if (!wallet || wallet.bonus < amount) {
+    if (!wallet || wallet[bonusField(request["currency"])] < amount) {
       throw new BadRequestException("Insufficient bonus balance");
     }
 
+    await tx.wallet.update({ where: { id: wallet.id }, data: { [bonusField(request["currency"])]: { increment: 0 } } });
     const existing = await txAny.walletTransaction?.findFirst({
       where: {
         walletId: wallet.id,
@@ -860,10 +871,11 @@ export class IntercityService {
     });
     if (existing) return;
 
-    await tx.wallet.update({
-      where: { id: wallet.id },
-      data: { bonus: { decrement: amount } },
+    const debit = await tx.wallet.updateMany({
+      where: { id: wallet.id, [bonusField(request["currency"])]: { gte: amount } },
+      data: { [bonusField(request["currency"])]: { decrement: amount } },
     });
+    if (debit.count !== 1) throw new BadRequestException("Insufficient bonus balance");
     await txAny.walletTransaction
       .create({
         data: {
@@ -871,6 +883,7 @@ export class IntercityService {
           type: "INTERCITY_OFFER_BONUS_USED",
           direction: "DEBIT",
           balanceSource: "BONUS",
+          currency: request["currency"] ?? "KZT",
           amount,
           actorUserId: passengerId,
           intercityRequestId: requestId,
@@ -901,6 +914,7 @@ export class IntercityService {
     });
     if (!wallet) return;
 
+    await tx.wallet.update({ where: { id: wallet.id }, data: { ['bonusRub']: { increment: 0 } } });
     const debit = await txAny.walletTransaction?.findFirst({
       where: {
         walletId: wallet.id,
@@ -925,7 +939,7 @@ export class IntercityService {
 
     await tx.wallet.update({
       where: { id: wallet.id },
-      data: { bonus: { increment: amount } },
+      data: { [bonusField(debit.currency)]: { increment: amount } },
     });
     await txAny.walletTransaction
       .create({
@@ -934,6 +948,7 @@ export class IntercityService {
           type: "INTERCITY_OFFER_BONUS_REFUND",
           direction: "CREDIT",
           balanceSource: "BONUS",
+          currency: debit.currency ?? "KZT",
           amount,
           actorUserId: passengerId,
           intercityRequestId: requestId,

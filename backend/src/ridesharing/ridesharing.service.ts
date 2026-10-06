@@ -1,10 +1,11 @@
+import { GeoService } from '../geo/geo.service';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { normalizeClientDateTime } from '../common/date-time.util';
 
 @Injectable()
 export class RidesharingService {
-    constructor(private prisma: PrismaService) { }
+    constructor(private prisma: PrismaService, private geoService: GeoService) { }
 
     async createTrip(driverId: string, data: {
         fromCity: string;
@@ -36,10 +37,12 @@ export class RidesharingService {
             departureTime: _rawDepartureTime,
             ...tripData
         } = data;
+        const currency = await this.geoService.departureCurrency(data.fromLat, data.fromLng, data.fromCity);
         return this.prisma.rideSharingTrip.create({
             data: {
                 driverId,
                 ...tripData,
+                currency,
                 departureTime,
                 topUntil: this.resolveTopUntil(
                     departureTime,

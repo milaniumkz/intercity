@@ -1,3 +1,4 @@
+import { walletCurrency, moneyField, bonusField } from '../common/currency';
 import {
     Injectable,
     NotFoundException,
@@ -23,7 +24,8 @@ export class WalletService {
 
     constructor(private prisma: PrismaService) { }
 
-    async getWallet(userId: string) {
+    async getWallet(userId: string, selectedCurrency?: string) {
+        const currency = walletCurrency(selectedCurrency);
         const wallet = await this.prisma.wallet.findUnique({
             where: { userId },
             select: {
@@ -31,6 +33,8 @@ export class WalletService {
                 userId: true,
                 money: true,
                 bonus: true,
+                moneyRub: true,
+                bonusRub: true,
                 createdAt: true,
                 updatedAt: true,
             },
@@ -40,36 +44,44 @@ export class WalletService {
             throw new NotFoundException('Кошелёк не найден');
         }
 
-        const [topups, payouts] = await Promise.all([
+        const [topups, payouts, transactions] = await Promise.all([
             this.prisma.topupRequest.findMany({
-                where: { walletId: wallet.id },
+                where: { walletId: wallet.id, currency },
                 orderBy: { createdAt: 'desc' },
                 take: 10,
             }),
             this.prisma.payoutRequest.findMany({
-                where: { walletId: wallet.id },
+                where: { walletId: wallet.id, currency },
                 orderBy: { createdAt: 'desc' },
                 take: 10,
                 select: {
                     id: true,
                     walletId: true,
                     amount: true,
+                    currency: true,
                     status: true,
                     adminId: true,
                     createdAt: true,
                     updatedAt: true,
                 },
             }),
+            this.prisma.walletTransaction.findMany({ where: { walletId: wallet.id, currency }, orderBy: { createdAt: 'desc' }, take: 30 }),
         ]);
 
         return {
+            transactions,
             ...wallet,
+            currency,
+            balances: { KZT: { money: wallet.money, bonus: wallet.bonus }, RUB: { money: wallet.moneyRub, bonus: wallet.bonusRub } },
+            money: wallet[moneyField(currency)],
+            bonus: wallet[bonusField(currency)],
             topups,
             payouts,
         };
     }
 
     async createTopupRequest(userId: string, dto: TopupRequestDto, userRole?: string) {
+        const currency = walletCurrency(dto.currency);
         const driverProfile = await this.prisma.driverProfile.findUnique({
             where: { userId },
             select: { id: true },
@@ -88,7 +100,7 @@ export class WalletService {
             throw new NotFoundException('Кошелёк не найден');
         }
 
-        if (dto.amount <= 0) {
+        if (!Number.isFinite(dto.amount) || dto.amount <= 0) {
             throw new BadRequestException('Введите сумму больше нуля');
         }
 
@@ -96,10 +108,13 @@ export class WalletService {
             data: {
                 walletId: wallet.id,
                 amount: dto.amount,
+                currency,
                 status: 'PENDING',
-                provider: 'ONLINE',
+                provider: currency === 'RUB' ? 'MANUAL' : 'ONLINE',
             },
         });
+
+        if (currency === 'RUB') return { ...localTopup, paymentUrl: null, provider: 'MANUAL', message: 'Заявка на пополнение рублёвого кошелька создана. Администратор обработает её вручную.' };
 
         let paymentUrl: string | null = null;
         let externalOrderId: string | null = null;
@@ -203,6 +218,7 @@ export class WalletService {
         if (!topup) {
             throw new NotFoundException('Заявка на пополнение не найдена');
         }
+        if (topup.currency !== 'KZT' || topup.provider === 'MANUAL') return { success: true, ignored: true, reason: 'manual_payment' };
         if (topup.status !== 'PENDING') {
             return { success: true, alreadyProcessed: true, topupId: topup.id };
         }
@@ -220,7 +236,7 @@ export class WalletService {
             });
             await tx.wallet.update({
                 where: { id: topup.walletId },
-                data: { money: { increment: topup.amount } },
+                data: { [moneyField(topup.currency)]: { increment: topup.amount } },
             });
             await (tx as any).walletTransaction.create({
                 data: {
@@ -229,6 +245,7 @@ export class WalletService {
                     direction: 'CREDIT',
                     balanceSource: 'MONEY',
                     amount: topup.amount,
+                    currency: topup.currency,
                     topupRequestId: topup.id,
                     idempotencyKey: `topup:${topup.id}:paid`,
                     note: 'Online topup paid',
@@ -240,6 +257,8 @@ export class WalletService {
     }
 
     async createPayoutRequest(userId: string, dto: PayoutRequestDto, userRole?: string) {
+        const currency = walletCurrency(dto.currency);
+        if (!Number.isFinite(dto.amount) || dto.amount <= 0) throw new BadRequestException('Введите сумму больше нуля');
         const wallet = await this.prisma.wallet.findUnique({
             where: { userId },
         });
@@ -252,7 +271,7 @@ export class WalletService {
         const passengerBonusPayoutMin = 5000;
 
         if (isPassenger) {
-            if (wallet.bonus < passengerBonusPayoutMin) {
+            if (wallet[bonusField(currency)] < passengerBonusPayoutMin) {
                 throw new BadRequestException(
                     `Вывод бонусов доступен после накопления ${passengerBonusPayoutMin} бонусов`,
                 );
@@ -262,21 +281,21 @@ export class WalletService {
                     `Минимальная сумма вывода — ${passengerBonusPayoutMin} бонусов`,
                 );
             }
-            if (wallet.bonus < dto.amount) {
+            if (wallet[bonusField(currency)] < dto.amount) {
                 throw new BadRequestException('Недостаточно бонусов');
             }
         }
 
         // Check minimum payout amount
         const settings = await this.prisma.appSettings.findMany();
-        const minPayout = parseFloat(settings.find(s => s.key === 'minPayoutAmount')?.value || '1000');
+        const minPayout = parseFloat(settings.find(s => s.key === (currency === 'RUB' ? 'minPayoutAmountRub' : 'minPayoutAmount'))?.value || '1000');
 
         if (!isPassenger && dto.amount < minPayout) {
             throw new BadRequestException(`Минимальная сумма вывода — ${minPayout}`);
         }
 
-        const payoutFromBonus = isPassenger || (wallet.money < dto.amount && wallet.bonus >= dto.amount);
-        if (wallet.money < dto.amount && !payoutFromBonus) {
+        const payoutFromBonus = isPassenger || (wallet[moneyField(currency)] < dto.amount && wallet[bonusField(currency)] >= dto.amount);
+        if (wallet[moneyField(currency)] < dto.amount && !payoutFromBonus) {
             throw new BadRequestException('Недостаточно средств');
         }
 
@@ -288,16 +307,17 @@ export class WalletService {
         let localPayout: { id: string; walletId: string; amount: number; status: string };
         try {
             localPayout = await this.prisma.$transaction(async (tx) => {
-                await tx.wallet.update({
-                    where: { userId },
-                    data: payoutFromBonus
-                        ? { bonus: { decrement: dto.amount } }
-                        : { money: { decrement: dto.amount } },
+                const field = payoutFromBonus ? bonusField(currency) : moneyField(currency);
+                const debit = await tx.wallet.updateMany({
+                    where: { userId, [field]: { gte: dto.amount } },
+                    data: { [field]: { decrement: dto.amount } },
                 });
+                if (debit.count !== 1) throw new BadRequestException('Недостаточно средств');
                 return this.createPayoutRequestCompat(tx, {
                     walletId: wallet.id,
                     amount: dto.amount,
                     source: payoutSource,
+                    currency,
                 });
             });
         } catch (error) {
@@ -314,12 +334,14 @@ export class WalletService {
             type: 'PAYOUT_REQUEST_CREATED',
             direction: 'DEBIT',
             balanceSource: payoutSource,
+            currency,
             amount: dto.amount,
             payoutRequestId: localPayout.id,
             actorUserId: userId,
             note: 'Создана заявка пользователя на вывод',
         });
 
+        if (currency === 'RUB') return { ...localPayout, currency, provider: 'MANUAL', source: payoutSource, withdrawId: null, message: 'Заявка на вывод рублей создана. Администратор обработает её вручную.' };
         try {
             const response = await fetch(this.kassa24Endpoint('withdraw'), {
                 method: 'POST',
@@ -340,6 +362,7 @@ export class WalletService {
                     ...localPayout,
                     provider: 'MANUAL',
                     source: payoutSource,
+                    currency,
                     withdrawId: null,
                     message: 'Заявка на вывод создана. Онлайн-сервис временно недоступен, администратор обработает её вручную.',
                 };
@@ -348,6 +371,7 @@ export class WalletService {
                 ...localPayout,
                 provider: 'ONLINE',
                 source: payoutSource,
+                    currency,
                 withdrawId:
                     data?.id ||
                     data?.withdraw_id ||
@@ -362,6 +386,7 @@ export class WalletService {
                 ...localPayout,
                 provider: 'MANUAL',
                 source: payoutSource,
+                    currency,
                 withdrawId: null,
                 message: 'Заявка на вывод создана. Онлайн-сервис временно недоступен, администратор обработает её вручную.',
             };
@@ -417,7 +442,8 @@ export class WalletService {
         });
     }
 
-    async transferBonusByPhone(senderUserId: string, recipientPhoneRaw: string, amount: number) {
+    async transferBonusByPhone(senderUserId: string, recipientPhoneRaw: string, amount: number, selectedCurrency?: string) {
+        const currency = walletCurrency(selectedCurrency);
         const phone = this.normalizePhone(recipientPhoneRaw);
         if (!phone) {
             throw new BadRequestException('Введите корректный номер получателя');
@@ -444,7 +470,7 @@ export class WalletService {
         if (recipient.id === senderUserId) {
             throw new BadRequestException('Нельзя переводить бонусы себе');
         }
-        if (sender.wallet.bonus < amount) {
+        if (sender.wallet[bonusField(currency)] < amount) {
             throw new BadRequestException('Недостаточно бонусов');
         }
 
@@ -454,16 +480,17 @@ export class WalletService {
             if (!senderWallet || !recipientWallet) {
                 throw new NotFoundException('Кошелёк не найден');
             }
-            if (senderWallet.bonus < amount) {
+            if (senderWallet[bonusField(currency)] < amount) {
                 throw new BadRequestException('Недостаточно бонусов');
             }
-            await tx.wallet.update({
-                where: { userId: senderUserId },
-                data: { bonus: { decrement: amount } },
+            const debit = await tx.wallet.updateMany({
+                where: { userId: senderUserId, [bonusField(currency)]: { gte: amount } },
+                data: { [bonusField(currency)]: { decrement: amount } },
             });
+            if (debit.count !== 1) throw new BadRequestException('Недостаточно бонусов');
             await tx.wallet.update({
                 where: { userId: recipient.id },
-                data: { bonus: { increment: amount } },
+                data: { [bonusField(currency)]: { increment: amount } },
             });
             const txAny = tx as any;
             await txAny.walletTransaction.create({
@@ -472,6 +499,7 @@ export class WalletService {
                     type: 'BONUS_TRANSFER_OUT',
                     direction: 'DEBIT',
                     balanceSource: 'BONUS',
+                    currency,
                     amount,
                     actorUserId: senderUserId,
                     note: `Transfer to ${recipient.phone}`,
@@ -483,6 +511,7 @@ export class WalletService {
                     type: 'BONUS_TRANSFER_IN',
                     direction: 'CREDIT',
                     balanceSource: 'BONUS',
+                    currency,
                     amount,
                     actorUserId: senderUserId,
                     note: `Transfer from ${sender.phone}`,
@@ -492,6 +521,7 @@ export class WalletService {
 
         return {
             success: true,
+            currency,
             amount,
             recipientPhone: recipient.phone,
             message: 'Перевод бонусов выполнен',
@@ -689,6 +719,7 @@ export class WalletService {
         type: string;
         direction: 'DEBIT' | 'CREDIT';
         balanceSource: 'MONEY' | 'BONUS';
+        currency?: string;
         amount: number;
         note?: string;
         actorUserId?: string;
@@ -703,6 +734,7 @@ export class WalletService {
                     type: input.type,
                     direction: input.direction,
                     balanceSource: input.balanceSource,
+                    currency: input.currency ?? 'KZT',
                     amount: input.amount,
                     note: input.note ?? null,
                     actorUserId: input.actorUserId ?? null,
@@ -720,18 +752,21 @@ export class WalletService {
         walletId: string;
         amount: number;
         source: 'MONEY' | 'BONUS';
+        currency: string;
     }) {
         const includeSource = await this.supportsPayoutSourceColumn();
         return await db.payoutRequest.create({
             data: includeSource
                 ? {
                     walletId: input.walletId,
+                    currency: input.currency,
                     amount: input.amount,
                     status: 'PENDING',
                     source: input.source,
                 }
                 : {
                     walletId: input.walletId,
+                    currency: input.currency,
                     amount: input.amount,
                     status: 'PENDING',
                 },

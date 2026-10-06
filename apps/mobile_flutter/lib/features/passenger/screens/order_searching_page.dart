@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:intercity_shared/intercity_shared.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
@@ -1021,6 +1022,14 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
             ),
           ),
           _boardRoutePoint('Куда', to, Icons.location_on_rounded),
+          if ((_order?['price'] as num? ?? 0) > 0) ...[
+            const SizedBox(height: 12),
+            Text(
+              _formatPrice(_order?['price']),
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w900),
+            ),
+          ],
         ],
       ),
     );
@@ -2364,7 +2373,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                 ),
               ),
               Text(
-                '${price.toStringAsFixed(0)} ₸',
+                '${price.toStringAsFixed(0)} ${rideCurrencySymbol(_order)}',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 24,
@@ -2617,7 +2626,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
 
   String _formatPrice(dynamic value) {
     if (value is num) {
-      return '${value.toStringAsFixed(0)} ₸';
+      return '${value.toStringAsFixed(0)} ${rideCurrencySymbol(_order)}';
     }
     return '-';
   }

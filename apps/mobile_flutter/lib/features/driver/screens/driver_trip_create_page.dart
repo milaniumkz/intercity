@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:intercity_shared/intercity_shared.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/theme/theme_controller.dart';
@@ -27,6 +28,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   final _pricePerSeatCtrl = TextEditingController(text: '2000');
   final _routeSeatsCtrl = TextEditingController(text: '4');
   int _seatsTotal = 3;
+  String _offerCurrencySymbol = '₸';
   bool _promoteToTop = false;
   DateTime _departureTime = _defaultDepartureTime();
   List<dynamic> _openRequests = [];
@@ -818,6 +820,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   }
 
   Future<void> _showOfferDialog(Map<String, dynamic> request) async {
+    _offerCurrencySymbol = rideCurrencySymbol(request);
     final requestType =
         (request['requestType'] ?? requestTypeIntercity).toString();
     final paymentMethod =
@@ -1143,7 +1146,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
               ),
             ),
             child: Text(
-              '$price ₸',
+              '$price $_offerCurrencySymbol',
               style: TextStyle(
                 color: selected ? Colors.white : AppTheme.primaryColor,
                 fontWeight: FontWeight.w900,
@@ -1709,8 +1712,9 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
     final paymentMethod =
         paymentMethodLabel(request['paymentMethod']?.toString());
     final price = request['price'] ?? request['proposedPrice'];
-    final priceText =
-        price is num ? '${price.toStringAsFixed(0)} ₸' : 'Цена от водителя';
+    final priceText = price is num
+        ? '${price.toStringAsFixed(0)} ${rideCurrencySymbol(request)}'
+        : 'Цена от водителя';
     final distance = request['distanceKm'] ?? request['distance'];
     final distanceText =
         distance is num ? '${distance.toStringAsFixed(0)} км' : 'Маршрут';
@@ -2151,7 +2155,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                         child: Column(
                           children: [
                             Text(
-                              '$pricePerSeat ₸',
+                              '$pricePerSeat ${rideCurrencySymbol(trip)}',
                               style: const TextStyle(
                                 color: AppTheme.primaryColor,
                                 fontWeight: FontWeight.w900,
@@ -2192,7 +2196,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                       Expanded(
                         child: _metricBlock(
                           label: 'Цена за место',
-                          value: '$pricePerSeat ₸',
+                          value: '$pricePerSeat ${rideCurrencySymbol(trip)}',
                           icon: Icons.payments_outlined,
                         ),
                       ),
@@ -2619,7 +2623,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
               ),
               const SizedBox(height: 10),
               Text(
-                'Для принятия этой межгородской заявки необходимо $required ₸',
+                'Для принятия этой межгородской заявки необходимо $required ${rideCurrencySymbol(order)}',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: theme.colorScheme.onSurfaceVariant,
@@ -2631,7 +2635,8 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
               _boardDetailCard(
                 child: Column(
                   children: [
-                    _boardMoneyRow('Требуется для комиссии', '$required ₸'),
+                    _boardMoneyRow('Требуется для комиссии',
+                        '$required ${rideCurrencySymbol(order)}'),
                     _boardMoneyRow(
                       'Доступно на балансе',
                       '$available ₸',
@@ -2693,7 +2698,8 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   Widget _boardCommissionConfirmScreen(Map<String, dynamic> order) {
     final theme = Theme.of(context);
     final price = (order['price'] as num?)?.toInt() ?? 0;
-    const commission = 270;
+    final commission = ((order['commissionAmount'] as num?)?.toDouble() ??
+        (rideCurrencyCode(order) == 'RUB' ? 0.0 : 270.0));
     final payout = price > commission ? price - commission : 0;
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -2763,7 +2769,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
               ),
               const SizedBox(height: 12),
               Text(
-                '$commission ₸',
+                '$commission ${rideCurrencySymbol(order)}',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: theme.colorScheme.onSurface,
@@ -2775,11 +2781,13 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
               _boardDetailCard(
                 child: Column(
                   children: [
-                    _boardMoneyRow('Сумма заказа', '$price ₸'),
-                    _boardMoneyRow('Комиссия сервиса', '-$commission ₸'),
+                    _boardMoneyRow(
+                        'Сумма заказа', '$price ${rideCurrencySymbol(order)}'),
+                    _boardMoneyRow('Комиссия сервиса',
+                        '-$commission ${rideCurrencySymbol(order)}'),
                     _boardMoneyRow(
                       'К зачислению после поездки',
-                      '$payout ₸',
+                      '$payout ${rideCurrencySymbol(order)}',
                       strong: true,
                     ),
                   ],
@@ -2983,7 +2991,8 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
             order['customerRating'] ??
             '—')
         .toString();
-    const commission = 270;
+    final commission = ((order['commissionAmount'] as num?)?.toDouble() ??
+        (rideCurrencyCode(order) == 'RUB' ? 0.0 : 270.0));
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       body: ICPremiumBackground(
@@ -3123,11 +3132,13 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    _boardMoneyRow('Фиксированная цена', '$price ₸'),
-                    _boardMoneyRow('Комиссия сервиса', '-$commission ₸'),
+                    _boardMoneyRow('Фиксированная цена',
+                        '$price ${rideCurrencySymbol(order)}'),
+                    _boardMoneyRow('Комиссия сервиса',
+                        '-$commission ${rideCurrencySymbol(order)}'),
                     _boardMoneyRow(
                       'К списанию с баланса',
-                      '$commission ₸',
+                      '$commission ${rideCurrencySymbol(order)}',
                       strong: true,
                     ),
                     const SizedBox(height: 10),
@@ -3405,7 +3416,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
             SizedBox(
               width: 58,
               child: Text(
-                '$price ₸',
+                '$price ${rideCurrencySymbol(order)}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.right,
