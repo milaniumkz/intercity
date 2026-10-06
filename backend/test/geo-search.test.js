@@ -89,3 +89,12 @@ test('empty provider response is retried instead of cached',async()=>{
  assert.deepEqual(await geo.searchLocations('Казыбек Би'),[]);
  assert.equal((await geo.searchLocations('Казыбек Би')).length,1);assert.equal(calls,2);
 });
+
+test('Ridder is displayed by current name while historical name remains searchable',async()=>{
+ const geo=makeGeo();
+ for(const query of ['риддер','Рид','Ridder','Лениногорск']) {
+  const rows=await geo.searchCities(query);
+  assert(rows.some(c=>c.name==='Риддер' && c.countryCode==='KZ'),query);
+  assert(!rows.some(c=>c.name==='Лениногорск' && c.countryCode==='KZ'));
+ }
+});
