@@ -3,6 +3,9 @@ name: Deploy VPS
 on:
   push:
     branches: [main]
+    # CI-only changes do not publish a production release.
+    paths-ignore:
+      - ".github/**"
   workflow_dispatch:
     inputs:
       ref:

@@ -22,18 +22,28 @@ on:
 jobs:
   flutter-verify:
     name: Analyze, test, and web-build both apps
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["milanium-mac-arm64", "repo-intercity"]') || fromJSON('["ubuntu-latest"]') }}
     timeout-minutes: 45
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Flutter
+        if: github.event_name != 'push'
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.41.1'
           cache: true
+
+      - name: Select installed Mac Flutter
+        if: github.event_name == 'push'
+        run: |
+          echo /Volumes/PD1000/job/flutter/bin >> "$GITHUB_PATH"
+          /Volumes/PD1000/job/flutter/bin/flutter --version --machine | python3 -c 'import json,sys; assert json.load(sys.stdin)["frameworkVersion"] == "3.41.1"'
 
       - name: Print Flutter version
         run: flutter --version
@@ -46,20 +56,31 @@ jobs:
 
   mobile-smoke-macos:
     name: macOS smoke test for mobile app
-    runs-on: macos-latest
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["milanium-mac-arm64", "repo-intercity"]') || fromJSON('["macos-latest"]') }}
     timeout-minutes: 45
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Flutter
+        if: github.event_name != 'push'
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.41.1'
           cache: true
 
+      - name: Select installed Mac Flutter
+        if: github.event_name == 'push'
+        run: |
+          echo /Volumes/PD1000/job/flutter/bin >> "$GITHUB_PATH"
+          /Volumes/PD1000/job/flutter/bin/flutter --version --machine | python3 -c 'import json,sys; assert json.load(sys.stdin)["frameworkVersion"] == "3.41.1"'
+
       - name: Enable macOS desktop
+        if: github.event_name != 'push'
         run: flutter config --enable-macos-desktop
 
       - name: Run mobile macOS smoke test
