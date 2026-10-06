@@ -8,6 +8,7 @@ on:
         required: true
         type: choice
         options:
+          - seed-russian-city-tariffs
           - status
           - logs
           - restart
