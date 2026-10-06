@@ -501,7 +501,7 @@ void main() {
 
     await tapTextAndExpect(
       tester,
-      startRoute: '/driver/wallet',
+      startRoute: '/driver/wallet/seed',
       tapText: 'Пополнения',
       expectedText: 'Пополнение баланса',
     );

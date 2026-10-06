@@ -1,3 +1,4 @@
+import { moneyField, bonusField } from '../common/currency';
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { GeoService } from '../geo/geo.service';
@@ -86,18 +87,10 @@ export class OrdersService {
     }
 
     private async resolveCityTariff(cityId: string | null) {
-        const where = cityId ? { cityId, isActive: true } : { isActive: true };
-        const cityTariffs = await this.prisma.tariffCity.findMany({
-            where,
+        const tariffs = cityId ? await this.prisma.tariffCity.findMany({
+            where: { cityId, isActive: true },
             orderBy: { basePrice: 'asc' },
-        });
-        const fallbackTariffs = cityId && cityTariffs.length == 0
-            ? await this.prisma.tariffCity.findMany({
-                where: { isActive: true },
-                orderBy: { basePrice: 'asc' },
-            })
-            : cityTariffs;
-        const tariffs = fallbackTariffs;
+        }) : [];
         if (tariffs.length === 0) {
             return { tariff: null as any, multiplier: 1 };
         }
@@ -115,6 +108,8 @@ export class OrdersService {
             duration: preview.duration,
             price: preview.price,
             tariff: preview.tariff,
+            currency: preview.currency,
+            cityId: preview.cityId,
         };
     }
 
@@ -154,7 +149,7 @@ export class OrdersService {
         let bonusUsedAmount = 0;
         if (useBonus) {
             const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
-            if (!wallet || wallet.bonus < preview.price) {
+            if (!wallet || wallet[bonusField(preview.currency)] < preview.price) {
                 throw new BadRequestException('Insufficient bonus balance');
             }
             bonusUsedAmount = preview.price;
@@ -168,10 +163,11 @@ export class OrdersService {
                     select: { id: true },
                 });
                 userWalletId = wallet?.id ?? null;
-                await tx.wallet.update({
-                    where: { userId },
-                    data: { bonus: { decrement: bonusUsedAmount } },
+                const debit = await tx.wallet.updateMany({
+                    where: { userId, [bonusField(preview.currency)]: { gte: bonusUsedAmount } },
+                    data: { [bonusField(preview.currency)]: { decrement: bonusUsedAmount } },
                 });
+                if (debit.count !== 1) throw new BadRequestException('Insufficient bonus balance');
             }
 
             const createdOrder = await tx.order.create({
@@ -190,6 +186,7 @@ export class OrdersService {
                     mode,
                     requestType: requestType ?? 'CITY_FIXED',
                     price: isCityAuction ? 0 : preview.price,
+                    currency: preview.currency,
                     priceSource: isCityAuction ? 'DRIVER_OFFER' : 'SYSTEM',
                     paymentMethod,
                     vehicleClass,
@@ -214,6 +211,7 @@ export class OrdersService {
                         direction: 'DEBIT',
                         balanceSource: 'BONUS',
                         amount: bonusUsedAmount,
+                        currency: preview.currency,
                         orderId: createdOrder.id,
                         actorUserId: userId,
                         note: 'Bonus used for order payment',
@@ -253,6 +251,7 @@ export class OrdersService {
             price: 0,
             tariff: null,
             cityId: geoResult?.cityId ?? null,
+            currency: geoResult.currency,
         };
     }
 
@@ -309,7 +308,7 @@ export class OrdersService {
             }
         }
 
-        return { distance: route.distance, duration: route.duration, price: this.roundRidePrice(price), tariff, cityId };
+        return { distance: route.distance, duration: route.duration, price: this.roundRidePrice(price), tariff, cityId, currency: geoResult.currency };
     }
 
     private roundRidePrice(price: number) {
@@ -515,6 +514,20 @@ export class OrdersService {
         const commissionAmount = offer.price > 0 ? (offer.price * commissionPercent) / 100 : 0;
 
         const updated = await this.prisma.$transaction(async (tx) => {
+            const claimed = await tx.order.updateMany({
+                where: { id: offer.orderId, selectedOfferId: null, status: { in: ['CREATED', 'SEARCHING_DRIVER'] } },
+                data: { selectedOfferId: offerId },
+            });
+            if (claimed.count !== 1) throw new BadRequestException('Order already assigned');
+            let bonusUsedAmount = offer.order.bonusUsedAmount || 0;
+            if (offer.order.paymentMethod === 'BONUSES' && bonusUsedAmount === 0) {
+                const field = bonusField(offer.order.currency);
+                const debit = await tx.wallet.updateMany({ where: { userId: passengerUserId, [field]: { gte: offer.price } }, data: { [field]: { decrement: offer.price } } });
+                if (debit.count !== 1) throw new BadRequestException('Insufficient bonus balance');
+                const wallet = await tx.wallet.findUnique({ where: { userId: passengerUserId } });
+                await tx.walletTransaction.create({ data: { walletId: wallet!.id, currency: offer.order.currency, type: 'ORDER_BONUS_USED', direction: 'DEBIT', balanceSource: 'BONUS', amount: offer.price, orderId: offer.orderId } });
+                bonusUsedAmount = offer.price;
+            }
             await (tx as any).orderOffer.update({
                 where: { id: offerId },
                 data: { status: 'ACCEPTED' },
@@ -528,6 +541,8 @@ export class OrdersService {
                 data: {
                     driverId: offer.driverId,
                     selectedOfferId: offerId,
+                    bonusUsedAmount,
+                    paidWithBonus: bonusUsedAmount > 0,
                     price: offer.price,
                     priceSource: 'DRIVER_OFFER',
                     commissionAmount,
@@ -636,9 +651,14 @@ export class OrdersService {
             throw new BadRequestException('Order already completed or cancelled');
         }
 
-        const updated = await this.prisma.order.update({
-            where: { id: orderId },
-            data: { status: 'CANCELLED' },
+        const updated = await this.prisma.$transaction(async (tx) => {
+            const changed = await tx.order.updateMany({ where: { id: orderId, status: { notIn: ['COMPLETED', 'CANCELLED'] } }, data: { status: 'CANCELLED' } });
+            if (changed.count !== 1) throw new BadRequestException('Order already completed or cancelled');
+            if (order.bonusUsedAmount > 0) {
+                const wallet = await tx.wallet.update({ where: { userId }, data: { [bonusField(order.currency)]: { increment: order.bonusUsedAmount } } });
+                await tx.walletTransaction.create({ data: { walletId: wallet.id, currency: order.currency, type: 'ORDER_BONUS_REFUND', direction: 'CREDIT', balanceSource: 'BONUS', amount: order.bonusUsedAmount, orderId } });
+            }
+            return tx.order.findUniqueOrThrow({ where: { id: orderId } });
         });
         await this.recordRideEventSafe({
             orderId: order.id,
@@ -842,7 +862,7 @@ export class OrdersService {
             where: { id: driverUserId },
             select: { phone: true },
         });
-        if (!this.isKazakhstanPhone(driverUser?.phone)) {
+        if (order.currency !== 'RUB' && !this.isKazakhstanPhone(driverUser?.phone)) {
             if (typeof order.commissionAmount === 'number' && order.commissionAmount > 0) {
                 await this.prisma.order.update({
                     where: { id: order.id },
@@ -867,6 +887,7 @@ export class OrdersService {
         const idempotencyKey = `order-commission:${order.id}:driver:${driverUserId}`;
         let balanceAfterDebit: number | null = null;
         await this.prisma.$transaction(async (tx) => {
+            await tx.wallet.updateMany({ where: { userId: driverUserId }, data: { [moneyField(order.currency)]: { increment: 0 } } });
             const existing = await (tx as any).walletTransaction.findFirst({
                 where: { idempotencyKey },
                 select: { id: true },
@@ -887,10 +908,10 @@ export class OrdersService {
             }
             const updatedWallet = await tx.wallet.update({
                 where: { userId: driverUserId },
-                data: { money: { decrement: commissionAmount } },
-                select: { money: true },
+                data: { [moneyField(order.currency)]: { decrement: commissionAmount } },
+                select: { money: true, moneyRub: true },
             });
-            balanceAfterDebit = updatedWallet.money;
+            balanceAfterDebit = updatedWallet[moneyField(order.currency)];
             await (tx as any).walletTransaction.create({
                 data: {
                     walletId: wallet.id,
@@ -898,6 +919,7 @@ export class OrdersService {
                     direction: 'DEBIT',
                     balanceSource: 'MONEY',
                     amount: commissionAmount,
+                    currency: order.currency,
                     actorUserId: driverUserId,
                     orderId: order.id,
                     idempotencyKey,
@@ -909,6 +931,7 @@ export class OrdersService {
             driverUserId,
             driverId,
             balanceAfterDebit,
+            order.currency,
         );
     }
 
@@ -917,9 +940,9 @@ export class OrdersService {
         return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
     }
 
-    private async getDriverMinOnlineBalance(): Promise<number> {
+    private async getDriverMinOnlineBalance(currency = 'KZT'): Promise<number> {
         const setting = await this.prisma.appSettings.findUnique({
-            where: { key: 'driverMinOnlineBalance' },
+            where: { key: currency === 'RUB' ? 'driverMinOnlineBalanceRub' : 'driverMinOnlineBalance' },
         });
         return this.parsePositiveNumber(setting?.value, 100);
     }
@@ -928,16 +951,17 @@ export class OrdersService {
         driverUserId: string,
         driverId?: string | null,
         knownBalance?: number | null,
+        currency = 'KZT',
     ) {
         if (!driverId) return;
-        const minBalance = await this.getDriverMinOnlineBalance();
+        const minBalance = await this.getDriverMinOnlineBalance(currency);
         if (minBalance <= 0) return;
 
         const balance = knownBalance ??
             (await this.prisma.wallet.findUnique({
                 where: { userId: driverUserId },
-                select: { money: true },
-            }))?.money ??
+                select: { money: true, moneyRub: true },
+            }))?.[moneyField(currency)] ??
             0;
         if (balance >= minBalance) return;
 
@@ -1036,7 +1060,7 @@ export class OrdersService {
                 if (!wallet) return;
                 await this.prisma.wallet.update({
                     where: { userId: referrer.id },
-                    data: { bonus: { increment: bonusAmount } },
+                    data: { [bonusField(order.currency)]: { increment: bonusAmount } },
                 });
                 await this.recordWalletTransactionSafe({
                     walletId: wallet.id,
@@ -1044,6 +1068,7 @@ export class OrdersService {
                     direction: 'CREDIT',
                     balanceSource: 'BONUS',
                     amount: bonusAmount,
+                    currency: order.currency,
                     actorUserId: referrer.id,
                     orderId: order.id,
                     idempotencyKey,
@@ -1063,6 +1088,7 @@ export class OrdersService {
         type: string;
         direction: 'DEBIT' | 'CREDIT';
         balanceSource: 'MONEY' | 'BONUS';
+        currency?: string;
         amount: number;
         note?: string;
         actorUserId?: string;
@@ -1076,6 +1102,7 @@ export class OrdersService {
                     type: input.type,
                     direction: input.direction,
                     balanceSource: input.balanceSource,
+                    currency: input.currency ?? 'KZT',
                     amount: input.amount,
                     note: input.note ?? null,
                     actorUserId: input.actorUserId ?? null,

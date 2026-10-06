@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intercity_shared/intercity_shared.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/theme/theme_controller.dart';
@@ -209,7 +210,7 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
           : '';
       return '${requestTypeLabel(requestType)}$suffix • $offersCount предлож.';
     }
-    return '${item['mode']} • ${item['price']} ₸';
+    return '${item['mode']} • ${item['price']} ${rideCurrencySymbol(item)}';
   }
 
   int _countByStatus(

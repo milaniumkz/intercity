@@ -18,8 +18,8 @@ export class WalletController {
     @UseGuards(JwtAuthGuard)
     @ApiBearerAuth()
     @ApiOperation({ summary: 'Get my wallet' })
-    async getWallet(@Request() req) {
-        return this.walletService.getWallet(req.user.sub);
+    async getWallet(@Request() req, @Query('currency') currency?: string) {
+        return this.walletService.getWallet(req.user.sub, currency);
     }
 
     @Post('topup-request')
@@ -49,7 +49,7 @@ export class WalletController {
     @ApiBearerAuth()
     @ApiOperation({ summary: 'Transfer bonus to another user by phone' })
     async transferBonus(@Request() req, @Body() dto: BonusTransferDto) {
-        return this.walletService.transferBonusByPhone(req.user.sub, dto.phone, dto.amount);
+        return this.walletService.transferBonusByPhone(req.user.sub, dto.phone, dto.amount, dto.currency);
     }
 
     @Get('bonus-transfer/recipient')

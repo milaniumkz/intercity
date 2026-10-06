@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:intercity_shared/intercity_shared.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
@@ -536,6 +537,19 @@ class _OrderScreenState extends State<OrderScreen> {
 
   String _statusText = '';
   double? _boardPrice;
+  String _rideCurrency = 'KZT';
+  String get _currencySymbol {
+    if (_requestType() == requestTypeIntercity) {
+      for (final city in _cityOptions) {
+        if (city['id'] == _intercityFromCityId ||
+            city['name'] == _intercityFromCityName) {
+          return rideCurrencySymbol(city);
+        }
+      }
+    }
+    return rideCurrencySymbol({'currency': _rideCurrency});
+  }
+
   double? _boardDistance;
   int? _boardDuration;
 
@@ -729,6 +743,7 @@ class _OrderScreenState extends State<OrderScreen> {
       'intercityToCityLat': _intercityToCityPoint?.latitude,
       'intercityToCityLng': _intercityToCityPoint?.longitude,
       'boardPrice': _boardPrice,
+      'rideCurrency': _rideCurrency,
       'boardDistance': _boardDistance,
       'boardDuration': _boardDuration,
     };
@@ -794,6 +809,7 @@ class _OrderScreenState extends State<OrderScreen> {
               LatLng(intercityToCityLat, intercityToCityLng);
         }
         _boardPrice = (draft['boardPrice'] as num?)?.toDouble();
+        _rideCurrency = rideCurrencyCode({'currency': draft['rideCurrency']});
         _boardDistance = (draft['boardDistance'] as num?)?.toDouble();
         _boardDuration = (draft['boardDuration'] as num?)?.toInt();
         if (_routeStage('intercity_options') &&
@@ -1118,13 +1134,13 @@ class _OrderScreenState extends State<OrderScreen> {
   String get _displayPrice {
     final price = _boardPrice;
     if (price == null) return 'После расчёта';
-    return '${price.toStringAsFixed(0)} ₸';
+    return '${price.toStringAsFixed(0)} $_currencySymbol';
   }
 
   String _displayClassPrice(double multiplier) {
     final price = _boardPrice;
     if (price == null) return 'После расчёта';
-    return '${(price * multiplier).round()} ₸';
+    return '${(price * multiplier).round()} $_currencySymbol';
   }
 
   String get _displayRouteMeta {
@@ -1142,6 +1158,7 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   void _selectPaymentAndContinue(String value) {
+    if (!_paymentMethodEnabled(value)) return;
     setState(() => _paymentMethod = value);
     _goOrderBoard('confirm');
   }
@@ -3507,7 +3524,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 const SizedBox(height: 14),
                 _boardPaymentRow(
                   title: 'Бонусами',
-                  subtitle: 'До 100% стоимости поездки',
+                  subtitle: 'До 100% стоимости поездки ($_currencySymbol)',
                   icon: Icons.stars_rounded,
                   selected: _paymentMethod == paymentMethodBonus,
                   onTap: () => _selectPaymentAndContinue(paymentMethodBonus),
@@ -8065,6 +8082,10 @@ class _OrderScreenState extends State<OrderScreen> {
       if (isFrom) {
         _intercityFromCityId = null;
         _intercityFromCityName = name;
+        _rideCurrency = rideCurrencyCode(selected);
+        if (!_paymentMethodEnabled(_paymentMethod)) {
+          _paymentMethod = paymentMethodCash;
+        }
         _intercityFromCityPoint = point;
         _setAddressFieldValue(isFrom: true, value: '');
       } else {
@@ -8151,7 +8172,7 @@ class _OrderScreenState extends State<OrderScreen> {
         : _toController.text.trim();
     final price = _boardPrice == null
         ? 'Цена рассчитается автоматически'
-        : '${_boardPrice!.toStringAsFixed(0)} ₸';
+        : '${_boardPrice!.toStringAsFixed(0)} $_currencySymbol';
     return _surfaceCard(
       padding: const EdgeInsets.all(14),
       child: Column(
@@ -8463,7 +8484,7 @@ class _OrderScreenState extends State<OrderScreen> {
         ? (_requestType() == requestTypeCityFixed
             ? 'Цена рассчитается автоматически'
             : 'Водители предложат цену')
-        : '${_boardPrice!.toStringAsFixed(0)} ₸';
+        : '${_boardPrice!.toStringAsFixed(0)} $_currencySymbol';
     final meta = _boardDistance == null
         ? requestTypeLabel(_requestType())
         : '${_boardDistance!.toStringAsFixed(1)} км • ${_boardDuration ?? 0} мин';
@@ -9852,7 +9873,7 @@ class _OrderScreenState extends State<OrderScreen> {
               ),
             ),
             Text(
-              '$price ₸',
+              '$price $_currencySymbol',
               style: const TextStyle(
                 color: AppTheme.primaryColor,
                 fontWeight: FontWeight.w900,
@@ -10027,7 +10048,9 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Future<void> _showPaymentMethodSheet() async {
-    final methods = paymentMethodsForRequestType(_requestType());
+    final methods = paymentMethodsForRequestType(_requestType())
+        .where(_paymentMethodEnabled)
+        .toList();
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -10156,7 +10179,9 @@ class _OrderScreenState extends State<OrderScreen> {
       paymentMethodsForRequestType(_requestType()).contains(method);
 
   String _nextPaymentMethod(String current) {
-    final methods = paymentMethodsForRequestType(_requestType());
+    final methods = paymentMethodsForRequestType(_requestType())
+        .where(_paymentMethodEnabled)
+        .toList();
     final index = methods.indexOf(current);
     return methods[(index + 1) % methods.length];
   }
@@ -10601,7 +10626,7 @@ class _OrderScreenState extends State<OrderScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${_boardPrice!.toStringAsFixed(0)} ₸',
+                          '${_boardPrice!.toStringAsFixed(0)} $_currencySymbol',
                           style: const TextStyle(
                             fontSize: 30,
                             fontWeight: FontWeight.w900,
@@ -11082,7 +11107,7 @@ class _OrderScreenState extends State<OrderScreen> {
                                     icon: Icons.payments_rounded,
                                     label: 'Цена',
                                     value:
-                                        '${pricePerSeat.toStringAsFixed(0)} ₸',
+                                        '${pricePerSeat.toStringAsFixed(0)} ${rideCurrencySymbol(trip)}',
                                   ),
                                 ),
                               ],
@@ -11892,6 +11917,10 @@ class _OrderScreenState extends State<OrderScreen> {
       setState(() {
         if (isFrom) {
           _fromAddress = compactAddress;
+          _rideCurrency = rideCurrencyCode(data);
+          if (!_paymentMethodEnabled(_paymentMethod)) {
+            _paymentMethod = paymentMethodCash;
+          }
           _setAddressFieldValue(isFrom: true, value: compactAddress);
         } else {
           _toAddress = compactAddress;
@@ -13041,6 +13070,10 @@ class _OrderScreenState extends State<OrderScreen> {
         _boardDistance = (data['distance'] as num?)?.toDouble();
         _boardDuration = (data['duration'] as num?)?.toInt();
         _boardPrice = _roundRidePrice((data['price'] as num?)?.toDouble());
+        _rideCurrency = rideCurrencyCode(data);
+        if (!_paymentMethodEnabled(_paymentMethod)) {
+          _paymentMethod = paymentMethodCash;
+        }
         _statusText = _boardPrice != null
             ? 'Стоимость рассчитана автоматически.'
             : 'Не удалось рассчитать стоимость.';

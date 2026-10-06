@@ -1,15 +1,15 @@
 import 'package:flutter/services.dart';
 
 String normalizeKzPhone(String input) {
-  final raw = input.trimLeft();
-  final digits = input.replaceAll(RegExp(r'\D'), '');
+  // Remove a pasted duplicate prefix only when both country codes have a
+  // plus sign. +777... is a valid number, not a duplicated country code.
+  final raw = input.trimLeft().replaceFirst(RegExp(r'^\+7\s*(?=\+7)'), '');
+  final digits = raw.replaceAll(RegExp(r'\D'), '');
   if (digits.isEmpty) return '';
 
   var value = digits;
   if (raw.startsWith('+')) {
-    if (value.startsWith('777')) {
-      value = '7${value.substring(2)}';
-    } else if (value.startsWith('8')) {
+    if (value.startsWith('8')) {
       value = '7${value.substring(1)}';
     } else if (!value.startsWith('7')) {
       value = '7$value';
@@ -20,9 +20,6 @@ String normalizeKzPhone(String input) {
     } else if (!value.startsWith('7') || value.length <= 10) {
       value = '7$value';
     }
-  }
-  if (value.length > 11) {
-    value = value.substring(0, 11);
   }
   return '+$value';
 }
@@ -101,12 +98,9 @@ String normalizeKzLocalPhone(String input) {
   var digits = input.replaceAll(RegExp(r'\D'), '');
   if (digits.isEmpty) return '';
 
-  if (digits.length >= 11 &&
+  if ((input.trimLeft().startsWith('+') || digits.length >= 11) &&
       (digits.startsWith('7') || digits.startsWith('8'))) {
     digits = digits.substring(1);
-  }
-  if (digits.length > 10) {
-    digits = digits.substring(digits.length - 10);
   }
   return '+7$digits';
 }

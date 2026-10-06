@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma.service';
+import { currencyForCountry, countryCodeFromRegion } from '../common/currency';
 
 @Injectable()
 export class GeoService {
@@ -87,12 +88,13 @@ export class GeoService {
             const addressParts = data?.address || {};
             const city = this.extractCity(addressParts) || nearestCity?.name || null;
             const region = this.extractRegion(addressParts) || nearestCity?.region || null;
+            const countryCode = (addressParts.country_code || nearestCity?.countryCode || countryCodeFromRegion(region)).toUpperCase();
             const displayAddress = this.buildReverseAddress(data, nearestCity);
 
             // Try to find city in database
             let cityRecord = nearestCity;
             if (city) {
-                if (!cityRecord || cityRecord.name.toLowerCase() !== city.toLowerCase()) {
+                if (!cityRecord?.id || cityRecord.name.toLowerCase() !== city.toLowerCase()) {
                     cityRecord = await this.prisma.city.findFirst({
                         where: {
                             name: { contains: city, mode: 'insensitive' },
@@ -105,6 +107,7 @@ export class GeoService {
                         data: {
                             name: city,
                             region,
+                            countryCode,
                             lat,
                             lng,
                             isActive: true,
@@ -123,6 +126,8 @@ export class GeoService {
             return {
                 city: city || 'Unknown',
                 cityId: cityRecord?.id || null,
+                countryCode: cityRecord?.countryCode || countryCode,
+                currency: currencyForCountry(cityRecord?.countryCode || countryCode),
                 address: displayAddress,
                 lat,
                 lng,
@@ -131,11 +136,27 @@ export class GeoService {
             return {
                 city: nearestCity?.name || 'Unknown',
                 cityId: nearestCity?.id || null,
+                countryCode: nearestCity?.countryCode || 'KZ',
+                currency: currencyForCountry(nearestCity?.countryCode),
                 address: this.buildNearestCityAddress(nearestCity),
                 lat,
                 lng,
             };
         }
+    }
+
+    async departureCurrency(lat?: number | null, lng?: number | null, cityName?: string | null) {
+        const name = (cityName || '').split(',')[0].trim();
+        const city = name ? await this.prisma.city.findFirst({
+            where: { name: { equals: name, mode: 'insensitive' }, isActive: true },
+        }) : null;
+        if (city) return currencyForCountry(city.countryCode);
+        const fallback = GeoService.fallbackCities.find(item => item.name.toLowerCase() === name.toLowerCase());
+        if (fallback) return currencyForCountry(countryCodeFromRegion(fallback.region));
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            return (await this.reverseGeocode(lat!, lng!)).currency;
+        }
+        return currencyForCountry(countryCodeFromRegion(cityName));
     }
 
     private extractCity(address: any) {
@@ -192,6 +213,7 @@ export class GeoService {
                 id: true,
                 name: true,
                 region: true,
+                countryCode: true,
                 lat: true,
                 lng: true,
             },
@@ -206,7 +228,14 @@ export class GeoService {
                 nearest = city;
             }
         }
-        return nearest;
+        for (const city of GeoService.fallbackCities) {
+            const distance = this.haversine(lat, lng, city.lat, city.lng);
+            if (distance < nearestDistance && distance < 50) {
+                nearestDistance = distance;
+                nearest = { ...city, id: null, countryCode: countryCodeFromRegion(city.region) };
+            }
+        }
+        return nearestDistance < 100 ? nearest : null;
     }
 
     async listActiveCities() {
@@ -216,6 +245,7 @@ export class GeoService {
                 id: true,
                 name: true,
                 region: true,
+                countryCode: true,
                 lat: true,
                 lng: true,
             },
@@ -229,16 +259,17 @@ export class GeoService {
         const normalized = (query || '').trim();
         if (normalized.length < 2) return [];
 
-        const collected: Array<{ displayName: string; lat: number; lng: number; name?: string; region?: string | null }> = [];
+        const collected: Array<{ displayName: string; lat: number; lng: number; name?: string; region?: string | null; countryCode?: string; currency?: string }> = [];
         const seen = new Set<string>();
 
-        const addCity = (item: { displayName: string; lat: number; lng: number; name?: string; region?: string | null }) => {
+        const addCity = (item: { displayName: string; lat: number; lng: number; name?: string; region?: string | null; countryCode?: string; currency?: string }) => {
             if (!item.displayName || !Number.isFinite(item.lat) || !Number.isFinite(item.lng)) return;
             if (!this.looksLikeLocalityResult(item)) return;
             const key = `${this.normalizeCityToken(item.name || item.displayName)}:${item.lat.toFixed(4)}:${item.lng.toFixed(4)}`;
             if (seen.has(key)) return;
             seen.add(key);
-            collected.push(item);
+            const countryCode = item.countryCode || countryCodeFromRegion(item.region);
+            collected.push({ ...item, countryCode, currency: currencyForCountry(countryCode) });
         };
 
         GeoService.fallbackCities
@@ -271,13 +302,14 @@ export class GeoService {
                     { region: { contains: normalized, mode: 'insensitive' } },
                 ],
             },
-            select: { name: true, region: true, lat: true, lng: true },
+            select: { name: true, region: true, countryCode: true, lat: true, lng: true },
             take: 8,
         });
         dbCities.forEach((city) => addCity({
             displayName: [city.name, city.region].filter(Boolean).join(', '),
             name: city.name,
             region: city.region,
+            countryCode: city.countryCode,
             lat: city.lat,
             lng: city.lng,
         }));
@@ -306,6 +338,7 @@ export class GeoService {
                         id: true,
                         name: true,
                         region: true,
+                countryCode: true,
                         lat: true,
                         lng: true,
                     },
@@ -412,9 +445,9 @@ export class GeoService {
                     .map((value: unknown) => typeof value === 'string' ? value.trim() : '')
                     .filter(Boolean)
                     .join(', ') || item?.display_name || `${lat}, ${lng}`;
-                return { displayName, name, region, lat, lng };
+                return { displayName, name, region, lat, lng, countryCode: address.country_code?.toUpperCase() };
             })
-            .filter((item: any): item is { displayName: string; lat: number; lng: number; name?: string; region?: string | null } => item !== null);
+            .filter((item: any): item is { displayName: string; lat: number; lng: number; name?: string; region?: string | null; countryCode?: string; currency?: string } => item !== null);
     }
 
     private async fetchYandexCitySearchResults(query: string) {
@@ -448,7 +481,7 @@ export class GeoService {
                     region,
                 };
             })
-            .filter((item: any): item is { displayName: string; lat: number; lng: number; name?: string; region?: string | null } => item !== null);
+            .filter((item: any): item is { displayName: string; lat: number; lng: number; name?: string; region?: string | null; countryCode?: string; currency?: string } => item !== null);
     }
 
     private firstDisplayNamePart(value: unknown) {
@@ -456,7 +489,7 @@ export class GeoService {
         return value.split(',')[0]?.trim() || '';
     }
 
-    private looksLikeLocalityResult(item: { displayName: string; name?: string; region?: string | null }) {
+    private looksLikeLocalityResult(item: { displayName: string; name?: string; region?: string | null; countryCode?: string; currency?: string }) {
         const name = this.normalizeCityToken(item.name || this.firstDisplayNamePart(item.displayName));
         const display = this.normalizeCityToken(item.displayName);
         if (!name || this.looksLikeCoordinates(name)) return false;
@@ -589,6 +622,7 @@ export class GeoService {
             displayName,
             lat,
             lng,
+            countryCode: feature?.metaDataProperty?.GeocoderMetaData?.Address?.country_code?.toUpperCase(),
         };
     }
 

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:intercity_shared/intercity_shared.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
@@ -711,7 +712,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: Text(
-                  '${offer['price']} ₸',
+                  '${offer['price']} ${rideCurrencySymbol(_request)}',
                   style: const TextStyle(
                     color: Colors.greenAccent,
                     fontWeight: FontWeight.w800,
@@ -805,7 +806,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
               children: [
                 _metaChip(
                   icon: Icons.savings_rounded,
-                  label: 'Лучшая цена: ${bestPendingOffer['price']} ₸',
+                  label: 'Лучшая цена: ${bestPendingOffer['price']} ${rideCurrencySymbol(_request)}',
                   color: Colors.greenAccent,
                 ),
                 if (requestType == requestTypeIntercity)
@@ -1241,7 +1242,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '${offer['price']} ₸',
+                            '${offer['price']} ${rideCurrencySymbol(_request)}',
                             style: TextStyle(
                               color: scheme.onSurface,
                               fontWeight: FontWeight.w900,

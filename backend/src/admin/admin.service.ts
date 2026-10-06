@@ -1,9 +1,11 @@
+import { moneyField, bonusField, walletCurrency } from '../common/currency';
 import { Injectable, NotFoundException, BadRequestException, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { NotificationDispatchService } from './notification-dispatch.service';
 import { adminUserSelect } from '../common/public-user-select';
+import { countryCodeFromRegion } from '../common/currency';
 
 type RequestLogItem = {
     at: string;
@@ -180,11 +182,19 @@ export class AdminService {
         return this.prisma.city.findMany({ orderBy: { name: 'asc' } });
     }
 
-    async createCity(data: { name: string; region?: string; lat: number; lng: number }) {
-        return this.prisma.city.create({ data });
+    async createCity(data: { name: string; region?: string; countryCode?: string; lat: number; lng: number }) {
+        if (data.countryCode != null && typeof data.countryCode !== 'string') throw new BadRequestException('Country must be KZ or RU');
+        const countryCode = data.countryCode?.toUpperCase() || countryCodeFromRegion(data.region);
+        if (!['KZ', 'RU'].includes(countryCode)) throw new BadRequestException('Country must be KZ or RU');
+        return this.prisma.city.create({ data: { ...data, countryCode } });
     }
 
-    async updateCity(id: string, data: Partial<{ name: string; region: string; lat: number; lng: number; isActive: boolean }>) {
+    async updateCity(id: string, data: Partial<{ name: string; region: string; countryCode: string; lat: number; lng: number; isActive: boolean }>) {
+        if (data.countryCode != null) {
+            if (typeof data.countryCode !== 'string') throw new BadRequestException('Country must be KZ or RU');
+            data = { ...data, countryCode: data.countryCode.toUpperCase() };
+            if (!['KZ', 'RU'].includes(data.countryCode)) throw new BadRequestException('Country must be KZ or RU');
+        }
         return this.prisma.city.update({ where: { id }, data });
     }
 
@@ -205,11 +215,25 @@ export class AdminService {
     }
 
     async createCityTariff(data: { cityId: string; name: string; basePrice: number; pricePerKm: number; pricePerMin: number; minPrice: number }) {
+        this.validateCityTariff(data);
+        const city = await this.prisma.city.findUnique({ where: { id: data.cityId } });
+        if (!city) throw new BadRequestException('City not found');
         return this.prisma.tariffCity.create({ data });
     }
 
     async updateCityTariff(id: string, data: Partial<{ name: string; basePrice: number; pricePerKm: number; pricePerMin: number; minPrice: number; isActive: boolean }>) {
+        this.validateCityTariff(data);
         return this.prisma.tariffCity.update({ where: { id }, data });
+    }
+
+    private validateCityTariff(data: Partial<{ name: string; basePrice: number; pricePerKm: number; pricePerMin: number; minPrice: number }>) {
+        if (data.name != null && (typeof data.name !== 'string' || !data.name.trim())) throw new BadRequestException('Tariff name is required');
+        for (const key of ['basePrice', 'pricePerKm', 'pricePerMin', 'minPrice'] as const) {
+            const value = data[key];
+            if (value != null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
+                throw new BadRequestException(`Invalid tariff amount: ${key}`);
+            }
+        }
     }
 
     async deleteCityTariff(id: string) {
@@ -618,13 +642,13 @@ export class AdminService {
             if (current.status !== 'PENDING') {
                 throw new BadRequestException(`Topup already ${current.status.toLowerCase()}`);
             }
-            await tx.topupRequest.update({
-                where: { id },
-                data: { status: 'APPROVED' },
+            const claimed = await tx.topupRequest.updateMany({
+                where: { id, status: 'PENDING' }, data: { status: 'APPROVED' },
             });
+            if (claimed.count !== 1) throw new BadRequestException('Topup already processed');
             await tx.wallet.update({
                 where: { id: topup.walletId },
-                data: { money: { increment: topup.amount } },
+                data: { [moneyField(topup.currency)]: { increment: topup.amount } },
             });
             await (tx as any).walletTransaction.create({
                 data: {
@@ -633,6 +657,7 @@ export class AdminService {
                     direction: 'CREDIT',
                     balanceSource: 'MONEY',
                     amount: topup.amount,
+                    currency: topup.currency,
                     topupRequestId: topup.id,
                     note: 'Admin approved topup request',
                 },
@@ -643,7 +668,7 @@ export class AdminService {
             entity: 'system',
             entityId: id,
             at: new Date().toISOString(),
-            payload: { amount: topup.amount, walletId: topup.walletId },
+            payload: { amount: topup.amount, currency: topup.currency, walletId: topup.walletId },
         });
         return { success: true };
     }
@@ -676,6 +701,7 @@ export class AdminService {
                 id: true,
                 walletId: true,
                 amount: true,
+                currency: true,
                 status: true,
                 adminId: true,
                 createdAt: true,
@@ -747,7 +773,7 @@ export class AdminService {
             skip: 0,
         });
         const lines: string[] = [];
-        lines.push('id,createdAt,walletId,userId,userPhone,type,direction,balanceSource,amount,note,orderId,topupRequestId,payoutRequestId');
+        lines.push('id,createdAt,walletId,userId,userPhone,type,direction,balanceSource,amount,currency,note,orderId,topupRequestId,payoutRequestId');
         for (const row of rows as any[]) {
             const user = row?.wallet?.user ?? {};
             const cols = [
@@ -760,6 +786,7 @@ export class AdminService {
                 row?.direction ?? '',
                 row?.balanceSource ?? '',
                 row?.amount ?? '',
+                row?.currency ?? 'KZT',
                 (row?.note ?? '').toString().replace(/[\r\n,]+/g, ' ').trim(),
                 row?.orderId ?? '',
                 row?.topupRequestId ?? '',
@@ -777,6 +804,7 @@ export class AdminService {
                 id: true,
                 walletId: true,
                 amount: true,
+                currency: true,
                 status: true,
             },
         });
@@ -805,6 +833,7 @@ export class AdminService {
                 id: true,
                 walletId: true,
                 amount: true,
+                currency: true,
                 status: true,
             },
         });
@@ -828,15 +857,15 @@ export class AdminService {
             }
             payoutSource = await this.resolvePayoutRefundSource(tx, id);
             const refundToBonus = payoutSource === 'BONUS';
-            await tx.payoutRequest.update({
-                where: { id },
-                data: { status: 'REJECTED' },
+            const claimed = await tx.payoutRequest.updateMany({
+                where: { id, status: 'PENDING' }, data: { status: 'REJECTED' },
             });
+            if (claimed.count !== 1) throw new BadRequestException('Payout already processed');
             await tx.wallet.update({
                 where: { id: payout.walletId },
                 data: refundToBonus
-                    ? { bonus: { increment: payout.amount } }
-                    : { money: { increment: payout.amount } },
+                    ? { [bonusField(payout.currency)]: { increment: payout.amount } }
+                    : { [moneyField(payout.currency)]: { increment: payout.amount } },
             });
             await (tx as any).walletTransaction.create({
                 data: {
@@ -845,6 +874,7 @@ export class AdminService {
                     direction: 'CREDIT',
                     balanceSource: payoutSource,
                     amount: payout.amount,
+                    currency: payout.currency,
                     payoutRequestId: payout.id,
                     note: 'Admin rejected payout, funds returned',
                 },
@@ -855,7 +885,7 @@ export class AdminService {
             entity: 'system',
             entityId: id,
             at: new Date().toISOString(),
-            payload: { amount: payout.amount, walletId: payout.walletId, source: payoutSource },
+            payload: { amount: payout.amount, currency: payout.currency, walletId: payout.walletId, source: payoutSource },
         });
         return { success: true };
     }
@@ -1205,7 +1235,7 @@ export class AdminService {
             if (user.wallet) {
                 await tx.wallet.updateMany({
                     where: { id: user.wallet.id },
-                    data: { money: 0, bonus: 0 },
+                    data: { money: 0, bonus: 0, moneyRub: 0, bonusRub: 0 },
                 });
             }
 
@@ -1358,7 +1388,8 @@ export class AdminService {
         }
     }
 
-    async getFinanceReport(from?: string, to?: string) {
+    async getFinanceReport(from?: string, to?: string, selectedCurrency?: string) {
+        const currency = walletCurrency(selectedCurrency);
         const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
         const toDate = to ? new Date(to) : new Date();
         const timeWhere = {
@@ -1370,12 +1401,14 @@ export class AdminService {
                 this.prisma.order.count({
                     where: {
                         status: 'COMPLETED',
+                        currency,
                         createdAt: timeWhere,
                     },
                 }),
                 this.prisma.order.aggregate({
                     where: {
                         status: 'COMPLETED',
+                        currency,
                         createdAt: timeWhere,
                     },
                     _sum: { price: true },
@@ -1383,6 +1416,7 @@ export class AdminService {
                 this.prisma.order.aggregate({
                     where: {
                         status: 'COMPLETED',
+                        currency,
                         createdAt: timeWhere,
                     },
                     _sum: { commissionAmount: true },
@@ -1390,6 +1424,7 @@ export class AdminService {
                 this.prisma.topupRequest.aggregate({
                     where: {
                         status: 'APPROVED',
+                        currency,
                         createdAt: timeWhere,
                     },
                     _sum: { amount: true },
@@ -1397,12 +1432,14 @@ export class AdminService {
                 this.prisma.payoutRequest.aggregate({
                     where: {
                         status: 'APPROVED',
+                        currency,
                         createdAt: timeWhere,
                     },
                     _sum: { amount: true },
                 }),
             ]);
         return {
+            currency,
             from: fromDate.toISOString(),
             to: toDate.toISOString(),
             ordersCompletedCount,
@@ -1415,14 +1452,16 @@ export class AdminService {
         };
     }
 
-    async exportFinanceReportCsv(from?: string, to?: string) {
-        const report = await this.getFinanceReport(from, to);
+    async exportFinanceReportCsv(from?: string, to?: string, selectedCurrency?: string) {
+        const currency = walletCurrency(selectedCurrency);
+        const report = await this.getFinanceReport(from, to, currency);
         const fromDate = new Date(report.from);
         const toDate = new Date(report.to);
         const [orders, topups, payouts] = await Promise.all([
             this.prisma.order.findMany({
                 where: {
                     status: 'COMPLETED',
+                        currency,
                     createdAt: { gte: fromDate, lte: toDate },
                 },
                 select: {
@@ -1439,6 +1478,7 @@ export class AdminService {
             this.prisma.topupRequest.findMany({
                 where: {
                     status: 'APPROVED',
+                        currency,
                     createdAt: { gte: fromDate, lte: toDate },
                 },
                 select: { id: true, createdAt: true, amount: true, walletId: true },
@@ -1448,6 +1488,7 @@ export class AdminService {
             this.prisma.payoutRequest.findMany({
                 where: {
                     status: 'APPROVED',
+                        currency,
                     createdAt: { gte: fromDate, lte: toDate },
                 },
                 select: { id: true, createdAt: true, amount: true, walletId: true },
@@ -1458,6 +1499,7 @@ export class AdminService {
 
         const lines: string[] = [];
         lines.push('section,key,value');
+        lines.push(`summary,currency,${currency}`);
         lines.push(`summary,from,${report.from}`);
         lines.push(`summary,to,${report.to}`);
         lines.push(`summary,ordersCompletedCount,${report.ordersCompletedCount}`);
@@ -1534,15 +1576,16 @@ export class AdminService {
                 },
             }),
             this.prisma.order.aggregate({
-                where: { status: 'COMPLETED' },
+                where: { status: 'COMPLETED', currency: 'KZT' },
                 _sum: { price: true },
             }),
             this.prisma.order.aggregate({
-                where: { status: 'COMPLETED' },
+                where: { status: 'COMPLETED', currency: 'KZT' },
                 _sum: { commissionAmount: true },
             }),
         ]);
 
+        const financeByCurrency = await this.prisma.order.groupBy({ by: ['currency'], where: { status: 'COMPLETED' }, _sum: { price: true, commissionAmount: true } });
         const dispatchJobs = await this.notificationDispatchService.listJobs(500);
         const queued = dispatchJobs.filter((j) => j.status === 'QUEUED').length;
         const running = dispatchJobs.filter((j) => j.status === 'RUNNING').length;
@@ -1568,6 +1611,8 @@ export class AdminService {
             onlineDrivers,
             activeClients24h: activeClients24h.length,
             problemOrders,
+            currency: 'KZT',
+            financeByCurrency,
             revenueCompleted: completedAgg._sum.price ?? 0,
             commissionsCompleted: commissionAgg._sum.commissionAmount ?? 0,
             notificationDispatchQueued: queued,

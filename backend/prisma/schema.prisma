@@ -95,6 +95,7 @@ model City {
   id        String         @id @default(uuid())
   name      String         @unique
   region    String?
+  countryCode String       @default("KZ")
   lat       Float
   lng       Float
   isActive  Boolean        @default(true)
@@ -114,6 +115,8 @@ model Wallet {
   user      User            @relation(fields: [userId], references: [id])
   money     Float           @default(0)
   bonus     Float           @default(0)
+  moneyRub  Float           @default(0)
+  bonusRub  Float           @default(0)
   topups    TopupRequest[]
   payouts   PayoutRequest[]
   transactions WalletTransaction[]
@@ -132,6 +135,7 @@ model TopupRequest {
   externalOrderId String?     @unique
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
+  currency String @default("KZT")
 }
 
 model PayoutRequest {
@@ -146,6 +150,7 @@ model PayoutRequest {
   updatedAt DateTime     @updatedAt
 
   @@index([status, createdAt])
+  currency String @default("KZT")
 }
 
 model DriverProfile {
@@ -272,6 +277,7 @@ model Order {
   toAddressSource    String?
   tariffId           String?
   price              Float          @default(0)
+  currency           String         @default("KZT")
   priceSource        String?        @default("SYSTEM")
   paymentMethod      String?        @default("CASH")
   vehicleClass       String?
@@ -556,6 +562,7 @@ model IntercityRequest {
   recipientContact String?
   seats       Int              @default(1)
   price       Float
+  currency    String           @default("KZT")
   date        DateTime
   status      String           @default("OPEN")
   selectedOfferId String?
@@ -596,6 +603,7 @@ model RideSharingTrip {
   seatsTotal     Int
   seatsAvailable Int                  @default(0)
   pricePerSeat   Float
+  currency       String               @default("KZT")
   departureTime  DateTime
   status         String               @default("OPEN")
   topUntil       DateTime?
@@ -723,4 +731,5 @@ model WalletTransaction {
   @@index([balanceSource, createdAt])
   @@index([intercityRequestId, createdAt])
   @@index([idempotencyKey])
+  currency String @default("KZT")
 }
