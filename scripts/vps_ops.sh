@@ -12,6 +12,46 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "cancel-oleg" ]]; then
+      [[ "$(cat "$APP_ROOT/current_commit")" == "d1e18b60a102417b6f64393d44450a79e67a3c5c" ]] || { echo 'Release changed'; exit 1; }
+      [[ "$(sha256sum "$APP_ROOT/current/backend/src/intercity/intercity.service.ts" | cut -d' ' -f1)" == "4b10526111c1a7f664ad557c396f71d040de56329700a8087d4829db5e6dbd4c" ]] || { echo "Source mismatch"; exit 1; }
+      [[ "$(sha256sum "$APP_ROOT/current/backend/src/common/active-passenger-order.ts" | cut -d' ' -f1)" == "66ae09652167051f153d0ec7c68641ddcdfbcf8fe1405f538170f4b0b9a78a89" ]] || { echo "Source mismatch"; exit 1; }
+      backup_dir="$APP_ROOT/backups/$(date +%Y%m%d-%H%M%S)-cancel-oleg"
+      mkdir -p "$backup_dir"
+      chmod 700 "$backup_dir"
+      docker exec intercity-postgres sh -c 'exec pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$backup_dir/postgres.sql"
+      test -s "$backup_dir/postgres.sql"
+      grep -q 'PostgreSQL database dump complete' "$backup_dir/postgres.sql"
+      tar -C "$APP_ROOT/shared" -czf "$backup_dir/uploads.tar.gz" uploads
+      tar -tzf "$backup_dir/uploads.tar.gz" >/dev/null
+      echo "Verified backup: $backup_dir"
+      docker exec -i intercity-backend node <<'JS'
+const {PrismaClient}=require('@prisma/client');
+const jwt=require('jsonwebtoken');
+const p=new PrismaClient();
+(async()=>{
+ const user=await p.user.findUnique({where:{phone:'+77058652235'}});
+ if(!user || user.id!=='b9a5d580-b264-48e1-81d0-ebb98a79e93b')throw Error('Account mismatch');
+ const cityId='af3b5950-4431-4342-b7f9-ee352aea6afd';
+ const requestIds=['4f9a0a7f-b527-474b-99de-64a296a07e46','ffc853db-9c8b-4197-a4aa-7f12d1334f8c'];
+ const city=await p.order.findUnique({where:{id:cityId}});
+ if(!city||city.passengerId!==user.id||city.status!=='SEARCHING_DRIVER'||city.driverId)throw Error('City order state changed');
+ for(const id of requestIds){const r=await p.intercityRequest.findUnique({where:{id}});if(!r||r.passengerId!==user.id||r.status!=='OPEN'||r.selectedDriverId)throw Error('Request state changed');}
+ const token=jwt.sign({sub:user.id,role:user.role},process.env.JWT_SECRET,{expiresIn:'2m'});
+ for(const path of [`/orders/${cityId}/cancel`,...requestIds.map(id=>`/intercity/requests/${id}/cancel`)]){
+  const r=await fetch('http://127.0.0.1:3000/api'+path,{method:'POST',headers:{Authorization:'Bearer '+token}});
+  if(!r.ok)throw Error('Cancellation failed '+r.status);
+  const data=await r.json();if(data.status!=='CANCELLED')throw Error('Cancellation not confirmed');
+  console.log('Cancelled',data.id);
+ }
+ const where={passengerId:user.id,status:{notIn:['CANCELLED','COMPLETED']}};
+ const cityCount=await p.order.count({where});const intercityCount=await p.intercityRequest.count({where});
+ console.log('Remaining active city:',cityCount,'intercity:',intercityCount);
+ if(cityCount||intercityCount)throw Error('Other active orders remain');
+})().catch(e=>{console.error(e.message);process.exitCode=1}).finally(()=>p.$disconnect());
+JS
+      exit 0
+    fi
     if [[ "$TARGET" == "inspect-oleg" ]]; then
       docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
 BEGIN READ ONLY;
