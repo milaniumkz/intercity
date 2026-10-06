@@ -1,6 +1,42 @@
 ---
-name: Flutter Verify
+name: Full CI Verification
+'on':
+  push:
+    branches:
+    - codex/full-ci-pilot
+  workflow_dispatch: {}
+permissions:
+  contents: read
 jobs:
+  backend:
+    name: Build backend
+    runs-on: ${{ github.event_name != 'pull_request' && fromJSON('["milanium-mac-arm64",
+      "repo-intercity"]') || fromJSON('["ubuntu-latest"]') }}
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@v4
+      if: github.event_name == 'pull_request'
+      with:
+        node-version: '20'
+        cache: npm
+        cache-dependency-path: backend/package-lock.json
+    - name: Select installed Mac Node 20
+      if: github.event_name != 'pull_request'
+      run: echo /opt/homebrew/opt/node@20/bin >> "$GITHUB_PATH"
+    - name: Install and build
+      working-directory: backend
+      run: |
+        unset CURRENCY_TEST_DATABASE_URL
+        export DATABASE_URL= REDIS_URL=
+        npm ci
+        npx prisma generate
+        npm run build
+        node --test test/*.test.js
+    if: github.repository == 'milaniumkz/intercity' && github.event_name != 'pull_request'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/codex/full-ci-pilot')
   flutter-verify:
     name: Analyze, test, and web-build both apps
     runs-on: ${{ github.event_name != 'pull_request' && fromJSON('["milanium-mac-arm64",
@@ -30,6 +66,8 @@ jobs:
         FLUTTER_BIN: flutter
         RUN_MACOS_SMOKE: 0
       run: bash scripts/verify_flutter_apps.sh
+    if: github.repository == 'milaniumkz/intercity' && github.event_name != 'pull_request'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/codex/full-ci-pilot')
   mobile-smoke-macos:
     name: macOS smoke test for mobile app
     runs-on: ${{ github.event_name != 'pull_request' && fromJSON('["milanium-mac-arm64",
@@ -63,21 +101,5 @@ jobs:
         RUN_MACOS_SMOKE: 1
         RUN_UNIT_TESTS: 0
       run: bash scripts/verify_flutter_apps.sh
-'on':
-  pull_request:
-    paths:
-    - ".github/workflows/flutter_verify.yml"
-    - apps/mobile_flutter/**
-    - apps/admin_web/**
-    - packages/intercity_shared/**
-    - scripts/**
-  push:
-    branches:
-    - main
-    - master
-    paths:
-    - ".github/workflows/flutter_verify.yml"
-    - apps/mobile_flutter/**
-    - apps/admin_web/**
-    - packages/intercity_shared/**
-    - scripts/**
+    if: github.repository == 'milaniumkz/intercity' && github.event_name != 'pull_request'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/codex/full-ci-pilot')
