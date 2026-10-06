@@ -18,6 +18,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/services/app_preferences.dart';
 import '../../../core/theme/theme_controller.dart';
 import '../../../core/utils/browser_location.dart';
+import '../../../core/utils/error_message_ru.dart';
 import '../../../core/utils/navigation_back.dart';
 import '../../../core/utils/request_flow_utils.dart';
 import '../../../core/utils/route_query.dart';
@@ -13131,6 +13132,7 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Future<void> _create() async {
+    if (_loading) return;
     setState(() => _loading = true);
     try {
       if (!_validateBeforeCreate()) return;
@@ -13185,10 +13187,23 @@ class _OrderScreenState extends State<OrderScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      setState(
-        () => _statusText =
-            'Не удалось отправить заказ. Проверьте адреса, оплату и попробуйте ещё раз.',
-      );
+      if (e is DioException) {
+        final data = e.response?.data;
+        if (e.response?.statusCode == 409 &&
+            data is Map &&
+            data['code'] == 'ACTIVE_ORDER_EXISTS') {
+          final id = (data['activeOrderId'] ?? '').toString();
+          final type = data['activeOrderType'];
+          if (id.isNotEmpty && (type == 'CITY' || type == 'INTERCITY')) {
+            final encodedId = Uri.encodeComponent(id);
+            context.go(type == 'CITY'
+                ? '/order/searching/$encodedId'
+                : '/market/request/$encodedId');
+            return;
+          }
+        }
+      }
+      setState(() => _statusText = errorMessage(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }

@@ -50,8 +50,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
   LatLng? _fromPoint;
   LatLng? _toPoint;
 
-  bool get _isActiveTripBoard =>
-      (widget.requestId == 'active' ||
+  bool get _isActiveTripBoard => (widget.requestId == 'active' ||
       Uri.base.fragment.contains('/intercity/request/active'));
 
   @override
@@ -694,9 +693,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                           carNumber,
                         ].where((item) => item.trim().isNotEmpty).join(' • '),
                         style: TextStyle(
-                          color: isDark
-                              ? Colors.white70
-                              : scheme.onSurfaceVariant,
+                          color:
+                              isDark ? Colors.white70 : scheme.onSurfaceVariant,
                         ),
                       ),
                   ],
@@ -806,7 +804,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
               children: [
                 _metaChip(
                   icon: Icons.savings_rounded,
-                  label: 'Лучшая цена: ${bestPendingOffer['price']} ${rideCurrencySymbol(_request)}',
+                  label:
+                      'Лучшая цена: ${bestPendingOffer['price']} ${rideCurrencySymbol(_request)}',
                   color: Colors.greenAccent,
                 ),
                 if (requestType == requestTypeIntercity)
@@ -1069,8 +1068,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     final highlightColor = isAccepted
         ? Colors.greenAccent
         : (isBestPrice
-              ? Colors.amberAccent
-              : AppTheme.primaryColor.withValues(alpha: isDark ? 0.28 : 0.18));
+            ? Colors.amberAccent
+            : AppTheme.primaryColor.withValues(alpha: isDark ? 0.28 : 0.18));
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -1084,12 +1083,12 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                   end: Alignment.bottomRight,
                 )
               : isBestPrice
-              ? const LinearGradient(
-                  colors: [Color(0x22FFC107), Color(0x103D1B7A)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                )
-              : null,
+                  ? const LinearGradient(
+                      colors: [Color(0x22FFC107), Color(0x103D1B7A)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    )
+                  : null,
           border: Border.all(color: highlightColor.withValues(alpha: 0.28)),
         ),
         child: _surfaceCard(
@@ -1147,13 +1146,13 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                         Text(
                           carModel.isNotEmpty
                               ? [carModel, carNumber]
-                                    .where((value) => value.trim().isNotEmpty)
-                                    .join(' • ')
+                                  .where((value) => value.trim().isNotEmpty)
+                                  .join(' • ')
                               : _isDeliveryRequestType(requestType)
-                              ? 'Отклик на доставку'
-                              : requestType == requestTypeCityAuction
-                              ? 'Отклик на городской аукцион'
-                              : 'Отклик на межгороднюю заявку',
+                                  ? 'Отклик на доставку'
+                                  : requestType == requestTypeCityAuction
+                                      ? 'Отклик на городской аукцион'
+                                      : 'Отклик на межгороднюю заявку',
                           style: TextStyle(
                             color: isDark
                                 ? Colors.white60
@@ -1367,8 +1366,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                     label: _actionBusy
                         ? 'Подтверждаем...'
                         : _isDeliveryRequestType(requestType)
-                        ? 'Выбрать исполнителя'
-                        : 'Принять предложение водителя',
+                            ? 'Выбрать исполнителя'
+                            : 'Принять предложение водителя',
                     icon: Icons.check_circle_rounded,
                     onPressed: _actionBusy ? null : () => _acceptOffer(offer),
                   ),
@@ -1389,8 +1388,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
   }
 
   String _offerEtaText(Map<String, dynamic> offer) {
-    final raw =
-        offer['etaMinutes'] ??
+    final raw = offer['etaMinutes'] ??
         offer['arrivalMinutes'] ??
         offer['estimatedArrivalMinutes'];
     final minutes = raw is num ? raw.round() : int.tryParse('$raw');
@@ -1543,20 +1541,18 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     final status = (request?['status'] ?? '').toString();
     final requestType = _requestTypeOf(request);
     final entityLabel = _requestEntityLabel(requestType).toUpperCase();
-    final fromText = request == null
-        ? '-'
-        : formatLocationDisplay(request, isFrom: true);
-    final toText = request == null
-        ? '-'
-        : formatLocationDisplay(request, isFrom: false);
+    final fromText =
+        request == null ? '-' : formatLocationDisplay(request, isFrom: true);
+    final toText =
+        request == null ? '-' : formatLocationDisplay(request, isFrom: false);
     final paymentText = paymentMethodLabel(
       request?['paymentMethod']?.toString(),
     );
     final offers = _sortOffers(
       List<Map<String, dynamic>>.from(
         (request?['offers'] as List? ?? const []).whereType<Map>().map(
-          (offer) => Map<String, dynamic>.from(offer),
-        ),
+              (offer) => Map<String, dynamic>.from(offer),
+            ),
       ),
     );
     final acceptedOffer = _acceptedOfferOf(offers);
@@ -1564,8 +1560,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     final accent = _statusColor(status);
     final seats = (request?['seats'] as num?)?.toInt() ?? 0;
     final wholeCabin = seats == 4;
-    final manualWarning =
-        request != null &&
+    final manualWarning = request != null &&
         (hasUnconfirmedLocation(request, isFrom: true) ||
             hasUnconfirmedLocation(request, isFrom: false));
     final normalizedStatus = status.toUpperCase();
@@ -1794,8 +1789,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                           offer,
                           status: status,
                           requestType: requestType,
-                          isBestPrice:
-                              bestPendingOffer != null &&
+                          isBestPrice: bestPendingOffer != null &&
                               (bestPendingOffer['id'] ?? '').toString() ==
                                   (offer['id'] ?? '').toString(),
                         ),
@@ -1810,7 +1804,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                               onPressed: _loadRequest,
                             ),
                           ),
-                          if (status.toUpperCase() == 'OPEN') ...[
+                          if (!_isFinalStatus(status)) ...[
                             const SizedBox(width: 8),
                             Expanded(
                               child: _requestActionButton(
@@ -1843,8 +1837,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     final offers = _sortOffers(
       List<Map<String, dynamic>>.from(
         (request?['offers'] as List? ?? const []).whereType<Map>().map(
-          (offer) => Map<String, dynamic>.from(offer),
-        ),
+              (offer) => Map<String, dynamic>.from(offer),
+            ),
       ),
     );
     final acceptedOffer = _acceptedOfferOf(offers);
@@ -1865,15 +1859,14 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
         : formatLocationDisplay(request, isFrom: false).split(',').first.trim();
     final driverName = (driver?['name'] ?? 'Водитель не назначен').toString();
     final phone = (driver?['phone'] ?? '').toString();
-    final carModel = (driverProfile?['carModel'] ?? 'Автомобиль не указан')
-        .toString();
+    final carModel =
+        (driverProfile?['carModel'] ?? 'Автомобиль не указан').toString();
     final carNumber = (driverProfile?['carNumber'] ?? '').toString();
-    final ratingText =
-        (rating?['avg'] ??
-                rating?['average'] ??
-                driverProfile?['rating'] ??
-                '—')
-            .toString();
+    final ratingText = (rating?['avg'] ??
+            rating?['average'] ??
+            driverProfile?['rating'] ??
+            '—')
+        .toString();
     final progress = isDark ? 0.50 : 0.42;
     return Scaffold(
       backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
@@ -2119,8 +2112,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     VoidCallback? onPressed,
   }) {
     return OutlinedButton.icon(
-      onPressed:
-          onPressed ??
+      onPressed: onPressed ??
           () async {
             await Clipboard.setData(ClipboardData(text: label));
             if (!mounted) return;

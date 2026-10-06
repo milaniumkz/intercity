@@ -727,7 +727,8 @@ export class GeoService {
 
     private findVerifiedAddresses(query: string, city?: {name: string; lat: number; lng: number}) {
         const normalized = this.normalizeCityToken(query)
-            .replace(/(?:улица|ул\.|дом|д\.)/gu, ' ')
+            .replace(/(?:^|\s)(?:улица|ул\.|проспект|пр-т|пр\.|дом|д\.)(?=\s|$)/gu, ' ')
+            .replace(/\s*\/\s*/g, '/')
             .replace(/[,]/g, ' ').replace(/\s+/g, ' ').trim();
         const house = normalized.match(/(?:^|\s)(\d+[\p{L}]?(?:\/\d+)?)(?:\s|$)/u)?.[1];
         const street = normalized.replace(/(?:^|\s)\d+[\p{L}]?(?:\/\d+)?(?:\s|$)/gu, ' ').trim();

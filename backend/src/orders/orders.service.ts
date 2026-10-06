@@ -116,6 +116,20 @@ export class OrdersService {
         };
     }
 
+    async getActivePassengerOrder(passengerId: string) {
+        const where = { passengerId, status: { notIn: ['COMPLETED', 'CANCELLED'] } };
+        const order = await this.prisma.order.findFirst({
+            where: { passengerId, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
+            orderBy: { createdAt: 'desc' },
+            select: { id: true, status: true },
+        });
+        if (order) return { ...order, type: 'CITY' };
+        const request = await this.prisma.intercityRequest.findFirst({
+            where, orderBy: { createdAt: 'desc' }, select: { id: true, status: true },
+        });
+        return request ? { ...request, type: 'INTERCITY' } : null;
+    }
+
     async createOrder(userId: string, dto: CreateOrderDto) {
         const requestType = this.normalizeRequestType(dto.requestType, dto.mode);
         const mode = this.inferMode(requestType, dto.mode);

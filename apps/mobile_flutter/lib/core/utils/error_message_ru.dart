@@ -134,6 +134,21 @@ String? _translateServerMessage(String? message) {
     return LocalizationService.translate(russianText, kazakhText);
   }
 
+  if (lower.contains('insufficient bonus balance')) {
+    return t(
+      'Недостаточно бонусов для оплаты поездки. Выберите наличные или перевод.',
+      'Жолақысын төлеуге бонустар жеткіліксіз. Қолма-қол немесе аударымды таңдаңыз.',
+    );
+  }
+  if (lower.contains('unable to calculate order price')) {
+    return t(
+      'Не удалось рассчитать стоимость. Уточните адреса и повторите расчёт.',
+      'Құнын есептеу мүмкін болмады. Мекенжайларды нақтылап, қайта есептеңіз.',
+    );
+  }
+  if (lower.contains('vehicle class is required')) {
+    return t('Выберите класс автомобиля.', 'Көлік класын таңдаңыз.');
+  }
   if (lower.contains('phone already registered')) {
     return t('Этот номер уже зарегистрирован.', 'Бұл нөмір тіркеліп қойған.');
   }

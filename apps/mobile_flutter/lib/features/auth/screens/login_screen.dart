@@ -48,8 +48,8 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       await PushNotificationsService.instance.syncTokenIfAuthorized();
       final role = (response.data['user']?['role'] ?? '').toString();
-      final route =
-          await AppModeManager.resolveHomeRoute(apiClient, role: role);
+      final route = await AppModeManager.resolveHomeRoute(apiClient,
+          role: role, userId: response.data['user']?['id']?.toString());
       if (!mounted) return;
       context.go(route);
     } catch (e) {

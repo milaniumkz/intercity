@@ -510,8 +510,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
   }
 
   Future<void> _logout() async {
+    await AppModeManager.rememberPassengerMode();
     await ApiClient().clearTokens();
-    await AppPreferences.clearLastAppMode();
     if (!mounted) return;
     context.go('/login');
   }

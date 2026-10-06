@@ -31,6 +31,13 @@ export class OrdersController {
         return this.ordersService.getMyOrders(req.user.sub);
     }
 
+    @Get('active')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    async getActive(@Request() req) {
+        return this.ordersService.getActivePassengerOrder(req.user.sub);
+    }
+
     @Get(':id')
     @UseGuards(JwtAuthGuard)
     @ApiBearerAuth()

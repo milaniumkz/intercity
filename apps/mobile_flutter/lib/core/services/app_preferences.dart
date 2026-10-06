@@ -6,16 +6,43 @@ class AppPreferences {
   static final SecureStore _storage =
       createSecureStore(namespace: AppConstants.secureStoreNamespace);
 
-  static Future<void> setLastAppMode(String mode) {
-    return _storage.write(AppConstants.lastAppModeKey, mode);
+  static const _appModeUserKey = 'app_mode_user_id';
+
+  static Future<void> setAppModeUser(String userId) async {
+    if (userId.isEmpty) return;
+    if (await _storage.read(_appModeUserKey) == null) {
+      final legacyMode = await _storage.read(AppConstants.lastAppModeKey);
+      if (legacyMode != null) {
+        await _storage.write(
+            '${AppConstants.lastAppModeKey}:$userId', legacyMode);
+        await _storage.delete(AppConstants.lastAppModeKey);
+      }
+    }
+    await _storage.write(_appModeUserKey, userId);
   }
 
-  static Future<String?> getLastAppMode() {
-    return _storage.read(AppConstants.lastAppModeKey);
+  static Future<void> setLastAppMode(String mode) async {
+    final userId = await _storage.read(_appModeUserKey);
+    final key = userId == null
+        ? AppConstants.lastAppModeKey
+        : '${AppConstants.lastAppModeKey}:$userId';
+    await _storage.write(key, mode);
   }
 
-  static Future<void> clearLastAppMode() {
-    return _storage.delete(AppConstants.lastAppModeKey);
+  static Future<String?> getLastAppMode() async {
+    final userId = await _storage.read(_appModeUserKey);
+    final key = userId == null
+        ? AppConstants.lastAppModeKey
+        : '${AppConstants.lastAppModeKey}:$userId';
+    return _storage.read(key);
+  }
+
+  static Future<void> clearLastAppMode() async {
+    final userId = await _storage.read(_appModeUserKey);
+    final key = userId == null
+        ? AppConstants.lastAppModeKey
+        : '${AppConstants.lastAppModeKey}:$userId';
+    await _storage.delete(key);
   }
 
   static Future<void> setThemeMode(String mode) {

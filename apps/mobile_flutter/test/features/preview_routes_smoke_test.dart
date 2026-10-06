@@ -1,3 +1,5 @@
+import 'package:dio/dio.dart';
+import 'package:intercity_mobile/core/api/api_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,6 +16,7 @@ void main() {
     final router = createRouter(
       initialLocation: route,
       disableAuthRedirect: true,
+      orderApiClient: _NoActiveOrderApi(),
     );
     await tester.pumpWidget(
       ProviderScope(
@@ -651,4 +654,18 @@ void main() {
     await tapBackAndExpect('/driver/verification/docs', 'Доступные заказы');
     await tapBackAndExpect('/driver/profile', 'Доступные заказы');
   });
+}
+
+class _NoActiveOrderApi extends ApiClient {
+  @override
+  Future<Response<dynamic>> get(String path,
+      {Map<String, dynamic>? queryParameters, Options? options}) async {
+    dynamic data = <String, dynamic>{};
+    if (path == '/orders/active') data = null;
+    if (path == '/geo/cities') data = <dynamic>[];
+    if (path == '/app/runtime-settings') {
+      data = {'passengerMapHomeEnabled': false};
+    }
+    return Response(requestOptions: RequestOptions(path: path), data: data);
+  }
 }

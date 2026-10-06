@@ -124,3 +124,16 @@ test('reverse lookup normalizes administrative city labels and preserves verifie
   if(name==='Усть-Каменогорск')assert.match(result.address,/Оралхана Бокея, 24/);
  }
 });
+
+test('Nazarbayev 8/1 is stable without an external provider and keeps the full house number', async()=>{
+ const geo=makeGeo();const city={id:'ust',name:'Усть-Каменогорск',countryCode:'KZ',lat:49.948986,lng:82.627945};
+ geo.findNearestCity=async()=>city;
+ geo.fetchSearchResults=async()=>{throw Error('verified house must not depend on provider')};
+ for(const q of ['Назарбаева 8/1','Нурсултана Назарбаева 8/1','проспект Назарбаева, 8/1','Назарбаева 8 / 1']){
+  const rows=await geo.searchLocations(q,city.lat,city.lng);
+  assert.equal(rows.length,1);assert.match(rows[0].displayName,/Назарбаева, 8\/1/);
+  assert.equal(rows[0].lat,49.958850);assert.equal(rows[0].lng,82.610169);
+ }
+ for(const q of ['Назарбаева 8','Назарбаева 8/11','Назарбаева 8/2'])assert.equal(geo.findVerifiedAddresses(q,city).length,0);
+ assert.equal(geo.findVerifiedAddresses('Назарбаева 8/1',{name:'Алматы',lat:43.238949,lng:76.889709}).length,0);
+});
