@@ -29,6 +29,14 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
+      - name: Check public HTTPS from runner
+        if: inputs.action == 'status'
+        run: |
+          for host in intercity.89-207-255-27.sslip.io admin.intercity.89-207-255-27.sslip.io api.intercity.89-207-255-27.sslip.io; do
+            echo "Checking $host"
+            getent ahostsv4 "$host"
+            curl --fail --silent --show-error --connect-timeout 15 --max-time 30 --output /dev/null --write-out 'HTTP %{http_code}; remote %{remote_ip}; TLS verify %{ssl_verify_result}\n' "https://$host"
+          done
       - name: Configure SSH
         env:
           VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
