@@ -68,3 +68,24 @@ test('Bokey 24 uses the verified house, never substitutes it for another number 
  assert.equal(geo.findVerifiedAddresses('Оралхана Бокея 25',city).length,0);
  assert.equal(geo.findVerifiedAddresses('Оралхана Бокея 24',{name:'Алматы',lat:43.238949,lng:76.889709}).length,0);
 });
+
+test('repeated/concurrent address requests reuse success; other cities never share it',async()=>{
+ const geo=makeGeo();let calls=0;let resolve;
+ geo.searchLocationsUncached=async()=>{calls++;return new Promise(r=>{resolve=r})};
+ const first=geo.searchLocations('Аль-Фараби',49.948,82.627);
+ const second=geo.searchLocations('Аль-Фараби',49.948,82.627);
+ assert.equal(calls,1);
+ resolve([{displayName:'Аль-Фараби, Усть-Каменогорск',lat:49.887,lng:82.606}]);
+ assert.deepEqual(await first,await second);
+ assert.equal((await geo.searchLocations('аль-фараби',49.948,82.627)).length,1);
+ assert.equal(calls,1);
+ const different=geo.searchLocations('Аль-Фараби',43.238,76.889);
+ assert.equal(calls,2);resolve([]);assert.deepEqual(await different,[]);
+});
+
+test('empty provider response is retried instead of cached',async()=>{
+ const geo=makeGeo();let calls=0;
+ geo.searchLocationsUncached=async()=>++calls===1?[]:[{displayName:'Казыбек Би',lat:49.898,lng:82.607}];
+ assert.deepEqual(await geo.searchLocations('Казыбек Би'),[]);
+ assert.equal((await geo.searchLocations('Казыбек Би')).length,1);assert.equal(calls,2);
+});
