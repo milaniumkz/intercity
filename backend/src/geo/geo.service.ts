@@ -105,12 +105,14 @@ export class GeoService {
             const rawCity = this.extractCity(addressParts);
             const reportedCountry = (addressParts.country_code || '').toUpperCase();
             const matchedCity = rawCity ? cityCatalog.find(entry => entry.countryCode === reportedCountry &&
-                [entry.name, ...entry.aliases].some(name => this.normalizeCityToken(name) === this.normalizeCityToken(rawCity)) &&
+                [entry.name, ...entry.aliases].some(name => this.normalizeLocalityName(name) === this.normalizeLocalityName(rawCity)) &&
                 this.haversine(lat, lng, entry.lat, entry.lng) < 50) : null;
-            const city = matchedCity?.name || rawCity || nearestCity?.name || null;
+            const knownCity = rawCity ? GeoService.fallbackCities.find(entry => countryCodeFromRegion(entry.region) === reportedCountry && this.normalizeLocalityName(entry.name) === this.normalizeLocalityName(rawCity) && this.haversine(lat, lng, entry.lat, entry.lng) < 50) : null;
+            const city = knownCity?.name || matchedCity?.name || rawCity || nearestCity?.name || null;
             const region = this.extractRegion(addressParts) || nearestCity?.region || null;
             const countryCode = (addressParts.country_code || nearestCity?.countryCode || countryCodeFromRegion(region)).toUpperCase();
-            const displayAddress = this.buildReverseAddress(data, nearestCity);
+            const verifiedAddress = verifiedAddresses.find(entry => entry.countryCode === countryCode && this.haversine(lat, lng, entry.lat, entry.lng) <= 0.002);
+            const displayAddress = verifiedAddress?.displayName || this.buildReverseAddress(data, nearestCity);
 
             // Try to find city in database
             let cityRecord = nearestCity;
@@ -153,7 +155,7 @@ export class GeoService {
                 currency: currencyForCountry(cityRecord?.countryCode || countryCode),
                 address: displayAddress,
                 cityResolved: Boolean(rawCity),
-                addressResolved: Boolean(addressParts.road || addressParts.house_number || addressParts.pedestrian || addressParts.amenity),
+                addressResolved: Boolean(verifiedAddress || addressParts.road || addressParts.house_number || addressParts.pedestrian || addressParts.amenity),
                 lat,
                 lng,
             };
@@ -742,7 +744,7 @@ export class GeoService {
 
     private normalizeLocalityName(value: string) {
         return this.normalizeCityToken(value)
-            .replace(/^(городской округ|город|г\.)\s+/u, '')
+            .replace(/^(городская администрация|городской округ|город|г\.)\s+/u, '')
             .replace(/\s+городская администрация$/u, '');
     }
 
