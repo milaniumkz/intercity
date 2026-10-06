@@ -12,6 +12,20 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "inspect-other" ]]; then
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+BEGIN READ ONLY;
+SELECT id, right(phone,4) FROM "User" WHERE regexp_replace(phone,'[^0-9]','','g')='77780646779';
+SELECT o.id,o.status,o."createdAt",o."driverId"
+FROM "Order" o JOIN "User" u ON u.id=o."passengerId"
+WHERE regexp_replace(u.phone,'[^0-9]','','g')='77780646779' AND o.status::text NOT IN ('COMPLETED','CANCELLED');
+SELECT r.id,r.status,r."createdAt",r."selectedDriverId"
+FROM "IntercityRequest" r JOIN "User" u ON u.id=r."passengerId"
+WHERE regexp_replace(u.phone,'[^0-9]','','g')='77780646779' AND r.status::text NOT IN ('COMPLETED','CANCELLED');
+ROLLBACK;
+SQL
+      exit 0
+    fi
     if [[ "$TARGET" == "cancel-oleg" ]]; then
       [[ "$(cat "$APP_ROOT/current_commit")" == "d1e18b60a102417b6f64393d44450a79e67a3c5c" ]] || { echo 'Release changed'; exit 1; }
       [[ "$(sha256sum "$APP_ROOT/current/backend/src/intercity/intercity.service.ts" | cut -d' ' -f1)" == "4b10526111c1a7f664ad557c396f71d040de56329700a8087d4829db5e6dbd4c" ]] || { echo "Source mismatch"; exit 1; }
