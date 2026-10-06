@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:intercity_shared/intercity_shared.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -676,7 +677,7 @@ class _OrderScreenState extends State<OrderScreen> {
     _loadCityOptions();
     _loadPassengerRuntimeSettings();
     unawaited(_restoreBoardDraft());
-    if (widget.autoLocateOnStart) {
+    if (widget.autoLocateOnStart && !kIsWeb) {
       _initMapCenterByLocation();
     }
   }
@@ -11658,9 +11659,11 @@ class _OrderScreenState extends State<OrderScreen> {
     if (_selectedCityPoint != null && !forceCurrentLocation) return;
     setState(() => _locating = true);
     try {
-      var permission = await Geolocator.checkPermission();
+      var permission = await Geolocator.checkPermission()
+          .timeout(const Duration(seconds: 3));
       if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
+        permission = await Geolocator.requestPermission()
+            .timeout(const Duration(seconds: 15));
       }
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
@@ -11685,9 +11688,11 @@ class _OrderScreenState extends State<OrderScreen> {
         pos = await Geolocator.getCurrentPosition(
           locationSettings: const LocationSettings(
             accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 12),
           ),
-        );
+        ).timeout(const Duration(seconds: 15));
       } catch (_) {
+        if (kIsWeb) rethrow;
         final last = await Geolocator.getLastKnownPosition();
         if (last != null) {
           pos = last;
