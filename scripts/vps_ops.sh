@@ -12,6 +12,27 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "verify-active" ]]; then
+      docker exec -i intercity-backend node <<'JS'
+const {PrismaClient}=require('@prisma/client');const jwt=require('jsonwebtoken');const p=new PrismaClient();
+(async()=>{
+ for(const [id,label] of [['b9a5d580-b264-48e1-81d0-ebb98a79e93b','account 2235'],['92578d3c-56e6-4501-989f-9b5726f8681c','account 6779']]){
+  const user=await p.user.findUnique({where:{id}});if(!user)throw Error('Account missing');
+  const token=jwt.sign({sub:id,role:user.role},process.env.JWT_SECRET,{expiresIn:'2m'});
+  const r=await fetch('http://127.0.0.1:3000/api/orders/active',{headers:{Authorization:'Bearer '+token}});
+  if(!r.ok)throw Error('Active endpoint failed '+r.status);
+  const text=await r.text();const data=text?JSON.parse(text):null;
+  console.log(label,JSON.stringify(data));
+  const where={passengerId:id,status:{notIn:['CANCELLED','COMPLETED']}};
+  const city=await p.order.findFirst({where,orderBy:{createdAt:'desc'},select:{id:true,status:true}});
+  const request=city?null:await p.intercityRequest.findFirst({where,orderBy:{createdAt:'desc'},select:{id:true,status:true}});
+  const expected=city?{...city,type:'CITY'}:request?{...request,type:'INTERCITY'}:null;
+  if(JSON.stringify(expected)!==JSON.stringify(data))throw Error('Active endpoint differs from database state');
+ }
+})().catch(e=>{console.error(e.message);process.exitCode=1}).finally(()=>p.$disconnect());
+JS
+      exit 0
+    fi
     if [[ "$TARGET" == "inspect-other" ]]; then
       docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
 BEGIN READ ONLY;
