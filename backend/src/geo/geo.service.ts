@@ -355,7 +355,31 @@ export class GeoService {
         return this.rankCityResults(collected, normalized);
     }
 
+    private readonly addressCache = new Map<string, {expires: number; results: Array<{displayName: string; lat: number; lng: number}>}>();
+    private readonly addressRequests = new Map<string, Promise<Array<{displayName: string; lat: number; lng: number}>>>();
+
     async searchLocations(query: string, nearLat?: number, nearLng?: number, cityId?: string) {
+        const key = JSON.stringify([this.normalizeCityToken(query || ''), nearLat, nearLng, cityId]);
+        const cached = this.addressCache.get(key);
+        if (cached && cached.expires > Date.now()) return cached.results;
+        if (cached) this.addressCache.delete(key);
+        const pending = this.addressRequests.get(key);
+        if (pending) return pending;
+        const request = this.searchLocationsUncached(query, nearLat, nearLng, cityId)
+            .then(results => {
+                // Preserve successful suggestions during transient provider failures.
+                // Empty responses must never make a later successful search disappear.
+                if (results.length > 0) {
+                    if (this.addressCache.size >= 500) this.addressCache.delete(this.addressCache.keys().next().value);
+                    this.addressCache.set(key, {expires: Date.now() + 5 * 60 * 1000, results});
+                }
+                return results;
+            }).finally(() => this.addressRequests.delete(key));
+        this.addressRequests.set(key, request);
+        return request;
+    }
+
+    private async searchLocationsUncached(query: string, nearLat?: number, nearLng?: number, cityId?: string) {
         try {
             const cityContext = cityId
                 ? await this.prisma.city.findFirst({
