@@ -1,9 +1,76 @@
+import 'package:dio/dio.dart';
+import 'package:go_router/go_router.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:intercity_mobile/core/api/api_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intercity_mobile/core/utils/phone_input_formatter.dart';
 import 'package:intercity_mobile/features/auth/screens/register_screen.dart';
 
+class _RegistrationApi extends ApiClient {
+  final requests = <Map<String, dynamic>>[];
+  @override
+  Future<Response<dynamic>> post(String path,
+      {dynamic data,
+      Map<String, dynamic>? queryParameters,
+      Options? options}) async {
+    requests.add({'path': path, 'data': data});
+    return Response(
+        requestOptions: RequestOptions(path: path),
+        statusCode: path == '/auth/register' ? 201 : 200,
+        data: {'accessToken': 'test-access', 'refreshToken': 'test-refresh'});
+  }
+}
+
 void main() {
+  setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  testWidgets('registration completes without requesting device location',
+      (tester) async {
+    final locationCalls = <String>[];
+    const channel = MethodChannel('flutter.baseflow.com/geolocator');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel,
+        (call) async {
+      locationCalls.add(call.method);
+      throw PlatformException(code: 'PERMISSION_DENIED');
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null));
+    final api = _RegistrationApi();
+    final router = GoRouter(initialLocation: '/register', routes: [
+      GoRoute(
+          path: '/register',
+          builder: (_, __) => RegisterScreen(apiClient: api)),
+      GoRoute(
+          path: '/order',
+          builder: (_, __) =>
+              const Scaffold(body: Text('Регистрация завершена'))),
+    ]);
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    Future<void> fill(String label, String value) async {
+      final field = find.byWidgetPredicate(
+          (w) => w is TextField && w.decoration?.labelText == label);
+      await tester.ensureVisible(field);
+      await tester.enterText(field, value);
+    }
+
+    await fill('Имя', 'Тест');
+    await fill('Телефон', '7771234567');
+    await fill('Пароль', 'testPassword123');
+    final submit = find.text('Создать аккаунт');
+    await tester.ensureVisible(submit);
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    expect(find.text('Регистрация завершена'), findsOneWidget);
+    expect(locationCalls, isEmpty);
+    expect(
+        api.requests.map((r) => r['path']), ['/auth/register', '/auth/login']);
+    expect(api.requests.first['data'], isNot(contains('lat')));
+    expect(api.requests.first['data'], isNot(contains('lng')));
+  });
+
   for (final role in ['passenger', 'driver']) {
     testWidgets('$role registration formats and validates the phone number',
         (tester) async {

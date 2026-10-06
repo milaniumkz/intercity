@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/services/app_preferences.dart';
@@ -16,8 +15,10 @@ class RegisterScreen extends StatefulWidget {
       {super.key,
       this.role = 'passenger',
       this.referralCode,
-      this.downloadAfterRegistration = false});
+      this.downloadAfterRegistration = false,
+      this.apiClient});
 
+  final ApiClient? apiClient;
   final String role;
   final String? referralCode;
   final bool downloadAfterRegistration;
@@ -88,29 +89,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final apiClient = ApiClient();
+      final apiClient = widget.apiClient ?? ApiClient();
       final normalizedPhone =
           normalizeKzLocalPhone(_phoneController.text.trim());
       final password = _passwordController.text;
-      double? lat;
-      double? lng;
-      try {
-        final permission = await Geolocator.checkPermission();
-        if (permission == LocationPermission.denied) {
-          await Geolocator.requestPermission().timeout(
-            const Duration(seconds: 2),
-            onTimeout: () => LocationPermission.denied,
-          );
-        }
-        final pos = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(
-            timeLimit: Duration(seconds: 3),
-          ),
-        );
-        lat = pos.latitude;
-        lng = pos.longitude;
-      } catch (_) {}
-
       final response = await apiClient.post(
         '/auth/register',
         data: {
@@ -120,8 +102,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'referralCode': _referralController.text.isNotEmpty
               ? _normalizeReferralInput(_referralController.text)
               : null,
-          'lat': lat,
-          'lng': lng,
         },
       );
 
