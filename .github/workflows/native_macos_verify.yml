@@ -1,0 +1,33 @@
+name: Native macOS Verify
+
+# Separate native pilot, not a replacement for the Linux checks or deploy build.
+on:
+  push:
+    branches: [codex/mac-ci-pilot]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-native-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-verify:
+    name: Native macOS backend and Flutter verification
+    if: github.repository == 'milaniumkz/intercity' && github.ref == 'refs/heads/codex/mac-ci-pilot'
+    runs-on: [milanium-mac-arm64, repo-intercity]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Select installed Node 20 and Flutter
+        run: |
+          echo /opt/homebrew/opt/node@20/bin >> "$GITHUB_PATH"
+          echo /Volumes/PD1000/job/flutter/bin >> "$GITHUB_PATH"
+      - name: Verify native backend and Flutter targets
+        env:
+          FLUTTER_BIN: /Volumes/PD1000/job/flutter/bin/flutter
+        run: bash scripts/verify_native_macos.sh

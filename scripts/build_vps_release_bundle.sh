@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib/flutter_release_helpers.sh"
 
-STAMP="${GITHUB_SHA:-$(date +%Y%m%d%H%M%S)}"
+# Use checkout identity, including manual inputs.ref; GITHUB_SHA identifies the event.
+STAMP="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 OUT_DIR="${OUT_DIR:-$ROOT_DIR/output}"
 STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/intercity-vps-bundle.XXXXXX")"
 BUNDLE="$OUT_DIR/intercity-vps-$STAMP.tar.gz"

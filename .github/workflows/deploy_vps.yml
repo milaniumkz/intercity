@@ -19,11 +19,17 @@ jobs:
     name: Build release bundle
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      release-sha: ${{ steps.release.outputs.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}
+
+      - name: Resolve immutable release commit
+        id: release
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -46,19 +52,21 @@ jobs:
 
       - name: Build bundle
         env:
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
           INTERCITY_API_BASE_URL: ${{ secrets.INTERCITY_API_BASE_URL }}
           INTERCITY_FIREBASE_WEB_VAPID_KEY: ${{ secrets.INTERCITY_FIREBASE_WEB_VAPID_KEY }}
         run: |
           test -n "$INTERCITY_API_BASE_URL"
-          bash scripts/build_vps_release_bundle.sh
+          # Older selected refs may still derive bundle names from GITHUB_SHA.
+          GITHUB_SHA="$RELEASE_SHA" bash scripts/build_vps_release_bundle.sh
 
       - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:
-          name: intercity-vps-${{ github.sha }}
+          name: intercity-vps-${{ steps.release.outputs.sha }}
           path: |
-            output/intercity-vps-${{ github.sha }}.tar.gz
-            output/intercity-vps-${{ github.sha }}.tar.gz.sha256
+            output/intercity-vps-${{ steps.release.outputs.sha }}.tar.gz
+            output/intercity-vps-${{ steps.release.outputs.sha }}.tar.gz.sha256
           if-no-files-found: error
 
   deploy:
@@ -70,11 +78,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ needs.build.outputs.release-sha }}
 
       - uses: actions/download-artifact@v4
         with:
-          name: intercity-vps-${{ github.sha }}
+          name: intercity-vps-${{ needs.build.outputs.release-sha }}
           path: output
 
       - name: Configure SSH
@@ -93,12 +101,13 @@ jobs:
 
       - name: Copy and deploy
         env:
+          RELEASE_SHA: ${{ needs.build.outputs.release-sha }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
-          bundle="output/intercity-vps-${GITHUB_SHA}.tar.gz"
+          bundle="output/intercity-vps-${RELEASE_SHA}.tar.gz"
           scp "$bundle" "scripts/vps_deploy_release.sh" "$VPS_USER@$VPS_HOST:/tmp/"
-          ssh "$VPS_USER@$VPS_HOST" "bash /tmp/vps_deploy_release.sh /tmp/$(basename "$bundle") '$GITHUB_SHA'"
+          ssh "$VPS_USER@$VPS_HOST" "bash /tmp/vps_deploy_release.sh /tmp/$(basename "$bundle") '$RELEASE_SHA'"
 
       - name: Health check
         env:

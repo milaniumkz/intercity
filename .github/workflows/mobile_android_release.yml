@@ -30,6 +30,10 @@ on:
 jobs:
   android-release-preflight:
     name: Android release preflight
+    # Only preflight is cancellable; manual signed artifact builds are untouched.
+    concurrency:
+      group: ci-android-preflight-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 15
 

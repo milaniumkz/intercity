@@ -1,72 +1,104 @@
 name: Flutter Verify
 
+# Always report the existing checks; select expensive steps inside the job.
 on:
   pull_request:
-    paths:
-      - '.github/workflows/flutter_verify.yml'
-      - 'apps/mobile_flutter/**'
-      - 'apps/admin_web/**'
-      - 'packages/intercity_shared/**'
-      - 'scripts/**'
   push:
-    branches:
-      - main
-      - master
-    paths:
-      - '.github/workflows/flutter_verify.yml'
-      - 'apps/mobile_flutter/**'
-      - 'apps/admin_web/**'
-      - 'packages/intercity_shared/**'
-      - 'scripts/**'
+    branches: [main, master]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   flutter-verify:
     name: Analyze, test, and web-build both apps
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["milanium-mac-arm64", "repo-intercity"]') || fromJSON('["ubuntu-latest"]') }}
     timeout-minutes: 45
+    outputs:
+      mobile: ${{ steps.paths.outputs.mobile }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Test Flutter path selection
+        run: python3 -m unittest discover -s scripts/tests -p 'test_ci_flutter_paths.py'
+
+      - name: Select affected Flutter apps
+        id: paths
+        env:
+          CI_EVENT: ${{ github.event_name }}
+          CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/ci_flutter_paths.py
 
       - name: Set up Flutter
+        if: github.event_name != 'push' && (steps.paths.outputs.mobile == '1' || steps.paths.outputs.admin == '1')
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.41.1'
           cache: true
+          pub-cache-key: pub-:os:-:arch:-:version:-${{ hashFiles('apps/**/pubspec.lock', 'packages/**/pubspec.yaml', 'packages/**/pubspec.lock') }}
+
+      - name: Select installed Mac Flutter
+        if: github.event_name == 'push' && (steps.paths.outputs.mobile == '1' || steps.paths.outputs.admin == '1')
+        run: |
+          echo /Volumes/PD1000/job/flutter/bin >> "$GITHUB_PATH"
+          /Volumes/PD1000/job/flutter/bin/flutter --version --machine | python3 -c 'import json,sys; assert json.load(sys.stdin)["frameworkVersion"] == "3.41.1"'
 
       - name: Print Flutter version
+        if: steps.paths.outputs.mobile == '1' || steps.paths.outputs.admin == '1'
         run: flutter --version
 
       - name: Verify Flutter apps
+        if: steps.paths.outputs.mobile == '1' || steps.paths.outputs.admin == '1'
         env:
           FLUTTER_BIN: flutter
           RUN_MACOS_SMOKE: 0
+          VERIFY_MOBILE: ${{ steps.paths.outputs.mobile }}
+          VERIFY_ADMIN: ${{ steps.paths.outputs.admin }}
         run: bash scripts/verify_flutter_apps.sh
 
   mobile-smoke-macos:
     name: macOS smoke test for mobile app
-    runs-on: macos-latest
+    needs: flutter-verify
+    if: needs.flutter-verify.outputs.mobile == '1'
+    # Trusted branch pushes use the registered Mac; PR code stays hosted.
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["milanium-mac-arm64", "repo-intercity"]') || fromJSON('["macos-latest"]') }}
     timeout-minutes: 45
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Flutter
+        if: github.event_name != 'push'
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.41.1'
           cache: true
+          pub-cache-key: pub-:os:-:arch:-:version:-${{ hashFiles('apps/**/pubspec.lock', 'packages/**/pubspec.yaml', 'packages/**/pubspec.lock') }}
+
+      - name: Select installed Mac Flutter
+        if: github.event_name == 'push'
+        run: |
+          echo /Volumes/PD1000/job/flutter/bin >> "$GITHUB_PATH"
+          /Volumes/PD1000/job/flutter/bin/flutter --version --machine | python3 -c 'import json,sys; assert json.load(sys.stdin)["frameworkVersion"] == "3.41.1"'
 
       - name: Enable macOS desktop
+        if: github.event_name != 'push'
         run: flutter config --enable-macos-desktop
 
       - name: Run mobile macOS smoke test
-        env:
-          FLUTTER_BIN: flutter
-          VERIFY_ADMIN: 0
-          RUN_WEB_BUILDS: 0
-          RUN_MACOS_SMOKE: 1
-          RUN_UNIT_TESTS: 0
-        run: bash scripts/verify_flutter_apps.sh
+        working-directory: apps/mobile_flutter
+        run: |
+          flutter pub get
+          flutter test integration_test/app_smoke_test.dart -d macos

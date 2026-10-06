@@ -16,7 +16,7 @@ class DeployTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.path = Path(self.temp.name)
+        self.path = Path(self.temp.name).resolve()
         self.app = self.path / 'server'
         self.old = self.app / 'releases' / OLD
         (self.old / 'infra/vps').mkdir(parents=True)
