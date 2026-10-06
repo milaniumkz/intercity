@@ -20,10 +20,23 @@ case "$ACTION" in
     for file in backend/prisma/schema.prisma backend/src/orders/orders.service.ts backend/src/intercity/intercity.service.ts backend/src/wallet/wallet.service.ts apps/mobile_flutter/lib/core/utils/phone_input_formatter.dart apps/admin_web/lib/features/admin/screens/admin_dashboard_page.dart; do
       (cd "$current_release" && sha256sum "$file")
     done
-    docker exec intercity-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 -c "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = '''public''' AND ((table_name = '''Wallet''' AND column_name IN ('''money''', '''bonus''', '''moneyRub''', '''bonusRub''')) OR (table_name = '''City''' AND column_name = '''countryCode''')) ORDER BY 1, 2; SELECT to_regclass('''public._prisma_migrations'''); SELECT pg_size_pretty(pg_database_size(current_database()));"'
-    migrations_table="$(docker exec intercity-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 -c "SELECT to_regclass('''public._prisma_migrations''');"')"
+    docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+SELECT table_name, column_name FROM information_schema.columns
+WHERE table_schema = 'public' AND
+  ((table_name = 'Wallet' AND column_name IN ('money', 'bonus', 'moneyRub', 'bonusRub')) OR
+   (table_name = 'City' AND column_name = 'countryCode')) ORDER BY 1, 2;
+SELECT to_regclass('public._prisma_migrations');
+SELECT pg_size_pretty(pg_database_size(current_database()));
+SQL
+    migrations_table="$(docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+SELECT to_regclass('public._prisma_migrations');
+SQL
+    )"
     if [[ -n "$migrations_table" ]]; then
-      docker exec intercity-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 -c "SELECT migration_name, finished_at IS NOT NULL AS applied, rolled_back_at IS NOT NULL AS rolled_back FROM _prisma_migrations ORDER BY started_at;"'
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQL'
+SELECT migration_name, finished_at IS NOT NULL AS applied, rolled_back_at IS NOT NULL AS rolled_back
+FROM _prisma_migrations ORDER BY started_at;
+SQL
     fi
     curl -fsS https://api.intercity.89-207-255-27.sslip.io/health
     ;;
