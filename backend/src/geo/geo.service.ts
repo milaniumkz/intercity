@@ -105,9 +105,9 @@ export class GeoService {
             const rawCity = this.extractCity(addressParts);
             const reportedCountry = (addressParts.country_code || '').toUpperCase();
             const matchedCity = rawCity ? cityCatalog.find(entry => entry.countryCode === reportedCountry &&
-                [entry.name, ...entry.aliases].some(name => this.normalizeLocalityName(name) === this.normalizeLocalityName(rawCity)) &&
+                [entry.name, ...entry.aliases].some(name => this.matchesReverseCityName(name, rawCity)) &&
                 this.haversine(lat, lng, entry.lat, entry.lng) < 50) : null;
-            const knownCity = rawCity ? GeoService.fallbackCities.find(entry => countryCodeFromRegion(entry.region) === reportedCountry && this.normalizeLocalityName(entry.name) === this.normalizeLocalityName(rawCity) && this.haversine(lat, lng, entry.lat, entry.lng) < 50) : null;
+            const knownCity = rawCity ? GeoService.fallbackCities.find(entry => countryCodeFromRegion(entry.region) === reportedCountry && this.matchesReverseCityName(entry.name, rawCity) && this.haversine(lat, lng, entry.lat, entry.lng) < 50) : null;
             const city = knownCity?.name || matchedCity?.name || rawCity || nearestCity?.name || null;
             const region = this.extractRegion(addressParts) || nearestCity?.region || null;
             const countryCode = (addressParts.country_code || nearestCity?.countryCode || countryCodeFromRegion(region)).toUpperCase();
@@ -740,6 +740,12 @@ export class GeoService {
             displayName: address.displayName, lat: address.lat, lng: address.lng,
             countryCode: address.countryCode, source: address.source,
         }));
+    }
+
+    private matchesReverseCityName(name: string, rawCity: string) {
+        const expected = this.normalizeLocalityName(name);
+        const actual = this.normalizeLocalityName(rawCity);
+        return expected === actual || (/городская администрация/iu.test(rawCity) && actual === `${expected}а`);
     }
 
     private normalizeLocalityName(value: string) {
