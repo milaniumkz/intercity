@@ -1,4 +1,5 @@
 import '../../../core/utils/current_location.dart';
+import '../../../core/utils/location_session.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -448,6 +449,7 @@ class OrderScreen extends StatefulWidget {
     this.initialStep,
     this.apiClient,
     this.locationProvider,
+    this.locationSession,
   });
 
   final String? resetToken;
@@ -457,6 +459,7 @@ class OrderScreen extends StatefulWidget {
   final int? initialStep;
   final ApiClient? apiClient;
   final Future<BrowserLocation?> Function()? locationProvider;
+  final LocationSession? locationSession;
 
   @override
   State<OrderScreen> createState() => _OrderScreenState();
@@ -478,6 +481,9 @@ class _OrderScreenState extends State<OrderScreen> {
       TextEditingController();
   final Distance _distance = const Distance();
   static bool _automaticWebLocationAttempted = false;
+  LocationSession get _locationSession =>
+      widget.locationSession ?? sharedLocationSession;
+  LatLng? _confirmedCityPoint;
 
   LatLng _mapCenter = const LatLng(48.0, 68.0);
   LatLng? _userLocation;
@@ -505,7 +511,7 @@ class _OrderScreenState extends State<OrderScreen> {
   int _modeIndex = 0; // 0 city, 1 intercity, 2 delivery
   int _cityModeIndex = 0; // 0 fixed, 1 auction
   int _deliveryModeIndex = 0; // 0 city, 1 intercity, 2 rf
-  int? _mapHomeSelectedIndex;
+  int? _mapHomeSelectedIndex = 0;
   int _orderStep = 0; // 0 mode, 1 route, 2 options, 3 confirm
   String _paymentMethod = paymentMethodCash;
   String _vehicleClass = vehicleClassEconomy;
@@ -733,6 +739,7 @@ class _OrderScreenState extends State<OrderScreen> {
     final from = _fromLocation;
     final to = _toLocation;
     final draft = <String, dynamic>{
+      'mapHomeSelectedIndex': _mapHomeSelectedIndex,
       'modeIndex': _modeIndex,
       'cityModeIndex': _cityModeIndex,
       'deliveryModeIndex': _deliveryModeIndex,
@@ -785,6 +792,15 @@ class _OrderScreenState extends State<OrderScreen> {
             (draft['cityModeIndex'] as num?)?.toInt() ?? _cityModeIndex;
         _deliveryModeIndex =
             (draft['deliveryModeIndex'] as num?)?.toInt() ?? _deliveryModeIndex;
+        _mapHomeSelectedIndex =
+            (draft['mapHomeSelectedIndex'] as num?)?.toInt() ??
+                (_modeIndex == 1
+                    ? 2
+                    : _modeIndex == 2
+                        ? 3
+                        : _cityModeIndex == 1
+                            ? 1
+                            : 0);
         _fromAddress = (draft['fromAddress'] ?? '').toString();
         _toAddress = (draft['toAddress'] ?? '').toString();
         _setAddressFieldValue(
@@ -889,6 +905,7 @@ class _OrderScreenState extends State<OrderScreen> {
       }
     });
     _ensureBoardPickupPoint();
+    unawaited(_saveBoardDraft());
     _scheduleAutoBoard();
   }
 
@@ -909,10 +926,9 @@ class _OrderScreenState extends State<OrderScreen> {
     if (_fromLocation != null && _fromController.text.trim().isNotEmpty) {
       return;
     }
-    final point = _userLocation ?? _mapCenter;
-    final label = _userLocation != null
-        ? 'Моё местоположение'
-        : 'Точка подачи выбрана на карте';
+    final point = _userLocation;
+    if (point == null) return;
+    const label = 'Моё местоположение';
     setState(() {
       _fromLocation = point;
       _fromAddress = label;
@@ -1191,6 +1207,17 @@ class _OrderScreenState extends State<OrderScreen> {
         });
         return;
       }
+      final city = _locationSession.city;
+      if (city != null && mounted) {
+        setState(() {
+          _currentCityId = city['id']?.toString();
+          _currentCityName = (city['name'] ?? '').toString();
+          _confirmedCityPoint = LatLng(
+              (city['lat'] as num).toDouble(), (city['lng'] as num).toDouble());
+          _mapCenter = _confirmedCityPoint!;
+          _rideCurrency = rideCurrencyCode(city);
+        });
+      }
     } catch (_) {
       // A saved profile city is not the current device location.
     }
@@ -1200,6 +1227,11 @@ class _OrderScreenState extends State<OrderScreen> {
     await _cityPreferenceReady;
     await _draftReady;
     if (!mounted || _selectedCityPoint != null) return;
+    final fix = _locationSession.freshFix;
+    if (fix != null && widget.locationProvider == null) {
+      await _initMapCenterByLocation(locationOverride: fix);
+      return;
+    }
     if (kIsWeb && _automaticWebLocationAttempted) return;
     if (kIsWeb) _automaticWebLocationAttempted = true;
     await _initMapCenterByLocation();
@@ -1210,20 +1242,22 @@ class _OrderScreenState extends State<OrderScreen> {
       return;
     }
     try {
-      final res = await _api.get(
-        '/geo/reverse',
-        queryParameters: {'lat': point.latitude, 'lng': point.longitude},
-      );
+      final data = await _reversePoint(point);
       if (!mounted || _selectedCityPoint != null) return;
-      if (res.data['cityResolved'] == false) {
+      if (data['cityResolved'] == false) {
+        if (_confirmedCityPoint != null &&
+            _distance.as(LengthUnit.Kilometer, point, _confirmedCityPoint!) <
+                50) {
+          return;
+        }
         setState(() {
           _currentCityId = null;
           _currentCityName = '';
         });
         return;
       }
-      final cityId = (res.data['cityId'] ?? '').toString().trim();
-      final cityName = (res.data['city'] ?? '').toString().trim();
+      final cityId = (data['cityId'] ?? '').toString().trim();
+      final cityName = (data['city'] ?? '').toString().trim();
       if (cityId.isEmpty && cityName.isEmpty) return;
       if (cityId.isEmpty) {
         await AppPreferences.clearCurrentCityId();
@@ -1234,11 +1268,19 @@ class _OrderScreenState extends State<OrderScreen> {
         await AppPreferences.setCurrentCityName(cityName);
       }
       if (!mounted) return;
+      _locationSession.city = {
+        'id': cityId.isEmpty ? null : cityId,
+        'name': cityName,
+        'lat': point.latitude,
+        'lng': point.longitude,
+        'currency': data['currency']
+      };
+      _confirmedCityPoint = point;
       setState(() {
         _currentCityId = cityId.isEmpty ? null : cityId;
         _currentCityName = cityName;
         _rideCurrency =
-            rideCurrencyCode(Map<String, dynamic>.from(res.data as Map));
+            rideCurrencyCode(Map<String, dynamic>.from(data as Map));
         _intercityFromCityId ??= cityId;
         if (_intercityFromCityName.trim().isEmpty) {
           _intercityFromCityName = cityName;
@@ -6974,7 +7016,13 @@ class _OrderScreenState extends State<OrderScreen> {
               'passenger-osm-${center.latitude.toStringAsFixed(4)}-${center.longitude.toStringAsFixed(4)}-$isDark',
             ),
             center: center,
-            zoom: 16.5,
+            zoom: (_fromLocation ??
+                        _userLocation ??
+                        _selectedCityPoint ??
+                        _confirmedCityPoint) ==
+                    null
+                ? 5
+                : 16.5,
             dark: isDark,
           ),
         ),
@@ -11604,7 +11652,9 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Future<void> _initMapCenterByLocation(
-      {bool fillFromIfEmpty = true, bool forceCurrentLocation = false}) async {
+      {bool fillFromIfEmpty = true,
+      bool forceCurrentLocation = false,
+      BrowserLocation? locationOverride}) async {
     await _cityPreferenceReady;
     if (!mounted || _locating) return;
     final selectedAtStart = _selectedCityPoint;
@@ -11612,7 +11662,9 @@ class _OrderScreenState extends State<OrderScreen> {
     setState(() => _locating = true);
     try {
       BrowserLocation? location;
-      if (widget.locationProvider != null) {
+      if (locationOverride != null) {
+        location = locationOverride;
+      } else if (widget.locationProvider != null) {
         location = await widget.locationProvider!();
       } else if (kIsWeb) {
         // Browser geolocation requests permission once and a fresh high-accuracy fix.
@@ -11648,7 +11700,10 @@ class _OrderScreenState extends State<OrderScreen> {
               _selectedCityPoint != null)) {
         return;
       }
+      if (isPrecise) _locationSession.rememberFix(location);
       if (forceCurrentLocation && isPrecise) {
+        _locationSession.city = null;
+        _confirmedCityPoint = null;
         await AppPreferences.clearOrderCity();
         if (!mounted) return;
         _clearRoute();
@@ -11707,6 +11762,8 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   LatLng _initialMapPickerCenter({required bool isFrom}) {
+    final cityPoint = _intercitySearchCityPoint(isFrom: isFrom);
+    if (cityPoint != null) return cityPoint;
     if (isFrom) {
       return _fromLocation ?? _userLocation ?? _mapCenter;
     }
@@ -11714,6 +11771,15 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Future<void> _showMapPointPicker({required bool isFrom}) async {
+    final anchor = _mode() == 'INTERCITY'
+        ? _intercitySearchCityPoint(isFrom: isFrom)
+        : await _ensureSearchAnchor(isFrom: isFrom);
+    if (!mounted) return;
+    if (anchor == null && _fromLocation == null && _toLocation == null) {
+      await _openIntercityCitySearch(
+          isFrom: isFrom, forCityRide: _mode() != 'INTERCITY');
+      return;
+    }
     LatLng selected = _initialMapPickerCenter(isFrom: isFrom);
     final pickerMapController = MapController();
     await Navigator.of(context).push(
@@ -11910,6 +11976,7 @@ class _OrderScreenState extends State<OrderScreen> {
       }
       _mapCenter = point;
     });
+    if (isFrom) await _syncSearchCityFromCoords(point);
     await _fillAddressByCoords(isFrom: isFrom, point: point);
     await _saveBoardDraft();
     _scheduleAutoBoard();
@@ -11923,16 +11990,22 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
+  Future<Map<String, dynamic>> _reversePoint(LatLng point) async {
+    final cached = _locationSession.reverse(point);
+    if (cached != null) return cached;
+    final res = await _api.get('/geo/reverse',
+        queryParameters: {'lat': point.latitude, 'lng': point.longitude});
+    final data = Map<String, dynamic>.from(res.data as Map);
+    _locationSession.rememberReverse(point, data);
+    return data;
+  }
+
   Future<void> _fillAddressByCoords({
     required bool isFrom,
     required LatLng point,
   }) async {
     try {
-      final res = await _api.get(
-        '/geo/reverse',
-        queryParameters: {'lat': point.latitude, 'lng': point.longitude},
-      );
-      final data = Map<String, dynamic>.from(res.data as Map);
+      final data = await _reversePoint(point);
       final compactAddress = _resolvedAddressFromReverseData(
         data,
         isFrom: isFrom,
@@ -12184,14 +12257,14 @@ class _OrderScreenState extends State<OrderScreen> {
   LatLng? _currentCityPointFromOptions() {
     if (_selectedCityPoint != null) return _selectedCityPoint;
     final currentCityId = _currentCityId;
-    if (currentCityId == null) return null;
+    if (currentCityId == null) return _confirmedCityPoint;
     final city = _cityOptions.cast<Map<String, dynamic>?>().firstWhere(
           (item) => item?['id']?.toString() == currentCityId,
           orElse: () => null,
         );
     final lat = city?['lat'];
     final lng = city?['lng'];
-    if (lat is! num || lng is! num) return null;
+    if (lat is! num || lng is! num) return _confirmedCityPoint;
     return LatLng(lat.toDouble(), lng.toDouble());
   }
 

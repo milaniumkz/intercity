@@ -259,6 +259,14 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
         order,
         (order['status'] ?? '').toString(),
       );
+      if (status == 'CANCELLED') {
+        if (!mounted) return;
+        _stopPollingFallback();
+        context.go('/order?reset=${Uri.encodeComponent(widget.orderId)}');
+        return;
+      }
+      // A late response must not overwrite cancellation being processed locally.
+      if (_cancelling) return;
       final previousStatus = _lastNotifiedStatus;
       final points = _extractPoints(order);
 
