@@ -2235,13 +2235,13 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
               _boardProfileRow(
                 icon: Icons.location_on_outlined,
                 title: 'Избранные адреса',
-                value: '5 адресов',
+                value: 'Открыть',
                 onTap: () => context.go('/order/address'),
               ),
               _boardProfileRow(
                 icon: Icons.credit_card_rounded,
                 title: 'Способы оплаты',
-                value: '3 карты',
+                value: 'Открыть',
                 onTap: () => context.go('/profile/payments'),
               ),
               _boardProfileRow(

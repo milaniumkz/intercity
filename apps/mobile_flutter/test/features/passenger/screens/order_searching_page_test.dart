@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:go_router/go_router.dart';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,30 @@ import 'package:intercity_mobile/core/services/sse_service.dart';
 import 'package:intercity_mobile/features/passenger/screens/order_searching_page.dart';
 
 void main() {
+  testWidgets('opening a cancelled order redirects to the new booking form',
+      (tester) async {
+    final router =
+        GoRouter(initialLocation: '/order/searching/order-1', routes: [
+      GoRoute(
+          path: '/order/searching/:id',
+          builder: (_, state) => OrderSearchingPage(
+              orderId: 'order-1',
+              apiClient: _FakeApiClient(status: 'CANCELLED'),
+              enableLiveMap: false,
+              realtimeConnector: (String path,
+                      {Map<String, dynamic>? queryParameters}) async =>
+                  null)),
+      GoRoute(
+          path: '/order',
+          builder: (_, state) => const Text('New booking form')),
+    ]);
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    expect(find.text('New booking form'), findsOneWidget);
+    expect(find.text('Поиск водителя...'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
   testWidgets('ongoing city trip has a cancellation action', (tester) async {
     tester.view.physicalSize = const Size(1440, 2200);
     tester.view.devicePixelRatio = 1;

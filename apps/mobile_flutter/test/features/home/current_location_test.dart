@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:intercity_mobile/core/utils/location_session.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -52,7 +53,10 @@ class _LocationApi extends ApiClient {
 }
 
 void main() {
-  setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  setUp(() {
+    FlutterSecureStorage.setMockInitialValues({});
+    sharedLocationSession.clear();
+  });
   test('old, invalid and inaccurate fixes are not precise pickup coordinates',
       () {
     final now = DateTime(2026, 10, 6);
@@ -117,6 +121,32 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
   }
+  testWidgets(
+      'confirmed city survives returning to a new order without forging a GPS pickup',
+      (tester) async {
+    final session = LocationSession();
+    session.city = {
+      'id': 'ust',
+      'name': 'Усть-Каменогорск',
+      'lat': 49.902631,
+      'lng': 82.609936,
+      'currency': 'KZT'
+    };
+    tester.view.physicalSize = const Size(600, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+        home: OrderScreen(
+            routeStage: 'mode',
+            apiClient: _LocationApi(),
+            locationSession: session,
+            enableLiveMap: false,
+            autoLocateOnStart: false)));
+    await tester.pumpAndSettle();
+    expect(find.text('Город: Усть-Каменогорск · ₸'), findsOneWidget);
+    expect(await AppPreferences.getOrderDraft(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
   testWidgets(
       'manual city selection is preserved instead of being replaced by GPS',
       (tester) async {

@@ -137,3 +137,19 @@ test('Nazarbayev 8/1 is stable without an external provider and keeps the full h
  for(const q of ['Назарбаева 8','Назарбаева 8/11','Назарбаева 8/2'])assert.equal(geo.findVerifiedAddresses(q,city).length,0);
  assert.equal(geo.findVerifiedAddresses('Назарбаева 8/1',{name:'Алматы',lat:43.238949,lng:76.889709}).length,0);
 });
+
+test('fractional Serikbaev house retains its suffix, no different house is substituted',async()=>{
+ const geo=makeGeo();const city={name:'Усть-Каменогорск',lat:49.948986,lng:82.627945};
+ const rows=geo.findVerifiedAddresses('Серикбаева 8/1А',city);
+ assert.equal(rows.length,1);assert.equal(rows[0].lat,49.9602291);assert.match(rows[0].displayName,/8\/1А/);
+ assert.equal(geo.findVerifiedAddresses('Серикбаева 8/1Б',city).length,0);
+ assert.equal(geo.findVerifiedAddresses('Серикбаева 8',city).length,0);
+});
+test('exact house outranks nearby university and wrong numbers',async()=>{
+ const geo=makeGeo();geo.findNearestCity=async()=>({id:'city',name:'Усть-Каменогорск',countryCode:'KZ',lat:49.948986,lng:82.627945});
+ geo.fetchSearchResults=async()=>[
+  {display_name:'Университет Серикбаева, Протозанова 69',lat:'49.949',lon:'82.628',address:{house_number:'69',road:'Протозанова'}},
+  {display_name:'Серикбаева 1',lat:'49.95',lon:'82.63',address:{house_number:'1',road:'Серикбаева'}}
+ ];
+ const rows=await geo.searchLocations('Серикбаева 1',49.948986,82.627945);assert.equal(rows[0].displayName,'Серикбаева 1');
+});

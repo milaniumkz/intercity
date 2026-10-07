@@ -1,5 +1,6 @@
 import '../../referral/widgets/referral_profile_card.dart';
 import 'dart:async';
+import 'package:dio/dio.dart';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -16,13 +17,15 @@ import '../../../core/widgets/theme_settings_card.dart';
 import '../widgets/driver_bottom_nav.dart';
 
 class DriverProfilePage extends StatefulWidget {
-  const DriverProfilePage({super.key});
+  const DriverProfilePage({super.key, this.apiClient});
+  final ApiClient? apiClient;
 
   @override
   State<DriverProfilePage> createState() => _DriverProfilePageState();
 }
 
 class _DriverProfilePageState extends State<DriverProfilePage> {
+  late final _api = widget.apiClient ?? ApiClient();
   final _carModelCtrl = TextEditingController();
   final _carNumberCtrl = TextEditingController();
 
@@ -64,10 +67,31 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
     if (!mounted) return;
     setState(() => _loading = true);
     try {
-      final me = await ApiClient().get('/me');
-      final profileRes = await ApiClient().get('/driver/profile');
-      final citiesRes = await ApiClient().get('/geo/cities');
-      final routesRes = await ApiClient().get('/driver/intercity/routes');
+      final citiesFuture = _api.get('/geo/cities').catchError((_) =>
+          Response<dynamic>(
+              requestOptions: RequestOptions(path: '/geo/cities'),
+              data: <dynamic>[]));
+      final routesFuture = _api.get('/driver/intercity/routes').catchError(
+          (_) => Response<dynamic>(
+              requestOptions: RequestOptions(path: '/driver/intercity/routes'),
+              data: <dynamic>[]));
+      final primary =
+          await Future.wait([_api.get('/me'), _api.get('/driver/profile')]);
+      final me = primary[0];
+      final profileRes = primary[1];
+      if (!mounted) return;
+      setState(() {
+        _user =
+            me.data is Map ? Map<String, dynamic>.from(me.data as Map) : null;
+        _profile = profileRes.data is Map
+            ? Map<String, dynamic>.from(profileRes.data as Map)
+            : null;
+        _hasResolvedProfileLoad = true;
+        _loading = false;
+      });
+      final optional = await Future.wait([citiesFuture, routesFuture]);
+      final citiesRes = optional[0];
+      final routesRes = optional[1];
       final profile = profileRes.data is Map
           ? Map<String, dynamic>.from(profileRes.data as Map)
           : <String, dynamic>{};
@@ -125,7 +149,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
     if (_saving) return;
     setState(() => _saving = true);
     try {
-      await ApiClient().post('/driver/profile', data: {
+      await _api.post('/driver/profile', data: {
         'carModel': _carModelCtrl.text.trim(),
         'carNumber': _carNumberCtrl.text.trim(),
         'acceptCityFixed': _acceptCityFixed,
@@ -134,7 +158,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
         'acceptDelivery': _acceptDelivery,
         'acceptCargo': _acceptCargo,
       });
-      await ApiClient().post('/driver/online', data: {
+      await _api.post('/driver/online', data: {
         'isOnline': (_profile?['online'] is Map)
             ? (Map<String, dynamic>.from(
                     _profile!['online'] as Map)['isOnline'] ==
@@ -172,7 +196,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
     }
     setState(() => _routeSaving = true);
     try {
-      await ApiClient().post('/driver/intercity/routes', data: {
+      await _api.post('/driver/intercity/routes', data: {
         'fromCity': fromCity,
         'toCity': toCity,
       });
@@ -193,7 +217,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
 
   Future<void> _deleteIntercityRoute(String id) async {
     try {
-      await ApiClient().post('/driver/intercity/routes/$id/delete');
+      await _api.post('/driver/intercity/routes/$id/delete');
       if (!mounted) return;
       setState(() => _message = 'Маршрут отключен');
       await _load();
@@ -551,12 +575,18 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   Widget _boardDriverProfileScreen(String statusLabel) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final name = (_user?['name'] ?? 'Водитель').toString();
+    final name =
+        (_user?['name'] ?? (_loading ? 'Загрузка профиля…' : 'Водитель'))
+            .toString();
     final phone = (_user?['phone'] ?? 'Телефон не указан').toString();
     final car = (_profile?['carModel'] ?? _carModelCtrl.text).toString().trim();
     final number =
         (_profile?['carNumber'] ?? _carNumberCtrl.text).toString().trim();
-    final rating = (_profile?['rating'] ?? '—').toString();
+    final rawRating = _profile?['rating'];
+    final ratingValue = rawRating is Map ? rawRating['ratingAvg'] : rawRating;
+    final rating = ratingValue is num && ratingValue.isFinite
+        ? ratingValue.toStringAsFixed(1)
+        : '—';
     final trips = (_profile?['completedTrips'] ?? '0').toString();
     final online = _profile?['online'] is Map &&
         (Map<String, dynamic>.from(_profile!['online'] as Map)['isOnline'] ==

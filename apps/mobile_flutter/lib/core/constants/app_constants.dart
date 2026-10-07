@@ -34,7 +34,8 @@ class AppConstants {
   static const int primaryColor = 0xFF7C2DFF;
 
   // Map
-  static const String osmTileUrl =
-      'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
+  static const String osmTileUrl = String.fromEnvironment(
+      'INTERCITY_MAP_TILE_URL',
+      defaultValue: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png');
   static const List<String> mapTileSubdomains = ['a', 'b', 'c'];
 }

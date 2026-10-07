@@ -30,7 +30,7 @@ export class AutoDispatchService {
             include: { city: true },
         });
 
-        if (!order || !['CITY', 'CARGO', 'DELIVERY'].includes(order.mode)) {
+        if (!order || !['CITY', 'CARGO', 'DELIVERY'].includes(order.mode) || !['CREATED', 'SEARCHING_DRIVER'].includes(order.status) || order.driverId) {
             return;
         }
 
@@ -40,10 +40,11 @@ export class AutoDispatchService {
         }
 
         // Update order status to SEARCHING_DRIVER
-        await this.prisma.order.update({
-            where: { id: orderId },
+        const queued = await this.prisma.order.updateMany({
+            where: { id: orderId, status: { in: ['CREATED', 'SEARCHING_DRIVER'] }, driverId: null },
             data: { status: 'SEARCHING_DRIVER' },
         });
+        if (queued.count !== 1) return;
         await this.recordRideEventSafe({
             orderId,
             fromStatus: order.status,
@@ -99,8 +100,8 @@ export class AutoDispatchService {
         const bestDriver = scoredDrivers[0];
 
         // Assign driver to order
-        await this.prisma.order.update({
-            where: { id: orderId },
+        const assigned = await this.prisma.order.updateMany({
+            where: { id: orderId, status: 'SEARCHING_DRIVER', driverId: null },
             data: {
                 driverId: bestDriver.driver.driverId,
                 status: 'DRIVER_ASSIGNED',
@@ -108,6 +109,7 @@ export class AutoDispatchService {
                 assignedReasonJson: JSON.stringify(bestDriver.score),
             },
         });
+        if (assigned.count !== 1) return;
         await this.recordRideEventSafe({
             orderId,
             fromStatus: 'SEARCHING_DRIVER',

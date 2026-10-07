@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../constants/app_constants.dart';
-import 'intercity_html_tile_map.dart';
-import 'intercity_map_fallback.dart';
 
 class IntercityStaticTileMap extends StatelessWidget {
   const IntercityStaticTileMap({
@@ -27,7 +25,7 @@ class IntercityStaticTileMap extends StatelessWidget {
         final width = constraints.maxWidth;
         final height = constraints.maxHeight;
         if (width <= 0 || height <= 0) {
-          return IntercityMapFallback(dark: isDark);
+          return const SizedBox.shrink();
         }
 
         final z = zoom.round().clamp(1, 18);
@@ -42,14 +40,12 @@ class IntercityStaticTileMap extends StatelessWidget {
         final maxTile = 1 << z;
 
         final children = <Widget>[
-          Positioned.fill(child: IntercityMapFallback(dark: isDark)),
           Positioned.fill(
-            child: IntercityHtmlTileMap(
-              center: center,
-              zoom: zoom,
-              dark: isDark,
-            ),
-          ),
+              child: ColoredBox(
+                  color: isDark
+                      ? const Color(0xFF151024)
+                      : const Color(0xFFF1ECFF),
+                  child: const Center(child: Text('Загрузка карты…')))),
         ];
 
         for (var x = startX; x <= endX; x++) {
@@ -68,7 +64,7 @@ class IntercityStaticTileMap extends StatelessWidget {
                   _tileUrl(wrappedX, y, z, isDark),
                   fit: BoxFit.cover,
                   filterQuality: FilterQuality.low,
-                  webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                  webHtmlElementStrategy: WebHtmlElementStrategy.never,
                   errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                 ),
               ),

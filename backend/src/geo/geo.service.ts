@@ -436,6 +436,8 @@ export class GeoService {
                 ).catch(() => []);
                 for (const item of data) {
                     const mapped = {
+                        houseNumber: item.address?.house_number || null,
+                        road: item.address?.road || null,
                         displayName: item.display_name,
                         lat: parseFloat(item.lat),
                         lng: parseFloat(item.lon),
@@ -467,6 +469,12 @@ export class GeoService {
                 }
             }
 
+            const house = query.match(/(?:^|\s)(\d+[\p{L}]?(?:\/\d+[\p{L}]?)?)(?:\s|$)/u)?.[1]?.toLowerCase();
+            const addressRank = (item: any) => {
+                if (!house) return item.road ? 0 : 2;
+                const number = (item.houseNumber || '').toLowerCase();
+                return number === house ? 0 : number.startsWith(house) && !/^\d/.test(number.slice(house.length)) && item.road ? 1 : item.road && !number ? 2 : 3;
+            };
             const items = collected;
             if (Number.isFinite(nearLat) && Number.isFinite(nearLng)) {
                 return items
@@ -475,10 +483,10 @@ export class GeoService {
                         distanceKm: this.haversine(nearLat!, nearLng!, item.lat, item.lng),
                     }))
                     .filter((item: any) => item.distanceKm <= this.addressSearchRadiusKm)
-                    .sort((a: any, b: any) => a.distanceKm - b.distanceKm)
+                    .sort((a: any, b: any) => addressRank(a) - addressRank(b) || a.distanceKm - b.distanceKm)
                     .slice(0, 10);
             }
-            return items.slice(0, 10);
+            return items.sort((a,b) => addressRank(a)-addressRank(b)).slice(0, 10);
         } catch (error) {
             return [];
         }
@@ -730,11 +738,11 @@ export class GeoService {
             .replace(/(?:^|\s)(?:улица|ул\.|проспект|пр-т|пр\.|дом|д\.)(?=\s|$)/gu, ' ')
             .replace(/\s*\/\s*/g, '/')
             .replace(/[,]/g, ' ').replace(/\s+/g, ' ').trim();
-        const house = normalized.match(/(?:^|\s)(\d+[\p{L}]?(?:\/\d+)?)(?:\s|$)/u)?.[1];
-        const street = normalized.replace(/(?:^|\s)\d+[\p{L}]?(?:\/\d+)?(?:\s|$)/gu, ' ').trim();
+        const house = normalized.match(/(?:^|\s)(\d+[\p{L}]?(?:\/\d+[\p{L}]?)?)(?:\s|$)/u)?.[1];
+        const street = normalized.replace(/(?:^|\s)\d+[\p{L}]?(?:\/\d+[\p{L}]?)?(?:\s|$)/gu, ' ').trim();
         if (street.length < 3) return [];
         return verifiedAddresses.filter(address => {
-            if (house && house !== address.house) return false;
+            if (house && house !== address.house && !(address.house.startsWith(house) && /^[\p{L}]$/u.test(address.house.slice(house.length)))) return false;
             if (city && this.haversine(city.lat, city.lng, address.lat, address.lng) > this.addressSearchRadiusKm) return false;
             return address.streetAliases.some(alias => alias.includes(street));
         }).map(address => ({
