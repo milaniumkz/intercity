@@ -6,6 +6,14 @@ class AppPreferences {
   static final SecureStore _storage =
       createSecureStore(namespace: AppConstants.secureStoreNamespace);
 
+  static Future<bool> claimDailyBonusNotice(
+      String driverId, String day, String currency) async {
+    final key = 'driver_daily_bonus_notice:$driverId:$currency';
+    if (await _storage.read(key) == day) return false;
+    await _storage.write(key, day);
+    return true;
+  }
+
   static const _appModeUserKey = 'app_mode_user_id';
 
   static Future<void> setAppModeUser(String userId) async {

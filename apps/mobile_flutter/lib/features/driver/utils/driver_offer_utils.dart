@@ -3,20 +3,20 @@ Map<String, dynamic> normalizeDriverOffer(
   DateTime? now,
 }) {
   final normalized = Map<String, dynamic>.from(order);
-  final expiresAt = _parseOfferExpiresAt(normalized['offerExpiresAt']);
-  if (expiresAt != null) {
+  // Keep the server deadline for identity, but count down from its remaining
+  // duration so a wrong device clock cannot hide a valid offer.
+  if (_parseOfferExpiresAt(normalized['offerCountdownUntil']) != null) {
     return normalized;
   }
-
   final secondsLeft =
       _parseOfferExpiresInSeconds(normalized['offerExpiresInSec']);
-  if (secondsLeft == null) {
-    return normalized;
+  if (secondsLeft != null) {
+    normalized['offerCountdownUntil'] = (now ?? DateTime.now())
+        .add(Duration(seconds: secondsLeft.clamp(0, 3600)))
+        .toIso8601String();
+    normalized['offerExpiresAt'] ??= normalized['offerCountdownUntil'];
   }
 
-  normalized['offerExpiresAt'] = (now ?? DateTime.now())
-      .add(Duration(seconds: secondsLeft))
-      .toIso8601String();
   return normalized;
 }
 
@@ -25,7 +25,8 @@ int offerSecondsLeft(
   DateTime? now,
   int fallbackSeconds = 30,
 }) {
-  final expiresAt = _parseOfferExpiresAt(order['offerExpiresAt']);
+  final expiresAt = _parseOfferExpiresAt(order['offerCountdownUntil']) ??
+      _parseOfferExpiresAt(order['offerExpiresAt']);
   if (expiresAt != null) {
     final secondsLeft = expiresAt.difference(now ?? DateTime.now()).inSeconds;
     return secondsLeft.clamp(0, 3600).toInt();
