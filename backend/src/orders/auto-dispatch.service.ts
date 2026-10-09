@@ -119,7 +119,7 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
         this.realtimeService.publish({type: 'order.dispatch.offered', entity: 'order', entityId: orderId,
             at: new Date().toISOString(), payload: { driverId: offer.driverId, expiresAt: offer.expiresAt }});
         await this.pushService.sendToUser(offer.userId, {title: 'Новый заказ', body: 'Примите заказ или откажитесь до окончания времени ответа.',
-            data: {type: 'order_offer', orderId, expiresAt: offer.expiresAt.toISOString()}}).catch(() => false);
+            data: {type: 'driver_offer', route: '/driver/home', orderId, expiresAt: offer.expiresAt.toISOString()}}).catch(() => false);
     }
 
     private async findEligibleDrivers(

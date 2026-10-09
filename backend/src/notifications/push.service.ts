@@ -1,4 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { createSign } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 
 type PushPayload = {
@@ -9,6 +11,8 @@ type PushPayload = {
 
 @Injectable()
 export class PushService {
+    private readonly logger = new Logger(PushService.name);
+    private accessToken: { value: string; expires: number } | null = null;
     constructor(private readonly prisma: PrismaService) { }
 
     async sendToUser(userId: string | null | undefined, payload: PushPayload): Promise<boolean> {
@@ -83,27 +87,63 @@ export class PushService {
     }
 
     private async sendToToken(token: string, payload: PushPayload): Promise<boolean> {
-        const serverKey = (process.env.FCM_SERVER_KEY || '').trim();
-        if (!serverKey) return false;
         try {
-            const response = await fetch('https://fcm.googleapis.com/fcm/send', {
+            const inline = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+            const path = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+            if (!inline && !path) {
+                this.logger.warn('Push unavailable: Firebase service account is not configured');
+                return false;
+            }
+            const credentials = JSON.parse(inline || readFileSync(path!, 'utf8'));
+            if (!credentials.project_id || !credentials.client_email || !credentials.private_key) {
+                throw new Error('Invalid Firebase service account configuration');
+            }
+            if (!this.accessToken || this.accessToken.expires <= Date.now()) {
+                const now = Math.floor(Date.now() / 1000);
+                const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+                const unsigned = `${encode({ alg: 'RS256', typ: 'JWT' })}.${encode({
+                    iss: credentials.client_email,
+                    scope: 'https://www.googleapis.com/auth/firebase.messaging',
+                    aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600,
+                })}`;
+                const signature = createSign('RSA-SHA256').update(unsigned).sign(credentials.private_key, 'base64url');
+                const auth = await fetch('https://oauth2.googleapis.com/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: `${unsigned}.${signature}` }),
+                    signal: AbortSignal.timeout(10000),
+                });
+                if (!auth.ok) throw new Error(`Firebase authorization HTTP ${auth.status}`);
+                const result = await auth.json() as { access_token: string; expires_in: number };
+                if (!result.access_token) throw new Error('Firebase authorization returned no token');
+                this.accessToken = { value: result.access_token, expires: Date.now() + (result.expires_in - 60) * 1000 };
+            }
+            const offer = payload.data?.type === 'driver_offer';
+            const expiresAt = Date.parse(String(payload.data?.expiresAt ?? ''));
+            const ttl = offer && Number.isFinite(expiresAt)
+                ? Math.max(0, Math.min(120, Math.floor((expiresAt - Date.now()) / 1000)))
+                : offer ? 30 : 3600;
+            if (offer && ttl === 0) return false;
+            const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(credentials.project_id)}/messages:send`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `key=${serverKey}`,
-                },
-                body: JSON.stringify({
-                    to: token,
-                    notification: {
-                        title: payload.title,
-                        body: payload.body,
-                    },
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.accessToken.value}` },
+                body: JSON.stringify({ message: {
+                    token,
+                    notification: { title: payload.title, body: payload.body },
                     data: this.stringifyData(payload.data ?? {}),
-                    priority: 'high',
-                }),
+                    android: { priority: 'high', ttl: `${ttl}s`, notification: { channel_id: 'intercity_default_channel', sound: 'default' } },
+                    apns: { payload: { aps: { sound: 'default' } } },
+                    webpush: { headers: { Urgency: 'high', TTL: String(ttl) }, notification: { tag: offer ? `driver-offer-${payload.data?.orderId}` : undefined, requireInteraction: offer } },
+                } }),
+                signal: AbortSignal.timeout(10000),
             });
+            if (!response.ok) {
+                if (response.status === 401) this.accessToken = null;
+                this.logger.warn(`Firebase push failed: HTTP ${response.status}`);
+            }
             return response.ok;
         } catch (_) {
+            this.logger.warn('Firebase push failed: check service account and network configuration');
             return false;
         }
     }

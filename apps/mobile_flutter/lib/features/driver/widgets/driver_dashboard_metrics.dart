@@ -83,7 +83,7 @@ class DriverDashboardMetrics extends StatelessWidget {
                 context,
                 'Приоритет',
                 '${priority['total'] ?? '—'}',
-                'Баллы очереди',
+                'Баллы',
                 Icons.trending_up,
                 AppTheme.primaryColor,
                 () => _showHelp(context, 'priority'))),
@@ -113,21 +113,22 @@ class DriverDashboardMetrics extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Row(children: [
-                            Icon(icon, color: accent, size: 16),
-                            const SizedBox(width: 4),
-                            Expanded(
-                                child: Text(label,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.labelSmall))
-                          ]),
-                          const SizedBox(height: 4),
-                          Text(value,
+                          Text(label,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w800, color: accent)),
+                              style: theme.textTheme.labelSmall),
+                          const SizedBox(height: 4),
+                          Row(children: [
+                            Expanded(
+                                child: Text(value,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.titleMedium
+                                        ?.copyWith(
+                                            fontWeight: FontWeight.w800,
+                                            color: accent))),
+                            Icon(icon, color: accent, size: 16),
+                          ]),
                           Text(subtitle,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,

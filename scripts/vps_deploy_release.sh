@@ -72,20 +72,32 @@ if [[ -n "$GEOCODER_CONFIG" && -f "$GEOCODER_CONFIG" ]]; then
 import json, os, re, sys
 from pathlib import Path
 key = json.loads(Path(sys.argv[1]).read_text()).get('key', '').strip()
-if not re.fullmatch(r'[a-zA-Z0-9._-]{10,250}', key):
+if key and not re.fullmatch(r'[a-zA-Z0-9._-]{10,250}', key):
     raise SystemExit('Invalid geocoder credential format')
 path = Path(sys.argv[2]); lines = path.read_text().splitlines()
-lines = [line for line in lines if not re.match(r'^\s*YANDEX_GEOCODER_API_KEY\s*=', line)]
+if key:
+    lines = [line for line in lines if not re.match(r'^\s*YANDEX_GEOCODER_API_KEY\s*=', line)]
+    lines.append('YANDEX_GEOCODER_API_KEY=' + key)
+firebase = json.loads(Path(sys.argv[1]).read_text()).get('firebase', '').strip()
+if firebase:
+    credentials = json.loads(firebase)
+    if not all(credentials.get(field) for field in ('project_id', 'client_email', 'private_key')):
+        raise SystemExit('Incomplete Firebase service account')
+    lines = [line for line in lines if not re.match(r'^\s*FIREBASE_SERVICE_ACCOUNT_JSON\s*=', line)]
+    encoded = json.dumps(credentials, separators=(',', ':'))
+    if "'" in encoded:
+        raise SystemExit('Unsupported Firebase credential quoting')
+    lines.append("FIREBASE_SERVICE_ACCOUNT_JSON='" + encoded + "'")
 temporary = path.with_suffix('.geocoder.tmp')
 fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 with os.fdopen(fd, 'w') as file:
-    file.write('\n'.join(lines) + '\nYANDEX_GEOCODER_API_KEY=' + key + '\n')
+    file.write('\n'.join(lines) + '\n')
 os.replace(temporary, path)
 PYKEY
   cp "$SHARED_DIR/.env" "$RELEASE_DIR/infra/vps/.env"
   chmod 600 "$RELEASE_DIR/infra/vps/.env"
   rm -f "$GEOCODER_CONFIG"
-  echo 'Geocoder credential configured'
+  echo 'Optional service credentials configured'
 fi
 
 cd "$RELEASE_DIR/infra/vps"
@@ -115,5 +127,6 @@ PY
 done
 ln -sfn "$RELEASE_DIR" "$APP_ROOT/current"
 printf '%s\n' "$COMMIT_SHA" > "$APP_ROOT/current_commit"
+docker exec intercity-backend node -e 'console.log("Firebase server credentials configured: " + Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_APPLICATION_CREDENTIALS))'
 compose ps
 printf 'Published and verified release: %s\n' "$COMMIT_SHA"

@@ -1,3 +1,4 @@
+import '../../../core/services/driver_offer_sound.dart';
 import '../../../core/widgets/road_route_layer.dart';
 import 'package:flutter/material.dart';
 import 'package:intercity_shared/intercity_shared.dart';
@@ -136,7 +137,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         .listen((payload) async {
       if (!mounted) return;
       final type = (payload['type'] ?? '').toString().toLowerCase();
-      if (type != 'driver_offer') return;
+      if (type != 'driver_offer' && type != 'order_offer') return;
       final orderId = (payload['orderId'] ?? '').toString();
       if (orderId.isEmpty) return;
       _pendingOfferOrderId = orderId;
@@ -329,6 +330,10 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _setOnline(bool value) async {
+    if (value) {
+      unawaited(DriverOfferSound.prepare());
+      unawaited(PushNotificationsService.instance.enableDriverNotifications());
+    }
     if (value && !_isDriverApproved) {
       setState(() => _message = driverAccessMessageRu(_driverStatus));
       return;
@@ -615,19 +620,21 @@ class _DriverHomePageState extends State<DriverHomePage>
     final first = newOffers.first;
     final firstId = (first['id'] ?? '').toString();
     if (firstId.isEmpty) return;
+    if (_notifiedOfferIds.contains(firstId)) return;
+    _notifiedOfferIds.add(firstId);
+    await PushNotificationsService.instance
+        .showDriverOfferNotification(
+          orderId: firstId,
+          fromAddress: (first['fromAddress'] ?? 'Точка подачи').toString(),
+          toAddress: (first['toAddress'] ?? 'Точка назначения').toString(),
+          secondsLeft: _offerSecondsLeft(first),
+        )
+        .catchError((Object _) {});
     if (_appLifecycleState == AppLifecycleState.resumed) {
       await _showOfferAcceptDialog(first);
       return;
     }
     _pendingOfferOrderId = firstId;
-    if (_notifiedOfferIds.contains(firstId)) return;
-    _notifiedOfferIds.add(firstId);
-    await PushNotificationsService.instance.showDriverOfferNotification(
-      orderId: firstId,
-      fromAddress: (first['fromAddress'] ?? 'Точка подачи').toString(),
-      toAddress: (first['toAddress'] ?? 'Точка назначения').toString(),
-      secondsLeft: _offerSecondsLeft(first),
-    );
     _startOfferAlarm(firstId);
   }
 
@@ -688,17 +695,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         return;
       }
       try {
-        await SystemSound.play(SystemSoundType.alert);
+        await DriverOfferSound.play();
       } catch (_) {
         // Keep visual countdown/dialog if device blocks system sound.
       }
-      await PushNotificationsService.instance.showDriverOfferNotification(
-        orderId: orderId,
-        fromAddress: (offer['fromAddress'] ?? 'Точка подачи').toString(),
-        toAddress: (offer['toAddress'] ?? 'Точка назначения').toString(),
-        secondsLeft: sec,
-        notificationId: orderId.hashCode,
-      );
       if (_appLifecycleState == AppLifecycleState.resumed) {
         return;
       }
@@ -2460,7 +2460,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (_appLifecycleState != AppLifecycleState.resumed) return;
     if (orderId.isEmpty) return;
     if (!_spokenOfferIds.add(orderId)) return;
-    unawaited(SystemSound.play(SystemSoundType.alert));
+    unawaited(DriverOfferSound.play());
   }
 
   void _startOfferCountdownTicker() {

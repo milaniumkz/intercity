@@ -65,6 +65,11 @@ class PushNotificationsService {
     }
   }
 
+  Future<void> enableDriverNotifications() async {
+    await _requestPermissionIfNeeded();
+    await syncTokenIfAuthorized();
+  }
+
   Future<void> syncTokenIfAuthorized() async {
     if (!_firebaseReady || !_isPermissionGranted) return;
     try {
@@ -94,6 +99,29 @@ class PushNotificationsService {
     final payload = buildDriverOfferPayload(orderId: orderId);
     final tag = 'driver-offer-${notificationId ?? orderId.hashCode}';
     _activeNotifications.remove(tag)?.close();
+
+    // Android Chrome requires service-worker notifications (the constructor
+    // is unavailable there). This also keeps taps working after closing a tab.
+    try {
+      final registration = await web.window.navigator.serviceWorker.ready.toDart
+          .timeout(const Duration(seconds: 2));
+      await registration
+          .showNotification(
+              'Новый заказ',
+              web.NotificationOptions(
+                body: buildDriverOfferNotificationBody(
+                    fromAddress: fromAddress,
+                    toAddress: toAddress,
+                    secondsLeft: secondsLeft),
+                icon: '/icons/Icon-192.png',
+                tag: tag,
+                renotify: true,
+                requireInteraction: true,
+                data: payload.jsify(),
+              ))
+          .toDart;
+      return;
+    } catch (_) {}
 
     final notification = web.Notification(
       'Новый заказ',
@@ -162,6 +190,7 @@ class PushNotificationsService {
   }
 
   Future<void> _onForegroundMessage(RemoteMessage message) async {
+    _payloadStreamController.add(Map<String, dynamic>.from(message.data));
     final notification = message.notification;
     if (notification == null) return;
     if (!_isPermissionGranted) return;
