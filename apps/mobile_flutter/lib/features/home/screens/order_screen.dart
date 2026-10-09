@@ -1002,8 +1002,9 @@ class _OrderScreenState extends State<OrderScreen> {
     await _board();
     if (_boardPrice == null) {
       setState(() {
-        _statusText =
-            'Не удалось рассчитать стоимость. Проверьте адрес назначения или выберите точку на карте.';
+        _statusText = _statusText.isNotEmpty
+            ? _statusText
+            : 'Не удалось рассчитать стоимость. Проверьте адрес назначения или выберите точку на карте.';
       });
       _goOrderBoard('address');
       return;
@@ -13083,8 +13084,7 @@ class _OrderScreenState extends State<OrderScreen> {
         _boardPrice = null;
         _boardDistance = null;
         _boardDuration = null;
-        _statusText =
-            'Не удалось рассчитать маршрут. Выберите адрес из подсказок или укажите точку на карте.';
+        _statusText = errorMessage(e);
       });
     } finally {
       if (mounted) setState(() => _loading = false);

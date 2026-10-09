@@ -38,9 +38,7 @@ test('city preview uses only configured city rates and returns its currency', as
     const kz = await service.previewOrder({ ...dto, fromLat: 43 });
     assert.equal(kz.currency, 'KZT');
     assert.equal(kz.price, 1000);
-    const missing = await service.previewOrder({ ...dto, fromLat: 56 });
-    assert.equal(missing.price, 0);
-    assert.equal(missing.currency, 'RUB');
+    await assert.rejects(service.previewOrder({ ...dto, fromLat: 56 }), /City tariff is not configured/);
     assert.deepEqual(queries, ['ru', 'kz', 'missing'].map(cityId => ({ cityId, isActive: true })));
 });
 

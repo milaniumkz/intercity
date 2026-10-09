@@ -291,6 +291,7 @@ export class OrdersService {
         if (mode === 'CITY') {
             const resolved = await this.resolveCityTariff(cityId);
             tariff = resolved.tariff;
+            if (!tariff) throw new BadRequestException('City tariff is not configured');
             if (tariff) {
                 const multiplier = resolved.multiplier || 1;
                 price = Math.max(
