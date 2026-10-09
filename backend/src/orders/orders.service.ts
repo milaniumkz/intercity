@@ -403,8 +403,8 @@ export class OrdersService {
     }
 
     async getOrderChat(orderId: string, actor: { userId: string; role?: string }) {
-        await this.requireOrderParticipant(orderId, actor);
-        return (this.prisma as any).orderChatMessage.findMany({
+        const order = await this.requireOrderParticipant(orderId, actor);
+        const messages = await (this.prisma as any).orderChatMessage.findMany({
             where: { orderId },
             orderBy: { createdAt: 'asc' },
             take: 200,
@@ -418,6 +418,7 @@ export class OrdersService {
                 },
             },
         });
+        return messages.map((message: any) => this.chatMessageForViewer(message, order, actor.userId));
     }
 
     async sendOrderChatMessage(
@@ -436,7 +437,7 @@ export class OrdersService {
         if (normalized.length > 1000) {
             throw new BadRequestException('Сообщение слишком длинное');
         }
-        return (this.prisma as any).orderChatMessage.create({
+        const message = await (this.prisma as any).orderChatMessage.create({
             data: {
                 orderId,
                 senderId: actor.userId,
@@ -452,6 +453,16 @@ export class OrdersService {
                 },
             },
         });
+        return this.chatMessageForViewer(message, order, actor.userId);
+    }
+
+    private chatMessageForViewer(message: any, order: any, userId: string) {
+        return {
+            ...message,
+            isMine: message.senderId === userId,
+            participantRole: message.senderId === order.passengerId ? 'PASSENGER'
+                : message.senderId === order.driver?.userId ? 'DRIVER' : 'SUPPORT',
+        };
     }
 
     async createOrderOffer(
@@ -1116,6 +1127,10 @@ export class OrdersService {
                 data: { driverRating: rating },
             });
             await this.updateDriverRating(order.driverId!, rating);
+            this.realtimeService.publish({
+                type: 'driver.rating.updated', entity: 'driver', entityId: order.driverId!,
+                at: new Date().toISOString(), payload: { driverId: order.driverId!, orderId },
+            });
         }
 
         return { success: true };

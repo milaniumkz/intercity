@@ -29,6 +29,7 @@ class _RouteApi extends ApiClient {
 
 Response<dynamic> _response({double lng = 82.62}) =>
     Response(requestOptions: RequestOptions(path: '/route'), data: {
+      'duration': 7,
       'geometry': {
         'type': 'LineString',
         'coordinates': [
@@ -66,6 +67,10 @@ void main() {
     expect(layer.polylines.single.points[1], const LatLng(49.94, 82.62));
     await repository.route(
         const LatLng(49.95, 82.61), const LatLng(49.90, 82.609));
+    expect(api.calls, 1);
+    final details = await repository.details(
+        const LatLng(49.95, 82.61), const LatLng(49.90, 82.609));
+    expect(details.durationMinutes, 7);
     expect(api.calls, 1);
   });
   testWidgets('failure draws no straight line and supports retry',

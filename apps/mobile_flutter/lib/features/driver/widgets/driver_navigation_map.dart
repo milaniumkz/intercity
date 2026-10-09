@@ -117,6 +117,7 @@ class _DriverNavigationMapState extends State<DriverNavigationMap>
             RoadRouteLayer(
                 from: widget.routeStart,
                 to: widget.target,
+                fitCamera: false,
                 color: AppTheme.primaryColor),
           MarkerLayer(markers: [
             Marker(

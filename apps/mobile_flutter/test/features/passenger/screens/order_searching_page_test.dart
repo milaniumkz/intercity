@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:dio/dio.dart';
@@ -9,6 +11,46 @@ import 'package:intercity_mobile/core/services/sse_service.dart';
 import 'package:intercity_mobile/features/passenger/screens/order_searching_page.dart';
 
 void main() {
+  testWidgets(
+      'pickup ETA and route update from the moving driver, then hide on arrival',
+      (tester) async {
+    tester.view.physicalSize = const Size(400, 832);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final api = _FakeApiClient(status: 'DRIVER_EN_ROUTE');
+    await tester.pumpWidget(MaterialApp(
+        home: OrderSearchingPage(
+      orderId: 'order-1',
+      apiClient: api,
+      mapTileProvider: _TestTiles(),
+      pollingInterval: const Duration(seconds: 1),
+      realtimeConnector:
+          (String path, {Map<String, dynamic>? queryParameters}) async => null,
+    )));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('~ 7 мин'), findsOneWidget);
+    expect(api.routeQueries.last['fromLat'], api.driverLat);
+    expect(api.routeQueries.last['toLat'], 43.238949);
+    api.driverLat = 43.242;
+    api.routeMinutes = 3;
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('~ 3 мин'), findsOneWidget);
+    expect(api.routeQueries.last['fromLat'], 43.242);
+    api.status = 'DRIVER_ARRIVED';
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(
+        find.byKey(const ValueKey('passenger-arrival-estimate')), findsNothing);
+    api.status = 'IN_PROGRESS';
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(api.routeQueries.last['fromLat'], 43.242);
+    expect(api.routeQueries.last['toLat'], 43.25667);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets(
       'driver card uses numeric rating and fits a phone without exposing rating IDs',
       (tester) async {
@@ -29,6 +71,35 @@ void main() {
     expect(find.textContaining('private-rating-id'), findsNothing);
     final car = find.textContaining('Volkswagen Passat');
     expect(tester.getSize(car).width, greaterThan(150));
+    final card = tester
+        .getRect(find.byKey(const ValueKey('passenger-active-driver-card')));
+    final nav = tester.getRect(find.text('Главная'));
+    expect(nav.top - card.bottom, lessThan(65));
+    expect(card.top, greaterThan(300));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('arrival estimate disappears as soon as driver arrives',
+      (tester) async {
+    final api = _FakeApiClient(status: 'DRIVER_EN_ROUTE');
+    await tester.pumpWidget(MaterialApp(
+        home: OrderSearchingPage(
+      orderId: 'order-1',
+      apiClient: api,
+      enableLiveMap: false,
+      pollingInterval: const Duration(seconds: 1),
+      realtimeConnector:
+          (String path, {Map<String, dynamic>? queryParameters}) async => null,
+    )));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('passenger-arrival-estimate')),
+        findsOneWidget);
+    api.status = 'DRIVER_ARRIVED';
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(
+        find.byKey(const ValueKey('passenger-arrival-estimate')), findsNothing);
+    expect(find.text('Водитель на месте'), findsWidgets);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
@@ -188,6 +259,9 @@ class _FakeApiClient extends ApiClient {
   int getCalls = 0;
   final String currency;
   String status;
+  double driverLat = 43.24;
+  int routeMinutes = 7;
+  final routeQueries = <Map<String, dynamic>>[];
 
   @override
   Future<Response<dynamic>> get(
@@ -195,6 +269,21 @@ class _FakeApiClient extends ApiClient {
     Map<String, dynamic>? queryParameters,
     Options? options,
   }) async {
+    if (path == '/route') {
+      final q = Map<String, dynamic>.from(queryParameters!);
+      routeQueries.add(q);
+      return Response(requestOptions: RequestOptions(path: path), data: {
+        'duration': routeMinutes,
+        'geometry': {
+          'type': 'LineString',
+          'coordinates': [
+            [q['fromLng'], q['fromLat']],
+            [76.89, 43.245],
+            [q['toLng'], q['toLat']],
+          ]
+        },
+      });
+    }
     getCalls++;
     return Response<dynamic>(
       requestOptions: RequestOptions(path: path),
@@ -203,6 +292,7 @@ class _FakeApiClient extends ApiClient {
         'status': status,
         if (status != 'SEARCHING_DRIVER' && status != 'CANCELLED')
           'driver': {
+            'online': {'lastLat': driverLat, 'lastLng': 76.889},
             'carModel': 'Volkswagen Passat с длинным названием модели',
             'rating': {
               'id': 'private-rating-id',
@@ -235,4 +325,11 @@ class _MemoryTokenStore implements ApiTokenStore {
 
   @override
   Future<void> write(String key, String value) async {}
+}
+
+class _TestTiles extends TileProvider {
+  @override
+  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) =>
+      MemoryImage(base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='));
 }
