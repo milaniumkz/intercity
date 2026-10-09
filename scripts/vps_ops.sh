@@ -12,6 +12,21 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "release-progress" ]]; then
+      python3 - "$APP_ROOT" <<'PYPROGRESS'
+import pathlib, datetime, sys
+root=pathlib.Path(sys.argv[1])
+for directory,pattern in [(pathlib.Path('/tmp'),'intercity-vps-*.tar.gz'),(root/'backups','*'),(root/'releases','*')]:
+    paths=sorted(directory.glob(pattern),key=lambda p:p.stat().st_mtime,reverse=True)[:3]
+    for path in paths:
+        st=path.stat()
+        print(str(path), 'bytes='+str(st.st_size), 'modified='+datetime.datetime.fromtimestamp(st.st_mtime,datetime.timezone.utc).isoformat())
+PYPROGRESS
+      ps -eo comm,etime,pcpu --sort=-pcpu | head -15
+      docker ps --format '{{.Names}} {{.Status}}'
+      docker images --format '{{.Repository}} {{.ID}} {{.CreatedSince}} {{.Size}}' | head -8
+      exit 0
+    fi
     if [[ "$TARGET" == "payment-config" ]]; then
       docker exec -i intercity-backend node <<'JSPAYMENTCONFIG'
 (async () => {
