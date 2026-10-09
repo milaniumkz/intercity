@@ -118,6 +118,21 @@ class PushNotificationsService {
       importance: Importance.max,
     );
 
+    const driverChannel = AndroidNotificationChannel(
+      'intercity_driver_offers_v2',
+      'Новые заказы водителя',
+      description: 'Звуковой сигнал новых предложений заказа',
+      importance: Importance.max,
+      playSound: true,
+      sound: RawResourceAndroidNotificationSound('intercity_order'),
+      enableVibration: true,
+      audioAttributesUsage: AudioAttributesUsage.notificationRingtone,
+    );
+    await _localNotifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(driverChannel);
+
     await _localNotifications
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
@@ -146,6 +161,12 @@ class PushNotificationsService {
     );
   }
 
+  Future<void> cancelDriverOfferNotification(String orderId) async {
+    try {
+      await _localNotifications.cancel(orderId.hashCode);
+    } catch (_) {}
+  }
+
   Future<void> showDriverOfferNotification({
     required String orderId,
     required String fromAddress,
@@ -165,10 +186,13 @@ class PushNotificationsService {
         secondsLeft: sec,
       ),
       NotificationDetails(
-        iOS: const DarwinNotificationDetails(presentSound: true),
+        iOS: const DarwinNotificationDetails(
+            presentSound: true,
+            sound: 'intercity_order.wav',
+            interruptionLevel: InterruptionLevel.timeSensitive),
         android: AndroidNotificationDetails(
-          'intercity_default_channel',
-          'INTERCITY уведомления',
+          'intercity_driver_offers_v2',
+          'Новые заказы водителя',
           channelDescription: 'Заказы, статусы, сообщения сервиса',
           importance: Importance.max,
           priority: Priority.high,
@@ -179,6 +203,9 @@ class PushNotificationsService {
           timeoutAfter: sec * 1000,
           onlyAlertOnce: false,
           playSound: true,
+          sound: const RawResourceAndroidNotificationSound('intercity_order'),
+          enableVibration: true,
+          audioAttributesUsage: AudioAttributesUsage.notificationRingtone,
           ticker: 'Новый заказ для водителя',
         ),
       ),

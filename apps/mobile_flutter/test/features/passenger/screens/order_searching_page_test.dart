@@ -9,6 +9,29 @@ import 'package:intercity_mobile/core/services/sse_service.dart';
 import 'package:intercity_mobile/features/passenger/screens/order_searching_page.dart';
 
 void main() {
+  testWidgets(
+      'driver card uses numeric rating and fits a phone without exposing rating IDs',
+      (tester) async {
+    tester.view.physicalSize = const Size(400, 832);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+        home: OrderSearchingPage(
+      orderId: 'order-1',
+      apiClient: _FakeApiClient(status: 'DRIVER_EN_ROUTE'),
+      enableLiveMap: false,
+      realtimeConnector:
+          (String path, {Map<String, dynamic>? queryParameters}) async => null,
+    )));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('4.92'), findsOneWidget);
+    expect(find.textContaining('private-rating-id'), findsNothing);
+    final car = find.textContaining('Volkswagen Passat');
+    expect(tester.getSize(car).width, greaterThan(150));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('opening a cancelled order redirects to the new booking form',
       (tester) async {
     final router =
@@ -180,7 +203,12 @@ class _FakeApiClient extends ApiClient {
         'status': status,
         if (status != 'SEARCHING_DRIVER' && status != 'CANCELLED')
           'driver': {
-            'carModel': 'Toyota',
+            'carModel': 'Volkswagen Passat с длинным названием модели',
+            'rating': {
+              'id': 'private-rating-id',
+              'ratingAvg': 4.92,
+              'ratingCount': 7
+            },
             'carNumber': 'TEST',
             'user': {'name': 'Тестовый водитель', 'phone': '+70000000001'}
           },

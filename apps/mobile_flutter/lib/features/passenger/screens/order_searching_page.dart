@@ -1103,8 +1103,15 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     final car =
         (driverProfile?['carModel'] ?? 'Автомобиль не указан').toString();
     final carNumber = (driverProfile?['carNumber'] ?? '').toString();
-    final rating =
-        (driverProfile?['rating'] ?? driverUser?['rating'] ?? '—').toString();
+    final rawRating = driverProfile?['rating'] ?? driverUser?['rating'];
+    final average = rawRating is Map
+        ? rawRating['ratingAvg'] ?? rawRating['average']
+        : rawRating;
+    final ratingNumber =
+        average is num ? average.toDouble() : double.tryParse('$average');
+    final rating = ratingNumber != null && ratingNumber.isFinite
+        ? ratingNumber.clamp(0, 5).toStringAsFixed(2)
+        : '—';
     final eta = order == null ? '3 мин' : _arrivalText(order);
     return Scaffold(
       bottomNavigationBar: const PassengerBottomNav(currentIndex: 0),
@@ -1244,6 +1251,8 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                             children: [
                               Text(
                                 driverName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: theme.textTheme.titleMedium?.copyWith(
                                   fontWeight: FontWeight.w900,
                                 ),
@@ -1251,6 +1260,8 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                               const SizedBox(height: 3),
                               Text(
                                 '$car\n$carNumber',
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   color: theme.colorScheme.onSurfaceVariant,
                                   fontSize: 12,

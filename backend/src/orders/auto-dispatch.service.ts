@@ -257,7 +257,8 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
         const distanceScore = Math.max(0, 50 - distanceKm * 10);
 
         // Rating score: ratingAvg * 5
-        const ratingAvg = driver.driver.rating?.ratingAvg || 5.0;
+        const ratingAvg = driver.driver.rating?.ratingCount > 0
+            ? Math.max(0, Math.min(5, Number(driver.driver.rating.ratingAvg) || 0)) : 0;
         const ratingScore = ratingAvg * 5;
 
         // Activity score: direct weight (0..100+)

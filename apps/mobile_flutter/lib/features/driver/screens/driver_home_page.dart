@@ -1,3 +1,5 @@
+import '../widgets/driver_offer_expiry_watcher.dart';
+import '../widgets/driver_navigation_map.dart';
 import '../../../core/services/driver_offer_sound.dart';
 import '../../../core/widgets/road_route_layer.dart';
 import 'package:flutter/material.dart';
@@ -67,6 +69,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   String _message = '';
   String _offerCurrencySymbol = '₸';
   Timer? _locationTimer;
+  StreamSubscription<Position>? _positionStream;
+  double _driverHeading = 0;
+  LatLng? _lastGpsPoint;
   Timer? _activeOrderPollTimer;
   Timer? _nearbyPollTimer;
   Timer? _offerCountdownTimer;
@@ -160,6 +165,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _notificationTapSub?.cancel();
     _dashboardMetricsTimer?.cancel();
     _locationTimer?.cancel();
+    _positionStream?.cancel();
     _activeOrderPollTimer?.cancel();
     _nearbyPollTimer?.cancel();
     _offerCountdownTimer?.cancel();
@@ -444,6 +450,8 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _disableDriverFeeds() async {
     _locationTimer?.cancel();
+    await _positionStream?.cancel();
+    _positionStream = null;
     _clearNearbyDiscoveryState();
     await _disconnectDriverRealtime();
   }
@@ -503,8 +511,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     final pos = await Geolocator.getCurrentPosition(
       locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
     );
-    _latCtrl.text = pos.latitude.toStringAsFixed(6);
-    _lngCtrl.text = pos.longitude.toStringAsFixed(6);
+    if (pos.accuracy > 100) {
+      throw Exception('Не удалось получить точное местоположение водителя');
+    }
+    _applyDriverPosition(pos);
   }
 
   Future<void> _loadNearby({bool silent = false}) async {
@@ -631,7 +641,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         )
         .catchError((Object _) {});
     if (_appLifecycleState == AppLifecycleState.resumed) {
-      await _showOfferAcceptDialog(first);
+      unawaited(_showOfferAcceptDialog(first));
       return;
     }
     _pendingOfferOrderId = firstId;
@@ -657,6 +667,12 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   void _stopOfferAlarm() {
+    final orderId = _offerAlarmOrderId;
+    if (orderId != null) {
+      unawaited(PushNotificationsService.instance
+          .cancelDriverOfferNotification(orderId));
+    }
+    unawaited(DriverOfferSound.stop());
     _offerAlarmTimer?.cancel();
     _offerAlarmTimer = null;
     _offerAlarmOrderId = null;
@@ -747,7 +763,6 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
     final auctionPriceController = TextEditingController();
     final suggestedOfferPrices = _buildAuctionOfferPriceSuggestions(order);
-    Timer? ticker;
     var completed = false;
     await showDialog<void>(
       context: context,
@@ -755,576 +770,604 @@ class _DriverHomePageState extends State<DriverHomePage>
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            ticker ??= Timer.periodic(const Duration(seconds: 1), (timer) {
-              if (!mounted) {
-                timer.cancel();
-                return;
-              }
-              final liveOrder = _nearby
-                  .whereType<Map>()
-                  .map((e) => Map<String, dynamic>.from(e))
-                  .firstWhere(
-                    (o) => (o['id'] ?? '').toString() == orderId,
-                    orElse: () => <String, dynamic>{},
-                  );
-              final liveSec = liveOrder.isEmpty
-                  ? (secondsLeft - 1).clamp(0, 30)
-                  : _offerSecondsLeft(liveOrder);
-              setDialogState(() {
-                secondsLeft = liveSec;
-              });
-            });
-            return PopScope(
-              canPop: false,
-              child: Dialog(
-                backgroundColor: Colors.transparent,
-                insetPadding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 24,
-                ),
-                child: SafeArea(
-                  child: AnimatedPadding(
-                    duration: const Duration(milliseconds: 180),
-                    curve: Curves.easeOutCubic,
-                    padding: EdgeInsets.only(
-                      bottom: MediaQuery.viewInsetsOf(ctx).bottom,
+            return DriverOfferExpiryWatcher(
+                secondsLeft: () {
+                  final liveOrder = _nearby
+                      .whereType<Map>()
+                      .map((e) => Map<String, dynamic>.from(e))
+                      .firstWhere(
+                        (o) => (o['id'] ?? '').toString() == orderId,
+                        orElse: () => <String, dynamic>{},
+                      );
+                  return liveOrder.isEmpty || !_isOnline || _activeOrder != null
+                      ? 0
+                      : _offerSecondsLeft(liveOrder);
+                },
+                onTick: (remaining) {
+                  if (!completed && context.mounted) {
+                    setDialogState(() => secondsLeft = remaining);
+                  }
+                },
+                onExpired: () {
+                  if (completed || !ctx.mounted) return;
+                  completed = true;
+                  _stopOfferAlarmIfMatches(orderId);
+                  final route = ModalRoute.of(ctx);
+                  if (route != null) {
+                    if (route.isCurrent) {
+                      Navigator.of(ctx).pop();
+                    } else {
+                      Navigator.of(ctx).removeRoute(route);
+                    }
+                  }
+                },
+                child: PopScope(
+                  canPop: false,
+                  child: Dialog(
+                    backgroundColor: Colors.transparent,
+                    insetPadding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 24,
                     ),
-                    child: SingleChildScrollView(
-                      keyboardDismissBehavior:
-                          ScrollViewKeyboardDismissBehavior.onDrag,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [
-                              Color(0xFF1B0D33),
-                              Color(0xFF0B0817),
-                              Color(0xFF120B24),
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(28),
-                          border: Border.all(
-                            color: (secondsLeft <= 10
-                                    ? Colors.redAccent
-                                    : AppTheme.secondaryColor)
-                                .withValues(alpha: 0.28),
-                          ),
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Color(0x77000000),
-                              blurRadius: 26,
-                              offset: Offset(0, 14),
-                            ),
-                          ],
+                    child: SafeArea(
+                      child: AnimatedPadding(
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOutCubic,
+                        padding: EdgeInsets.only(
+                          bottom: MediaQuery.viewInsetsOf(ctx).bottom,
                         ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(18),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Container(
-                                height: 166,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(24),
-                                  gradient: RadialGradient(
-                                    center: const Alignment(0.1, -0.1),
-                                    radius: 1.1,
-                                    colors: [
-                                      AppTheme.primaryColor.withValues(
-                                        alpha: 0.40,
-                                      ),
-                                      const Color(0xFF120B24),
-                                      const Color(0xFF07050F),
-                                    ],
-                                  ),
-                                ),
-                                child: Stack(
-                                  children: [
-                                    Positioned.fill(
-                                      child: _driverOrderRoutePreview(order,
-                                          dark: true),
-                                    ),
-                                    Positioned(
-                                      left: 16,
-                                      top: 16,
-                                      child: _offerBadge(
-                                        icon: orderTypeIcon,
-                                        label: orderTypeLabel,
-                                      ),
-                                    ),
-                                    Positioned(
-                                      right: 16,
-                                      top: 16,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 8,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white.withValues(
-                                            alpha: 0.12,
-                                          ),
-                                          borderRadius: BorderRadius.circular(
-                                            18,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          '$secondsLeft сек',
-                                          style: TextStyle(
-                                            color: secondsLeft <= 10
-                                                ? Colors.redAccent
-                                                : Colors.white,
-                                            fontWeight: FontWeight.w900,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    Positioned(
-                                      left: 16,
-                                      bottom: 16,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 14,
-                                          vertical: 10,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius: BorderRadius.circular(
-                                            18,
-                                          ),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: AppTheme.primaryColor
-                                                  .withValues(alpha: 0.24),
-                                              blurRadius: 18,
-                                              offset: const Offset(0, 8),
-                                            ),
-                                          ],
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              requiresPriceOffer
-                                                  ? Icons.gavel_rounded
-                                                  : Icons.payments_rounded,
-                                              color: AppTheme.primaryColor,
-                                              size: 18,
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Text(
-                                              priceLabel,
-                                              style: TextStyle(
-                                                color: isAuction
-                                                    ? AppTheme.primaryColor
-                                                    : Colors.black,
-                                                fontWeight: FontWeight.w900,
-                                                fontSize: requiresPriceOffer
-                                                    ? 13
-                                                    : 18,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                    const Positioned(
-                                      right: 24,
-                                      bottom: 18,
-                                      child: Icon(
-                                        Icons.directions_car_filled_rounded,
-                                        color: Colors.white,
-                                        size: 38,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                        child: SingleChildScrollView(
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [
+                                  Color(0xFF1B0D33),
+                                  Color(0xFF0B0817),
+                                  Color(0xFF120B24),
+                                ],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
                               ),
-                              const SizedBox(height: 14),
-                              Row(
+                              borderRadius: BorderRadius.circular(28),
+                              border: Border.all(
+                                color: (secondsLeft <= 10
+                                        ? Colors.redAccent
+                                        : AppTheme.secondaryColor)
+                                    .withValues(alpha: 0.28),
+                              ),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Color(0x77000000),
+                                  blurRadius: 26,
+                                  offset: Offset(0, 14),
+                                ),
+                              ],
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(18),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                  Container(
+                                    height: 166,
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(24),
+                                      gradient: RadialGradient(
+                                        center: const Alignment(0.1, -0.1),
+                                        radius: 1.1,
+                                        colors: [
+                                          AppTheme.primaryColor.withValues(
+                                            alpha: 0.40,
+                                          ),
+                                          const Color(0xFF120B24),
+                                          const Color(0xFF07050F),
+                                        ],
+                                      ),
+                                    ),
+                                    child: Stack(
                                       children: [
-                                        Text(
-                                          orderTypeLabel,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w900,
-                                            fontSize: 22,
-                                            height: 1.05,
-                                            letterSpacing: 0,
+                                        Positioned.fill(
+                                          child: _driverOrderRoutePreview(order,
+                                              dark: true),
+                                        ),
+                                        Positioned(
+                                          left: 16,
+                                          top: 16,
+                                          child: _offerBadge(
+                                            icon: orderTypeIcon,
+                                            label: orderTypeLabel,
                                           ),
                                         ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          requiresPriceOffer
-                                              ? 'Предложите свою цену пассажиру'
-                                              : 'Пассажир ждёт принятия заказа',
-                                          style: const TextStyle(
-                                            color: Colors.white60,
-                                            fontWeight: FontWeight.w600,
+                                        Positioned(
+                                          right: 16,
+                                          top: 16,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 8,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white.withValues(
+                                                alpha: 0.12,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                18,
+                                              ),
+                                            ),
+                                            child: Text(
+                                              '$secondsLeft сек',
+                                              style: TextStyle(
+                                                color: secondsLeft <= 10
+                                                    ? Colors.redAccent
+                                                    : Colors.white,
+                                                fontWeight: FontWeight.w900,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        Positioned(
+                                          left: 16,
+                                          bottom: 16,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 14,
+                                              vertical: 10,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white,
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                18,
+                                              ),
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: AppTheme.primaryColor
+                                                      .withValues(alpha: 0.24),
+                                                  blurRadius: 18,
+                                                  offset: const Offset(0, 8),
+                                                ),
+                                              ],
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  requiresPriceOffer
+                                                      ? Icons.gavel_rounded
+                                                      : Icons.payments_rounded,
+                                                  color: AppTheme.primaryColor,
+                                                  size: 18,
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  priceLabel,
+                                                  style: TextStyle(
+                                                    color: isAuction
+                                                        ? AppTheme.primaryColor
+                                                        : Colors.black,
+                                                    fontWeight: FontWeight.w900,
+                                                    fontSize: requiresPriceOffer
+                                                        ? 13
+                                                        : 18,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                        const Positioned(
+                                          right: 24,
+                                          bottom: 18,
+                                          child: Icon(
+                                            Icons.directions_car_filled_rounded,
+                                            color: Colors.white,
+                                            size: 38,
                                           ),
                                         ),
                                       ],
                                     ),
                                   ),
-                                  const SizedBox(width: 12),
+                                  const SizedBox(height: 14),
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              orderTypeLabel,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w900,
+                                                fontSize: 22,
+                                                height: 1.05,
+                                                letterSpacing: 0,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              requiresPriceOffer
+                                                  ? 'Предложите свою цену пассажиру'
+                                                  : 'Пассажир ждёт принятия заказа',
+                                              style: const TextStyle(
+                                                color: Colors.white60,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 9,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(18),
+                                        ),
+                                        child: Text(
+                                          priceLabel,
+                                          style: TextStyle(
+                                            color: AppTheme.primaryColor,
+                                            fontWeight: FontWeight.w900,
+                                            fontSize:
+                                                requiresPriceOffer ? 12 : 18,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 14),
                                   Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 9,
-                                    ),
+                                    padding: const EdgeInsets.all(14),
                                     decoration: BoxDecoration(
-                                      color: Colors.white,
+                                      color:
+                                          Colors.white.withValues(alpha: 0.04),
                                       borderRadius: BorderRadius.circular(18),
-                                    ),
-                                    child: Text(
-                                      priceLabel,
-                                      style: TextStyle(
-                                        color: AppTheme.primaryColor,
-                                        fontWeight: FontWeight.w900,
-                                        fontSize: requiresPriceOffer ? 12 : 18,
+                                      border: Border.all(
+                                        color: Colors.white
+                                            .withValues(alpha: 0.08),
                                       ),
                                     ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 14),
-                              Container(
-                                padding: const EdgeInsets.all(14),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.04),
-                                  borderRadius: BorderRadius.circular(18),
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: 0.08),
-                                  ),
-                                ),
-                                child: Column(
-                                  children: [
-                                    Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                    child: Column(
                                       children: [
-                                        Column(
+                                        Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Column(
+                                              children: [
+                                                Container(
+                                                  width: 10,
+                                                  height: 10,
+                                                  decoration:
+                                                      const BoxDecoration(
+                                                    color:
+                                                        AppTheme.primaryColor,
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                ),
+                                                Container(
+                                                  width: 2,
+                                                  height: 32,
+                                                  color: AppTheme.primaryColor
+                                                      .withValues(alpha: 0.45),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Expanded(
+                                              child: _routeText(
+                                                title: 'Откуда',
+                                                address: fromAddress,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
                                           children: [
                                             Container(
                                               width: 10,
                                               height: 10,
+                                              margin:
+                                                  const EdgeInsets.only(top: 4),
                                               decoration: const BoxDecoration(
-                                                color: AppTheme.primaryColor,
+                                                color: AppTheme.secondaryColor,
                                                 shape: BoxShape.circle,
                                               ),
                                             ),
-                                            Container(
-                                              width: 2,
-                                              height: 32,
-                                              color: AppTheme.primaryColor
-                                                  .withValues(alpha: 0.45),
+                                            const SizedBox(width: 10),
+                                            Expanded(
+                                              child: _routeText(
+                                                title: 'Куда',
+                                                address: toAddress,
+                                              ),
                                             ),
                                           ],
                                         ),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          child: _routeText(
-                                            title: 'Откуда',
-                                            address: fromAddress,
-                                          ),
-                                        ),
                                       ],
                                     ),
-                                    Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Container(
-                                          width: 10,
-                                          height: 10,
-                                          margin: const EdgeInsets.only(top: 4),
-                                          decoration: const BoxDecoration(
-                                            color: AppTheme.secondaryColor,
-                                            shape: BoxShape.circle,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          child: _routeText(
-                                            title: 'Куда',
-                                            address: toAddress,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  if ((order['paymentMethod'] ?? '')
-                                      .toString()
-                                      .isNotEmpty)
-                                    _offerInfoChip(
-                                      icon: Icons.credit_card_rounded,
-                                      label: 'Оплата: $paymentLabel',
-                                    ),
-                                  if ((order['vehicleClass'] ?? '')
-                                      .toString()
-                                      .isNotEmpty)
-                                    _offerInfoChip(
-                                      icon: Icons.event_seat_rounded,
-                                      label: 'Класс: $vehicleLabel',
-                                    ),
-                                  if (order['distanceKm'] is num)
-                                    _offerInfoChip(
-                                      icon: Icons.near_me_rounded,
-                                      label:
-                                          'До подачи: ${((order['distanceKm'] as num).toDouble()).toStringAsFixed(1)} км',
-                                    ),
-                                  if ((order['comment'] ?? '')
-                                      .toString()
-                                      .trim()
-                                      .isNotEmpty)
-                                    _offerInfoChip(
-                                      icon: Icons.chat_bubble_outline_rounded,
-                                      label: 'Комментарий: ${order['comment']}',
-                                    ),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              if (requiresPriceOffer) ...[
-                                if (suggestedOfferPrices.isNotEmpty) ...[
-                                  _auctionPriceSuggestions(
-                                    prices: suggestedOfferPrices,
-                                    controller: auctionPriceController,
-                                    setDialogState: setDialogState,
                                   ),
                                   const SizedBox(height: 12),
-                                ],
-                                TextField(
-                                  controller: auctionPriceController,
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                    decimal: false,
-                                  ),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 18,
-                                  ),
-                                  decoration: InputDecoration(
-                                    labelText: 'Ваша цена',
-                                    suffixText: rideCurrencySymbol(order),
-                                    labelStyle: const TextStyle(
-                                      color: Colors.white70,
-                                    ),
-                                    suffixStyle: const TextStyle(
-                                      color: Colors.white70,
-                                    ),
-                                    filled: true,
-                                    fillColor: Colors.white.withValues(
-                                      alpha: 0.07,
-                                    ),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(18),
-                                      borderSide: BorderSide(
-                                        color: Colors.white.withValues(
-                                          alpha: 0.12,
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      if ((order['paymentMethod'] ?? '')
+                                          .toString()
+                                          .isNotEmpty)
+                                        _offerInfoChip(
+                                          icon: Icons.credit_card_rounded,
+                                          label: 'Оплата: $paymentLabel',
                                         ),
-                                      ),
-                                    ),
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(18),
-                                      borderSide: BorderSide(
-                                        color: Colors.white.withValues(
-                                          alpha: 0.12,
+                                      if ((order['vehicleClass'] ?? '')
+                                          .toString()
+                                          .isNotEmpty)
+                                        _offerInfoChip(
+                                          icon: Icons.event_seat_rounded,
+                                          label: 'Класс: $vehicleLabel',
                                         ),
-                                      ),
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(18),
-                                      borderSide: const BorderSide(
-                                        color: AppTheme.primaryColor,
-                                        width: 1.4,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                              ],
-                              Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.06),
-                                  borderRadius: BorderRadius.circular(18),
-                                  border: Border.all(
-                                    color: (secondsLeft <= 10
-                                            ? Colors.redAccent
-                                            : AppTheme.primaryColor)
-                                        .withValues(alpha: 0.20),
-                                  ),
-                                ),
-                                child: Column(
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Icon(
-                                          Icons.timer_outlined,
-                                          color: secondsLeft <= 10
-                                              ? Colors.redAccent
-                                              : Colors.white70,
-                                          size: 17,
+                                      if (order['distanceKm'] is num)
+                                        _offerInfoChip(
+                                          icon: Icons.near_me_rounded,
+                                          label:
+                                              'До подачи: ${((order['distanceKm'] as num).toDouble()).toStringAsFixed(1)} км',
                                         ),
-                                        const SizedBox(width: 7),
-                                        Expanded(
-                                          child: Text(
-                                            secondsLeft <= 10
-                                                ? 'Автопропуск через несколько секунд'
-                                                : 'Время на решение',
-                                            style: TextStyle(
-                                              color: secondsLeft <= 10
-                                                  ? Colors.redAccent
-                                                  : Colors.white70,
-                                              fontWeight: FontWeight.w800,
-                                              fontSize: 12,
+                                      if ((order['comment'] ?? '')
+                                          .toString()
+                                          .trim()
+                                          .isNotEmpty)
+                                        _offerInfoChip(
+                                          icon:
+                                              Icons.chat_bubble_outline_rounded,
+                                          label:
+                                              'Комментарий: ${order['comment']}',
+                                        ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  if (requiresPriceOffer) ...[
+                                    if (suggestedOfferPrices.isNotEmpty) ...[
+                                      _auctionPriceSuggestions(
+                                        prices: suggestedOfferPrices,
+                                        controller: auctionPriceController,
+                                        setDialogState: setDialogState,
+                                      ),
+                                      const SizedBox(height: 12),
+                                    ],
+                                    TextField(
+                                      controller: auctionPriceController,
+                                      keyboardType:
+                                          const TextInputType.numberWithOptions(
+                                        decimal: false,
+                                      ),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 18,
+                                      ),
+                                      decoration: InputDecoration(
+                                        labelText: 'Ваша цена',
+                                        suffixText: rideCurrencySymbol(order),
+                                        labelStyle: const TextStyle(
+                                          color: Colors.white70,
+                                        ),
+                                        suffixStyle: const TextStyle(
+                                          color: Colors.white70,
+                                        ),
+                                        filled: true,
+                                        fillColor: Colors.white.withValues(
+                                          alpha: 0.07,
+                                        ),
+                                        border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(18),
+                                          borderSide: BorderSide(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.12,
                                             ),
                                           ),
                                         ),
-                                        Text(
-                                          '$secondsLeft сек',
-                                          style: TextStyle(
-                                            color: secondsLeft <= 10
+                                        enabledBorder: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(18),
+                                          borderSide: BorderSide(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.12,
+                                            ),
+                                          ),
+                                        ),
+                                        focusedBorder: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(18),
+                                          borderSide: const BorderSide(
+                                            color: AppTheme.primaryColor,
+                                            width: 1.4,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                  ],
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color:
+                                          Colors.white.withValues(alpha: 0.06),
+                                      borderRadius: BorderRadius.circular(18),
+                                      border: Border.all(
+                                        color: (secondsLeft <= 10
                                                 ? Colors.redAccent
-                                                : Colors.white,
-                                            fontWeight: FontWeight.w900,
-                                            fontSize: 12,
+                                                : AppTheme.primaryColor)
+                                            .withValues(alpha: 0.20),
+                                      ),
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              Icons.timer_outlined,
+                                              color: secondsLeft <= 10
+                                                  ? Colors.redAccent
+                                                  : Colors.white70,
+                                              size: 17,
+                                            ),
+                                            const SizedBox(width: 7),
+                                            Expanded(
+                                              child: Text(
+                                                secondsLeft <= 10
+                                                    ? 'Автопропуск через несколько секунд'
+                                                    : 'Время на решение',
+                                                style: TextStyle(
+                                                  color: secondsLeft <= 10
+                                                      ? Colors.redAccent
+                                                      : Colors.white70,
+                                                  fontWeight: FontWeight.w800,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ),
+                                            Text(
+                                              '$secondsLeft сек',
+                                              style: TextStyle(
+                                                color: secondsLeft <= 10
+                                                    ? Colors.redAccent
+                                                    : Colors.white,
+                                                fontWeight: FontWeight.w900,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        ClipRRect(
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                          child: LinearProgressIndicator(
+                                            minHeight: 6,
+                                            value:
+                                                (secondsLeft.clamp(0, 30)) / 30,
+                                            backgroundColor: Colors.white
+                                                .withValues(alpha: 0.08),
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                              secondsLeft <= 10
+                                                  ? Colors.redAccent
+                                                  : AppTheme.primaryColor,
+                                            ),
                                           ),
                                         ),
                                       ],
                                     ),
-                                    const SizedBox(height: 8),
-                                    ClipRRect(
-                                      borderRadius: BorderRadius.circular(999),
-                                      child: LinearProgressIndicator(
-                                        minHeight: 6,
-                                        value: (secondsLeft.clamp(0, 30)) / 30,
-                                        backgroundColor: Colors.white
-                                            .withValues(alpha: 0.08),
-                                        valueColor:
-                                            AlwaysStoppedAnimation<Color>(
-                                          secondsLeft <= 10
-                                              ? Colors.redAccent
-                                              : AppTheme.primaryColor,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: _dialogActionButton(
+                                          label: 'Отклонить',
+                                          onPressed: () async {
+                                            if (completed) return;
+                                            completed = true;
+                                            _stopOfferAlarmIfMatches(orderId);
+                                            if (Navigator.of(ctx).canPop()) {
+                                              Navigator.of(ctx).pop();
+                                            }
+                                            if (isIntercityRequest) {
+                                              _declinedNextOfferIds
+                                                  .add(orderId);
+                                              if (mounted) {
+                                                setState(() {
+                                                  _nearby.removeWhere(
+                                                    (o) =>
+                                                        (o['id'] ?? '')
+                                                            .toString() ==
+                                                        orderId,
+                                                  );
+                                                  _message = 'Заявка скрыта.';
+                                                });
+                                              }
+                                            } else {
+                                              await _rejectNearby(orderId);
+                                            }
+                                          },
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: _dialogActionButton(
-                                      label: 'Отклонить',
-                                      onPressed: () async {
-                                        if (completed) return;
-                                        completed = true;
-                                        ticker?.cancel();
-                                        _stopOfferAlarmIfMatches(orderId);
-                                        if (Navigator.of(ctx).canPop()) {
-                                          Navigator.of(ctx).pop();
-                                        }
-                                        if (isIntercityRequest) {
-                                          _declinedNextOfferIds.add(orderId);
-                                          if (mounted) {
-                                            setState(() {
-                                              _nearby.removeWhere(
-                                                (o) =>
-                                                    (o['id'] ?? '')
-                                                        .toString() ==
-                                                    orderId,
-                                              );
-                                              _message = 'Заявка скрыта.';
-                                            });
-                                          }
-                                        } else {
-                                          await _rejectNearby(orderId);
-                                        }
-                                      },
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: _dialogActionButton(
-                                      label: requiresPriceOffer
-                                          ? 'Откликнуться'
-                                          : 'Принять',
-                                      filled: true,
-                                      onPressed: () async {
-                                        if (requiresPriceOffer) {
-                                          final price = double.tryParse(
-                                                auctionPriceController.text
-                                                    .replaceAll(',', '.'),
-                                              ) ??
-                                              0;
-                                          if (price <= 0) {
-                                            setDialogState(() {});
-                                            if (mounted) {
-                                              setState(
-                                                () => _message =
-                                                    'Укажите цену предложения.',
-                                              );
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: _dialogActionButton(
+                                          label: requiresPriceOffer
+                                              ? 'Откликнуться'
+                                              : 'Принять',
+                                          filled: true,
+                                          onPressed: () async {
+                                            if (requiresPriceOffer) {
+                                              final price = double.tryParse(
+                                                    auctionPriceController.text
+                                                        .replaceAll(',', '.'),
+                                                  ) ??
+                                                  0;
+                                              if (price <= 0) {
+                                                setDialogState(() {});
+                                                if (mounted) {
+                                                  setState(
+                                                    () => _message =
+                                                        'Укажите цену предложения.',
+                                                  );
+                                                }
+                                                return;
+                                              }
                                             }
-                                            return;
-                                          }
-                                        }
-                                        if (completed) return;
-                                        completed = true;
-                                        ticker?.cancel();
-                                        _stopOfferAlarmIfMatches(orderId);
-                                        if (Navigator.of(ctx).canPop()) {
-                                          Navigator.of(ctx).pop();
-                                        }
-                                        if (isAuction) {
-                                          await _sendAuctionOffer(
-                                            orderId,
-                                            auctionPriceController.text,
-                                          );
-                                        } else if (isIntercityRequest) {
-                                          await _sendIntercityOffer(
-                                            orderId,
-                                            auctionPriceController.text,
-                                          );
-                                        } else {
-                                          await _accept(orderId);
-                                        }
-                                      },
-                                    ),
+                                            if (completed) return;
+                                            completed = true;
+                                            _stopOfferAlarmIfMatches(orderId);
+                                            if (Navigator.of(ctx).canPop()) {
+                                              Navigator.of(ctx).pop();
+                                            }
+                                            if (isAuction) {
+                                              await _sendAuctionOffer(
+                                                orderId,
+                                                auctionPriceController.text,
+                                              );
+                                            } else if (isIntercityRequest) {
+                                              await _sendIntercityOffer(
+                                                orderId,
+                                                auctionPriceController.text,
+                                              );
+                                            } else {
+                                              await _accept(orderId);
+                                            }
+                                          },
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ],
                               ),
-                            ],
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ),
-            );
+                ));
           },
         );
       },
     );
-    ticker?.cancel();
     auctionPriceController.dispose();
     _offerDialogOpen = false;
     _stopOfferAlarmIfMatches(orderId);
@@ -1974,7 +2017,53 @@ class _DriverHomePageState extends State<DriverHomePage>
         requestType == 'INTERCITY';
   }
 
+  void _applyDriverPosition(Position position) {
+    if (!mounted || position.accuracy > 100) return;
+    final previous = _lastGpsPoint;
+    final point = LatLng(position.latitude, position.longitude);
+    _lastGpsPoint = point;
+    var heading = _driverHeading;
+    if (position.speed > 1 &&
+        position.heading.isFinite &&
+        position.heading >= 0) {
+      heading = position.heading % 360;
+    } else if (previous != null &&
+        const Distance().as(LengthUnit.Meter, previous, point) > 5) {
+      heading = const Distance().bearing(previous, point);
+      heading = (heading + 360) % 360;
+    }
+    setState(() {
+      _latCtrl.text = position.latitude.toStringAsFixed(6);
+      _lngCtrl.text = position.longitude.toStringAsFixed(6);
+      _driverHeading = heading;
+    });
+    _updateNavigationProgress();
+  }
+
+  Future<void> _startPositionStream() async {
+    await _positionStream?.cancel();
+    _positionStream = null;
+    try {
+      final permission = await Geolocator.checkPermission();
+      if (!mounted ||
+          !_isOnline ||
+          permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return;
+      }
+      _positionStream = Geolocator.getPositionStream(
+              locationSettings: const LocationSettings(
+                  accuracy: LocationAccuracy.high, distanceFilter: 2))
+          .listen(_applyDriverPosition, onError: (Object _) {
+        // The existing periodic GPS update remains available as a fallback.
+      });
+    } catch (_) {
+      // Periodic location updates remain available if GPS streaming fails.
+    }
+  }
+
   void _startLocationUpdates() {
+    unawaited(_startPositionStream());
     _locationTimer?.cancel();
     _locationTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (!_isOnline) return;
@@ -2494,206 +2583,22 @@ class _DriverHomePageState extends State<DriverHomePage>
   Widget _activeOrderMap() {
     final order = _activeOrder;
     if (order == null) return const SizedBox.shrink();
-    final from = _orderPoint(order['fromLat'], order['fromLng']);
-    final to = _orderPoint(order['toLat'], order['toLng']);
-    final driver = _activeDriverPoint();
-    final routePoints = _activeRoutePolyline;
-    final center = _routeCenter(routePoints) ??
-        from ??
-        driver ??
-        to ??
-        const LatLng(43.2220, 76.8512);
-    final status = (order['status'] ?? '').toString().toUpperCase();
-
-    return SizedBox(
-      height: 260,
-      child: ClipRRect(
+    final pickup = _orderPoint(order['fromLat'], order['fromLng']);
+    final destination = _orderPoint(order['toLat'], order['toLng']);
+    final target = order['status'] == 'IN_PROGRESS' ? destination : pickup;
+    final start = _activeDriverPoint() ?? pickup;
+    if (start == null || target == null) {
+      return const Center(child: Text('Координаты маршрута уточняются'));
+    }
+    return ClipRRect(
         borderRadius: BorderRadius.circular(18),
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: FlutterMap(
-                key: ValueKey(
-                  'active-order-map-${order['id']}-$status-${routePoints.length}',
-                ),
-                options: MapOptions(
-                  initialCenter: center,
-                  initialZoom: _activeMapZoom(routePoints),
-                  initialCameraFit: routePoints.length < 2
-                      ? null
-                      : CameraFit.bounds(
-                          bounds: LatLngBounds.fromPoints(routePoints),
-                          padding: const EdgeInsets.all(36),
-                          maxZoom: 16.5,
-                        ),
-                  minZoom: 3,
-                  maxZoom: 19,
-                  interactionOptions: const InteractionOptions(
-                    flags: InteractiveFlag.drag |
-                        InteractiveFlag.pinchZoom |
-                        InteractiveFlag.doubleTapZoom |
-                        InteractiveFlag.scrollWheelZoom,
-                  ),
-                ),
-                children: [
-                  TileLayer(
-                    urlTemplate: AppConstants.osmTileUrl,
-                    subdomains: AppConstants.mapTileSubdomains,
-                    userAgentPackageName: 'com.milanium.intercity',
-                    retinaMode: true,
-                  ),
-                  const MapDataAttribution(),
-                  if (routePoints.length >= 2)
-                    PolylineLayer(
-                      polylines: [
-                        Polyline(
-                          points: routePoints,
-                          strokeWidth: 7,
-                          color: AppTheme.primaryColor.withValues(alpha: 0.22),
-                        ),
-                        Polyline(
-                          points: routePoints,
-                          strokeWidth: 4,
-                          color:
-                              status == 'IN_PROGRESS' || status == 'COMPLETED'
-                                  ? AppTheme.primaryColor
-                                  : Colors.orange,
-                        ),
-                      ],
-                    ),
-                  MarkerLayer(
-                    markers: [
-                      if (from != null)
-                        Marker(
-                          point: from,
-                          width: 44,
-                          height: 44,
-                          child: _driverMapPin(
-                            Icons.radio_button_checked_rounded,
-                            Colors.green,
-                          ),
-                        ),
-                      if (to != null)
-                        Marker(
-                          point: to,
-                          width: 48,
-                          height: 48,
-                          child: _driverMapPin(
-                            Icons.location_on_rounded,
-                            Colors.redAccent,
-                          ),
-                        ),
-                      if (driver != null)
-                        Marker(
-                          point: driver,
-                          width: 58,
-                          height: 58,
-                          child: _driverMapCarMarker(size: 48),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            Positioned.fill(
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).brightness == Brightness.dark
-                        ? const Color(0xFF080812).withValues(alpha: 0.18)
-                        : Colors.white.withValues(alpha: 0.04),
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              left: 12,
-              right: 12,
-              bottom: 12,
-              child: _mapStatusPill(
-                status == 'IN_PROGRESS'
-                    ? 'Маршрут до точки назначения'
-                    : 'Маршрут до пассажира',
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  LatLng? _routeCenter(List<LatLng> points) {
-    if (points.isEmpty) return null;
-    var lat = 0.0;
-    var lng = 0.0;
-    for (final point in points) {
-      lat += point.latitude;
-      lng += point.longitude;
-    }
-    return LatLng(lat / points.length, lng / points.length);
-  }
-
-  double _activeMapZoom(List<LatLng> points) {
-    if (points.length < 2) return 16.5;
-    var minLat = points.first.latitude;
-    var maxLat = points.first.latitude;
-    var minLng = points.first.longitude;
-    var maxLng = points.first.longitude;
-    for (final point in points.skip(1)) {
-      minLat = math.min(minLat, point.latitude);
-      maxLat = math.max(maxLat, point.latitude);
-      minLng = math.min(minLng, point.longitude);
-      maxLng = math.max(maxLng, point.longitude);
-    }
-    final span = math.max(maxLat - minLat, maxLng - minLng).abs();
-    if (span < 0.01) return 16.5;
-    if (span < 0.04) return 14.5;
-    if (span < 0.12) return 12.5;
-    if (span < 0.40) return 10.5;
-    return 8.5;
-  }
-
-  Widget _mapStatusPill(String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF120C22).withValues(alpha: 0.88),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-      ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.alt_route_rounded,
-            color: AppTheme.secondaryColor,
-            size: 18,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-          if (_activeRoutePolyline.isEmpty)
-            const Text(
-              'маршрут уточняется',
-              style: TextStyle(
-                color: Colors.white54,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _driverMapPin(IconData icon, Color color) {
-    return Icon(icon, color: color, size: 34);
+        child: DriverNavigationMap(
+            key: ValueKey('driver-navigation-${order['id']}'),
+            driver: _activeDriverPoint(),
+            target: target,
+            routeStart: start,
+            heading: _driverHeading,
+            route: _activeRoutePolyline));
   }
 
   Widget _driverMapCarMarker({double size = 48}) {
@@ -3350,115 +3255,11 @@ class _DriverHomePageState extends State<DriverHomePage>
           const SizedBox(height: 12),
         ],
         _idleDriverMap(),
-        if (_nearby.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          _availableOrdersBoardCard(),
-        ],
         if (_message.isNotEmpty) ...[
           const SizedBox(height: 12),
           _infoBanner(_message),
         ],
       ],
-    );
-  }
-
-  Widget _availableOrdersBoardCard() {
-    final theme = Theme.of(context);
-    return _luxCard(
-      borderColor: AppTheme.primaryColor.withValues(alpha: 0.18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                'Доступные заказы',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const Spacer(),
-              const Icon(
-                Icons.tune_rounded,
-                color: AppTheme.primaryColor,
-                size: 20,
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ..._nearby.take(3).map((raw) {
-            final order = Map<String, dynamic>.from(raw as Map);
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: _availableOrderRow(order),
-            );
-          }),
-        ],
-      ),
-    );
-  }
-
-  Widget _availableOrderRow(Map<String, dynamic> order) {
-    final theme = Theme.of(context);
-    final from = (order['fromAddress'] ?? 'Откуда').toString();
-    final to = (order['toAddress'] ?? 'Куда').toString();
-    final price = _formatDriverMoney(order['price']);
-    final distance = (order['distanceKm'] as num?)?.toStringAsFixed(0) ?? '-';
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.brightness == Brightness.dark
-            ? Colors.white.withValues(alpha: 0.04)
-            : const Color(0xFFF8F6FF),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppTheme.primaryColor.withValues(alpha: 0.12),
-        ),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.circle, color: AppTheme.primaryColor, size: 10),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$from → $to',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: theme.colorScheme.onSurface,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  'Сегодня • $distance км • Комфорт+',
-                  style: TextStyle(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            '$price ${rideCurrencySymbol(order)}',
-            style: const TextStyle(
-              color: AppTheme.primaryColor,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Icon(
-            Icons.chevron_right_rounded,
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-        ],
-      ),
     );
   }
 
@@ -3861,7 +3662,6 @@ class _DriverHomePageState extends State<DriverHomePage>
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final bg = isDark ? AppTheme.darkBackground : AppTheme.lightBackground;
-    final card = isDark ? const Color(0xFF111426) : Colors.white;
     final text = isDark ? Colors.white : const Color(0xFF15162C);
     final muted = isDark ? Colors.white60 : const Color(0xFF77768A);
     final online = _driverProfile?['online'];
@@ -3871,7 +3671,6 @@ class _DriverHomePageState extends State<DriverHomePage>
         '${formatWalletAmount(_driverWallet?[rubles ? 'moneyRub' : 'money'])} ${rubles ? '₽' : '₸'}';
     final todayCompleted =
         int.tryParse((_driverProfileValue('todayCompletedOrders') ?? '0')) ?? 0;
-    final orders = _nearby;
 
     return Scaffold(
       backgroundColor: bg,
@@ -3931,220 +3730,14 @@ class _DriverHomePageState extends State<DriverHomePage>
                 onBalance: () => context.push('/driver/wallet'),
               ),
               const SizedBox(height: 12),
+              if (_message.isNotEmpty) _boardMessageBanner(),
               Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(18),
-                  child: Stack(
-                    children: [
-                      Positioned.fill(child: _boardDriverSoftMap(isDark)),
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: Container(
-                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-                          decoration: BoxDecoration(
-                            color: card.withValues(alpha: isDark ? 0.92 : 0.96),
-                            borderRadius: const BorderRadius.vertical(
-                              top: Radius.circular(18),
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Доступные заказы',
-                                style: TextStyle(
-                                  color: text,
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              if (orders.isEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 8,
-                                  ),
-                                  child: Text(
-                                    _isOnline
-                                        ? 'Сейчас нет доступных заказов'
-                                        : 'Включите онлайн, чтобы получать реальные заказы',
-                                    style: TextStyle(
-                                      color: muted,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                )
-                              else
-                                ...orders.take(3).map((raw) {
-                                  final order = Map<String, dynamic>.from(
-                                    raw as Map,
-                                  );
-                                  return _boardDriverHomeOrderFromMap(
-                                    order,
-                                    text,
-                                    muted,
-                                    isDark,
-                                  );
-                                }),
-                              if (_message.isNotEmpty) ...[
-                                const SizedBox(height: 2),
-                                Text(
-                                  _message,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: muted,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+                  child: ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: _boardDriverSoftMap(isDark),
+              )),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _boardDriverHomeOrderFromMap(
-    Map<String, dynamic> order,
-    Color text,
-    Color muted,
-    bool isDark,
-  ) {
-    final from = (order['fromAddress'] ?? 'Точка подачи').toString();
-    final to = (order['toAddress'] ?? 'Точка назначения').toString();
-    final type = (order['requestType'] ?? '').toString();
-    final price = _formatDriverMoney(order['price']);
-    final distance = (order['distanceKm'] as num?)?.toStringAsFixed(0);
-    final orderId = (order['id'] ?? '').toString();
-    final isAuction = type == requestTypeCityAuction;
-    final isBoardFallback = orderId.startsWith('order-');
-    return _boardDriverHomeOrder(
-      '$from → $to',
-      distance == null ? 'Сегодня' : 'Сегодня • $distance км',
-      isAuction ? 'Бизнес' : 'Комфорт+',
-      '$price ${rideCurrencySymbol(order)}',
-      text,
-      muted,
-      isDark,
-      onTap: () {
-        if (isBoardFallback) {
-          _goDriverBoard(isAuction ? 'auction' : 'fixed');
-          return;
-        }
-        isAuction ? _goDriverBoard('auction') : _accept(orderId);
-      },
-    );
-  }
-
-  Widget _boardDriverHomeOrder(
-    String title,
-    String time,
-    String klass,
-    String price,
-    Color text,
-    Color muted,
-    bool isDark, {
-    VoidCallback? onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
-        decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF15182B) : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isDark
-                ? Colors.white.withValues(alpha: 0.08)
-                : const Color(0xFFE8E3F6),
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 9,
-              height: 9,
-              decoration: const BoxDecoration(
-                color: AppTheme.primaryColor,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 13,
-                    ),
-                  ),
-                  const SizedBox(height: 5),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          time,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: muted, fontSize: 11),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          klass,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: muted, fontSize: 11),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            SizedBox(
-              width: 68,
-              child: Text(
-                price,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                  color: AppTheme.primaryColor,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 13,
-                ),
-              ),
-            ),
-            const Icon(
-              Icons.chevron_right_rounded,
-              color: AppTheme.primaryColor,
-              size: 20,
-            ),
-          ],
         ),
       ),
     );
@@ -5405,6 +4998,15 @@ class _DriverHomePageState extends State<DriverHomePage>
       return Center(
           child: Text('Координаты маршрута уточняются',
               style: TextStyle(color: dark ? Colors.white70 : Colors.black54)));
+    }
+    if (active) {
+      return DriverNavigationMap(
+          key: ValueKey('driver-navigation-${order['id']}'),
+          driver: driver,
+          target: to,
+          routeStart: from,
+          heading: _driverHeading,
+          route: _activeRoutePolyline);
     }
     return FlutterMap(
       key: ValueKey('driver-preview-${order['id']}-$from-$to'),

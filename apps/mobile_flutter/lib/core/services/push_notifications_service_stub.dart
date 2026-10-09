@@ -14,6 +14,8 @@ class PushNotificationsService {
 
   Future<void> syncTokenIfAuthorized() async {}
 
+  Future<void> cancelDriverOfferNotification(String orderId) async {}
+
   Future<void> showDriverOfferNotification({
     required String orderId,
     required String fromAddress,
