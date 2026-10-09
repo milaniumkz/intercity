@@ -50,3 +50,11 @@ test('unrated drivers have no confirmed rating score or high-rating priority bon
  assert.equal(high.activityScore,50);
  assert.equal(high.priorityScore,15);
 });
+ test('dispatch sorts priority first, then activity and confirmed rating before distance',()=>{
+ const {compareDriverScores}=require('../dist/src/orders/auto-dispatch.service');
+ const scores=[{driverId:'low-rating',priorityScore:0,activityScore:41,ratingScore:15,distanceScore:50},
+ {driverId:'best',priorityScore:28,activityScore:44,ratingScore:25,distanceScore:0},
+ {driverId:'middle',priorityScore:10,activityScore:41,ratingScore:25,distanceScore:50}];
+ assert.deepEqual(scores.sort(compareDriverScores).map(s=>s.driverId),['best','middle','low-rating']);
+ assert.ok(compareDriverScores({driverId:'a',priorityScore:0,activityScore:44,ratingScore:15,distanceScore:0},{driverId:'b',priorityScore:0,activityScore:41,ratingScore:25,distanceScore:50})<0);
+ });

@@ -19,7 +19,7 @@ test('durable sequential dispatch: rejection, timeout, repeat rounds, restart, e
     online:{create:{isOnline:true,cityId:city.id,lastLat:49.9,lastLng:82.6,lastLocationAt:new Date()}},serviceStats:{create:{activityScore:100}}}});
    drivers.push({id:driver.id,userId:user.id});
   }
-  const makeService=()=>{const s=new AutoDispatchService(p,realtime,push);s.computeScore=async d=>({totalScore:100-drivers.findIndex(x=>x.id===d.driverId)});return s};
+  const makeService=()=>{const s=new AutoDispatchService(p,realtime,push);s.computeScore=async d=>({driverId:d.driverId,totalScore:100,priorityScore:100-drivers.findIndex(x=>x.id===d.driverId),activityScore:50,ratingScore:0,distanceScore:50,randomJitter:0});return s};
   const dispatch=makeService();const driverApi=new DriverService(p,{},realtime,push,dispatch);
   const create=()=>p.order.create({data:{passengerId:passenger.id,cityId:city.id,fromLat:49.9,fromLng:82.6,toLat:49.91,toLng:82.61,fromAddress:'Test start',toAddress:'Test end'}});
   const read=id=>p.order.findUnique({where:{id}});

@@ -356,10 +356,19 @@ class _DriverHomePageState extends State<DriverHomePage>
         } catch (_) {
           // Use the last known/default point if browser GPS is unavailable.
         }
-        final locationSaved = await _updateLocation(silent: true);
-        if (!locationSaved) return;
+        final locationSaved = await _updateLocation(silent: false);
+        if (!locationSaved) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(_message.isEmpty
+                    ? 'Не удалось сохранить местоположение. Вы остались вне линии.'
+                    : _message)));
+          }
+          await _loadDriverProfileState();
+          return;
+        }
       }
-      await ApiClient().post(
+      final onlineResponse = await ApiClient().post(
         '/driver/online',
         data: {
           'isOnline': value,
@@ -367,7 +376,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         },
       );
       setState(() {
-        _isOnline = value;
+        _isOnline = onlineResponse.data is Map &&
+            onlineResponse.data['isOnline'] == true;
         _message = 'Статус онлайн: ${value ? 'включен' : 'выключен'}';
       });
       if (value) {
@@ -377,7 +387,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
     } catch (e) {
       final message = errorMessageRu(e);
-      setState(() => _message = message);
+      if (mounted) {
+        setState(() => _message = message);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+      }
       await _showTopupRequiredDialogIfNeeded(message);
       await _loadDriverProfileState();
     } finally {
@@ -532,7 +546,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     try {
       final oldIds = _nearby
           .whereType<Map>()
-          .map((e) => (e['id'] ?? '').toString())
+          .map((e) => driverOfferIdentity(Map<String, dynamic>.from(e)))
           .where((id) => id.isNotEmpty)
           .toSet();
       final res = await ApiClient().get('/driver/orders/nearby');
@@ -614,7 +628,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     List<Map<String, dynamic>> normalized,
   ) async {
     final currentIds = normalized
-        .map((o) => (o['id'] ?? '').toString())
+        .map(driverOfferIdentity)
         .where((id) => id.isNotEmpty)
         .toSet();
     _notifiedOfferIds.removeWhere((id) => !currentIds.contains(id));
@@ -627,22 +641,23 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     final newOffers = normalized.where((o) {
       final id = (o['id'] ?? '').toString();
-      return id.isNotEmpty && !oldIds.contains(id);
+      return id.isNotEmpty && !oldIds.contains(driverOfferIdentity(o));
     }).toList();
     if (newOffers.isEmpty) return;
     final first = newOffers.first;
     final firstId = (first['id'] ?? '').toString();
     if (firstId.isEmpty) return;
-    if (_notifiedOfferIds.contains(firstId)) return;
-    _notifiedOfferIds.add(firstId);
-    await PushNotificationsService.instance
+    final offerIdentity = driverOfferIdentity(first);
+    if (_notifiedOfferIds.contains(offerIdentity)) return;
+    _notifiedOfferIds.add(offerIdentity);
+    unawaited(PushNotificationsService.instance
         .showDriverOfferNotification(
           orderId: firstId,
           fromAddress: (first['fromAddress'] ?? 'Точка подачи').toString(),
           toAddress: (first['toAddress'] ?? 'Точка назначения').toString(),
           secondsLeft: _offerSecondsLeft(first),
         )
-        .catchError((Object _) {});
+        .catchError((Object _) {}));
     if (_appLifecycleState == AppLifecycleState.resumed) {
       if (_offerDialogOpen) {
         _pendingOfferOrderId = firstId;
@@ -736,7 +751,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final orderId = (order['id'] ?? '').toString();
     if (orderId.isEmpty) return;
     _offerDialogOpen = true;
-    _playNewOfferSoundOnce(orderId);
+    _playNewOfferSoundOnce(driverOfferIdentity(order));
     _startOfferAlarm(orderId);
     var secondsLeft = _offerSecondsLeft(order);
     final typeRaw =
