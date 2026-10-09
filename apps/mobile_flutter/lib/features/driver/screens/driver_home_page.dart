@@ -27,6 +27,7 @@ import '../../shared/widgets/order_chat_sheet.dart';
 import '../utils/driver_offer_utils.dart';
 import '../widgets/driver_bottom_nav.dart';
 import '../widgets/driver_active_trip_view.dart';
+import '../widgets/driver_dashboard_metrics.dart';
 
 const bool kIntercityScreenBoard = bool.fromEnvironment(
   'INTERCITY_SCREEN_PREVIEW',
@@ -93,6 +94,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   int _navStepIndex = 0;
   DateTime? _lastRealtimeRefreshAt;
   bool _initialized = false;
+  Timer? _dashboardMetricsTimer;
 
   bool get _isDriverApproved => isApprovedDriverStatus(_driverStatus);
 
@@ -119,6 +121,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     AppModeManager.rememberDriverMode();
     WidgetsBinding.instance.addObserver(this);
     _boardOfferPriceCtrl.addListener(_refreshBoardOfferPriceSelection);
+    _dashboardMetricsTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted ||
+          _activeOrder != null ||
+          _appLifecycleState != AppLifecycleState.resumed ||
+          ModalRoute.of(context)?.isCurrent == false) {
+        return;
+      }
+      unawaited(_loadDriverProfileState(metricsOnly: true));
+      unawaited(_loadDriverWallet());
+    });
     _notificationTapSub = PushNotificationsService
         .instance.onNotificationPayload
         .listen((payload) async {
@@ -145,6 +157,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _notificationTapSub?.cancel();
+    _dashboardMetricsTimer?.cancel();
     _locationTimer?.cancel();
     _activeOrderPollTimer?.cancel();
     _nearbyPollTimer?.cancel();
@@ -228,10 +241,14 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   bool get _useIntercityBoardUi => true;
 
-  Future<void> _loadDriverProfileState() async {
+  Future<void> _loadDriverProfileState({bool metricsOnly = false}) async {
     try {
       final res = await ApiClient().get('/driver/profile');
       final profile = Map<String, dynamic>.from(res.data as Map);
+      if (metricsOnly) {
+        if (mounted) setState(() => _driverProfile = profile);
+        return;
+      }
       final online = profile['online'] is Map
           ? Map<String, dynamic>.from(profile['online'] as Map)
           : null;
@@ -1696,6 +1713,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             : 'Вы отказались от предложения. Активность: ${activity ?? '-'}';
       });
       _stopOfferAlarmIfMatches(id);
+      await _loadDriverProfileState();
     } catch (e) {
       if (!mounted) return;
       setState(() => _message = errorMessageRu(e));
@@ -3846,10 +3864,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     final card = isDark ? const Color(0xFF111426) : Colors.white;
     final text = isDark ? Colors.white : const Color(0xFF15162C);
     final muted = isDark ? Colors.white60 : const Color(0xFF77768A);
-    final balance = formatWalletAmount(_driverWallet?['money']);
+    final online = _driverProfile?['online'];
+    final city = online is Map ? online['city'] : null;
+    final rubles = city is Map && city['countryCode'] == 'RU';
+    final balance =
+        '${formatWalletAmount(_driverWallet?[rubles ? 'moneyRub' : 'money'])} ${rubles ? '₽' : '₸'}';
     final todayCompleted =
         int.tryParse((_driverProfileValue('todayCompletedOrders') ?? '0')) ?? 0;
-    final todayOrders = '$todayCompleted заказов';
     final orders = _nearby;
 
     return Scaffold(
@@ -3900,32 +3921,14 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ],
               ),
               const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? const Color(0xFF090817)
-                      : const Color(0xFF111020),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: AppTheme.primaryColor.withValues(alpha: 0.18),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _boardDriverStat('Баланс', '$balance ₸', isDark),
-                    ),
-                    Container(width: 1, height: 38, color: Colors.white12),
-                    Expanded(
-                      child: _boardDriverStat('Сегодня', todayOrders, isDark),
-                    ),
-                    const Icon(
-                      Icons.chevron_right_rounded,
-                      color: Colors.white,
-                    ),
-                  ],
-                ),
+              DriverDashboardMetrics(
+                balance: balance,
+                today: todayCompleted,
+                performance: _driverProfile?['performance'] is Map
+                    ? Map<String, dynamic>.from(
+                        _driverProfile!['performance'] as Map)
+                    : null,
+                onBalance: () => context.push('/driver/wallet'),
               ),
               const SizedBox(height: 12),
               Expanded(
@@ -4044,34 +4047,6 @@ class _DriverHomePageState extends State<DriverHomePage>
         }
         isAuction ? _goDriverBoard('auction') : _accept(orderId);
       },
-    );
-  }
-
-  Widget _boardDriverStat(String label, String value, bool isDark) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontWeight: FontWeight.w700,
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w900,
-              fontSize: 18,
-            ),
-          ),
-        ],
-      ),
     );
   }
 

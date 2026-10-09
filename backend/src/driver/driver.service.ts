@@ -1,3 +1,4 @@
+import { driverPerformance, DRIVER_ACTIVITY_RULES } from '../common/driver-performance';
 import { AutoDispatchService } from '../orders/auto-dispatch.service';
 import { currencyForCountry, moneyField } from '../common/currency';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
@@ -281,6 +282,7 @@ export class DriverService {
         ]);
         return {
             ...profile,
+            performance: driverPerformance(profile),
             completedTrips: completedCityTrips + completedIntercityTrips,
             todayCompletedOrders: todayCityTrips + todayIntercityTrips,
         };
@@ -893,7 +895,7 @@ export class DriverService {
         });
         if (!stats) {
             return this.prisma.driverServiceStats.create({
-                data: { driverId, activityScore: 100 },
+                data: { driverId, activityScore: DRIVER_ACTIVITY_RULES.initialScore },
             });
         }
 
@@ -905,7 +907,7 @@ export class DriverService {
             return this.prisma.driverServiceStats.update({
                 where: { driverId },
                 data: {
-                    activityScore: 30,
+                    activityScore: DRIVER_ACTIVITY_RULES.restoredScore,
                     activityBlockedUntil: null,
                 },
             });
@@ -921,10 +923,10 @@ export class DriverService {
             return stats;
         }
 
-        const nextScore = Math.max(0, (stats.activityScore ?? 100) - 3);
+        const nextScore = Math.max(0, (stats.activityScore ?? DRIVER_ACTIVITY_RULES.initialScore) - DRIVER_ACTIVITY_RULES.rejectPenalty);
         const updateData: any = { activityScore: nextScore };
         if (nextScore <= 0) {
-            updateData.activityBlockedUntil = new Date(now.getTime() + 12 * 60 * 60 * 1000);
+            updateData.activityBlockedUntil = new Date(now.getTime() + DRIVER_ACTIVITY_RULES.blockHours * 60 * 60 * 1000);
         }
 
         return this.prisma.driverServiceStats.update({

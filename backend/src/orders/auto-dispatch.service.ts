@@ -1,3 +1,4 @@
+import { driverPriority, DRIVER_ACTIVITY_RULES } from '../common/driver-performance';
 import { moneyField } from '../common/currency';
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
@@ -207,7 +208,7 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
                     ) {
                         const restored = await db.driverServiceStats.update({
                             where: { driverId: onlineDriver.driverId },
-                            data: { activityScore: 30, activityBlockedUntil: null },
+                            data: { activityScore: DRIVER_ACTIVITY_RULES.restoredScore, activityBlockedUntil: null },
                         });
                         activityScore = restored.activityScore;
                         (onlineDriver.driver as any).serviceStats = restored;
@@ -264,7 +265,7 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
         const activityScore = activity * 0.5;
 
         // Priority score calculation
-        const priorityPoints = this.calculatePriorityPoints(driver.driver);
+        const priorityPoints = driverPriority(driver.driver).total;
         const priorityScore = priorityPoints;
 
         // Random jitter: 0-1
@@ -281,42 +282,6 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
             priorityScore,
             randomJitter,
         };
-    }
-
-    private calculatePriorityPoints(driver: any): number {
-        let points = 0;
-
-        // шашка = +5
-        if (driver.priorityFlags?.hasCheckers) {
-            points += 5;
-        }
-
-        // обклейка = +10
-        if (driver.priorityFlags?.hasBranding) {
-            points += 10;
-        }
-
-        // рейтинг >4.9 = +10
-        if (driver.rating?.ratingAvg && driver.rating.ratingAvg > 4.9) {
-            points += 10;
-        }
-
-        // каждый день в сервисе = +2
-        if (driver.serviceStats?.serviceStartAt) {
-            const daysInService = Math.floor(
-                (Date.now() - new Date(driver.serviceStats.serviceStartAt).getTime()) / (1000 * 60 * 60 * 24)
-            );
-            points += daysInService * 2;
-        }
-
-        // партнерская заправка = +2 (если bonusActiveUntil > now)
-        if (driver.fuelBonus?.bonusActiveUntil) {
-            if (new Date(driver.fuelBonus.bonusActiveUntil) > new Date()) {
-                points += 2;
-            }
-        }
-
-        return points;
     }
 
     haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {
