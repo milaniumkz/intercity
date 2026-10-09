@@ -90,10 +90,24 @@ void main() {
               .getTopLeft(find.byKey(ValueKey('driver-metric-$label')))
               .dy)
           .toSet();
-      expect(tops, hasLength(1));
+      expect(tops, hasLength(2));
+      for (final label in [
+        'Баланс',
+        'Сегодня',
+        'Активность',
+        'Рейтинг',
+        'Приоритет'
+      ]) {
+        final rect =
+            tester.getRect(find.byKey(ValueKey('driver-metric-$label')));
+        expect(rect.left, greaterThanOrEqualTo(16));
+        expect(rect.right, lessThanOrEqualTo(304));
+        expect(rect.height, lessThan(75));
+      }
+      expect(find.byType(SingleChildScrollView), findsNothing);
       expect(tester.takeException(), isNull);
       expect(tester.getSize(find.byType(DriverDashboardMetrics)).height,
-          lessThan(230));
+          lessThan(150));
       for (final section in ['Активность', 'Рейтинг', 'Приоритет']) {
         final tile = find.byKey(ValueKey('driver-metric-$section'));
         await tester.ensureVisible(tile);

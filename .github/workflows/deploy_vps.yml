@@ -12,6 +12,10 @@ on:
         description: Git ref to deploy
         required: false
         default: main
+      require_browser_push:
+        description: Require Web Push configuration (disable only for unrelated web updates)
+        type: boolean
+        default: true
 
 concurrency:
   group: intercity-production-vps
@@ -32,10 +36,12 @@ jobs:
       - name: Check browser push configuration
         env:
           INTERCITY_FIREBASE_WEB_VAPID_KEY: ${{ secrets.INTERCITY_FIREBASE_WEB_VAPID_KEY }}
+          REQUIRE_BROWSER_PUSH: ${{ github.event_name != 'workflow_dispatch' || inputs.require_browser_push }}
         run: |
           if [[ -z "$INTERCITY_FIREBASE_WEB_VAPID_KEY" ]]; then
             echo "Missing INTERCITY_FIREBASE_WEB_VAPID_KEY: configure the production environment or repository secret."
-            exit 1
+            if [[ "$REQUIRE_BROWSER_PUSH" != "false" ]]; then exit 1; fi
+            echo "::warning::Publishing an unrelated web update; browser background push remains unconfigured."
           fi
 
       - name: Set up Node
