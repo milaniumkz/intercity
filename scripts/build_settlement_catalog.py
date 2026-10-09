@@ -56,13 +56,13 @@ for cc in ['KZ','RU']:
   nearest=min(candidates,key=lambda x:km(x,c)) if candidates else None
   if nearest and km(nearest,c)<3:
    nearest['aliases']=sorted(set(nearest['aliases']+c['aliases']+[c['name']]))
-   nearest['region']=nearest.get('region') or c.get('region');remember(nearest);return
+   nearest['region']=nearest.get('region') or c.get('region');nearest['population']=max(nearest.get('population',0),c.get('population',0));remember(nearest);return
   catalog.append(c);remember(c)
  features={'PPL','PPLA','PPLA2','PPLA3','PPLA4','PPLC','PPLG'}
  for f in records:
   if f[6]!='P' or f[7] not in features:continue
   if cc=='RU' and int(f[14] or 0)<500 and f[7] not in {'PPLA','PPLA2','PPLC'}:continue
-  aliases=list(filter(None,[f[1],f[2],*f[3].split(',')]));c={'name':names.get(f[0]) or russian(aliases,f[1]),'aliases':sorted(set(aliases)),'countryCode':cc,'region':regions.get(f[10]),'lat':float(f[4]),'lng':float(f[5]),'source':'https://www.geonames.org/'+f[0]}
+  aliases=list(filter(None,[f[1],f[2],*f[3].split(',')]));c={'name':names.get(f[0]) or russian(aliases,f[1]),'aliases':sorted(set(aliases)),'countryCode':cc,'population':int(f[14] or 0),'region':regions.get(f[10]),'lat':float(f[4]),'lng':float(f[5]),'source':'https://www.geonames.org/'+f[0]}
   oldmatch=next((x for a in aliases for x in old.get(norm(a),[]) if km(x,c)<3),None)
   if oldmatch:c['aliases']=sorted(set(c['aliases']+oldmatch['aliases']+[oldmatch['name']]))
   if cc=='KZ' and not inside.covers(Point(c['lng'],c['lat'])):continue
