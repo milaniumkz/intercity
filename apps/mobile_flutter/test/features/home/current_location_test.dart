@@ -13,6 +13,7 @@ import 'package:intercity_mobile/features/home/screens/order_screen.dart';
 class _LocationApi extends ApiClient {
   int reverseCalls = 0;
   bool confirmed = true;
+  bool mapHomeEnabled = false;
   @override
   Future<Response<dynamic>> get(String path,
       {Map<String, dynamic>? queryParameters, Options? options}) async {
@@ -29,7 +30,7 @@ class _LocationApi extends ApiClient {
       ];
     }
     if (path == '/app/runtime-settings') {
-      data = {'passengerMapHomeEnabled': false};
+      data = {'passengerMapHomeEnabled': mapHomeEnabled};
     }
     if (path == '/geo/reverse') {
       reverseCalls++;
@@ -57,6 +58,34 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
     sharedLocationSession.clear();
   });
+  for (final size in [const Size(360, 640), const Size(1280, 800)]) {
+    testWidgets('pickup stays above the order panel at $size', (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final api = _LocationApi()..mapHomeEnabled = true;
+      await tester.pumpWidget(MaterialApp(
+        home: OrderScreen(
+          apiClient: api,
+          enableLiveMap: false,
+          locationProvider: () async => const BrowserLocation(
+              latitude: 49.902631, longitude: 82.609936, accuracy: 10),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final marker =
+          tester.getRect(find.byKey(const ValueKey('passenger-map-location')));
+      final map =
+          tester.getRect(find.byKey(const ValueKey('passenger-visible-map')));
+      final panel =
+          tester.getRect(find.byKey(const ValueKey('passenger-order-panel')));
+      expect(map.contains(marker.center), isTrue);
+      expect(marker.bottom, lessThan(panel.top));
+      expect(marker.center.dy, closeTo(map.center.dy, 1));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
   test('old, invalid and inaccurate fixes are not precise pickup coordinates',
       () {
     final now = DateTime(2026, 10, 6);

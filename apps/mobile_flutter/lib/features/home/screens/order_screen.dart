@@ -2003,64 +2003,89 @@ class _OrderScreenState extends State<OrderScreen> {
       bottomNavigationBar: const PassengerBottomNav(currentIndex: 0),
       backgroundColor:
           isDark ? AppTheme.darkBackground : AppTheme.lightBackground,
-      body: Stack(
-        children: [
-          Positioned.fill(child: _decorativeMap(isDark: isDark)),
-          Positioned(
-            left: 16,
-            right: 16,
-            top: MediaQuery.of(context).padding.top + 12,
-            child: Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.surface.withValues(alpha: 0.92),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: AppTheme.primaryColor.withValues(alpha: 0.14),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.10),
-                          blurRadius: 18,
-                          offset: const Offset(0, 8),
+      body: SafeArea(
+        bottom: false,
+        child: LayoutBuilder(
+          builder: (context, constraints) => Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
                         ),
-                      ],
+                        decoration: BoxDecoration(
+                          color:
+                              theme.colorScheme.surface.withValues(alpha: 0.92),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color:
+                                AppTheme.primaryColor.withValues(alpha: 0.14),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.10),
+                              blurRadius: 18,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        child: _citySelectionButton(),
+                      ),
                     ),
-                    child: _citySelectionButton(),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Stack(
+                  key: const ValueKey('passenger-visible-map'),
+                  children: [
+                    Positioned.fill(child: _decorativeMap(isDark: isDark)),
+                    if (_userLocation != null || _fromLocation != null)
+                      const Center(
+                        child: Icon(
+                          Icons.my_location_rounded,
+                          key: ValueKey('passenger-map-location'),
+                          color: AppTheme.primaryColor,
+                          size: 32,
+                        ),
+                      ),
+                    Positioned(
+                      right: 16,
+                      top: 12,
+                      child: _mapHomeRoundButton(
+                        icon: Icons.my_location_rounded,
+                        onTap: _locating
+                            ? null
+                            : () => _initMapCenterByLocation(
+                                forceCurrentLocation: true),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              ConstrainedBox(
+                key: const ValueKey('passenger-order-panel'),
+                constraints: BoxConstraints(
+                  maxHeight: constraints.maxHeight * 0.55,
+                ),
+                child: SingleChildScrollView(
+                  child: SafeArea(
+                    top: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 8, 14, 14),
+                      child: _mapHomeBottomSheet(theme, isDark: isDark),
+                    ),
                   ),
                 ),
-              ],
-            ),
-          ),
-          Positioned(
-            right: 16,
-            top: MediaQuery.of(context).padding.top + 90,
-            child: _mapHomeRoundButton(
-              icon: Icons.my_location_rounded,
-              onTap: _locating
-                  ? null
-                  : () => _initMapCenterByLocation(forceCurrentLocation: true),
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-                child: _mapHomeBottomSheet(theme, isDark: isDark),
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
