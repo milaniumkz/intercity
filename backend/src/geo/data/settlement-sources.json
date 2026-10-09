@@ -1,0 +1,25 @@
+{
+  "KZ": {
+    "url": "https://download.geonames.org/export/dump/KZ.zip",
+    "sha256": "b04ba7c03cfc539803ba3aa9a7627f2a4051351eaef5068b665fe262003dd9ea",
+    "license": "CC BY 4.0",
+    "russian_names": {
+      "url": "https://download.geonames.org/export/dump/alternatenames/KZ.zip",
+      "sha256": "86bc328420cf8ddb633fef5fe5a0ee99014ffcafa954f510097cbeaae00860fe"
+    }
+  },
+  "RU": {
+    "url": "https://download.geonames.org/export/dump/RU.zip",
+    "sha256": "d15f21a0cadad8260f82cc2dc78c4347ff27135e7f052ac293f88f4544d2c63d",
+    "license": "CC BY 4.0",
+    "russian_names": {
+      "url": "https://download.geonames.org/export/dump/alternatenames/RU.zip",
+      "sha256": "6d598cf6f51ee93befb8d4dcd9fe34330fb10f9932c208f93e77802c0c8692c8"
+    }
+  },
+  "boundary": {
+    "url": "https://nominatim.openstreetmap.org/lookup?osm_ids=R214665&format=json&polygon_geojson=1",
+    "sha256": "f446b1a46923b22dc84c8a29f9244d7639bf6761c4f06e5fc9cb0d8640f6d892",
+    "license": "ODbL 1.0"
+  }
+}

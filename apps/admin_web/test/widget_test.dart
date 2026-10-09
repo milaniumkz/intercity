@@ -86,9 +86,12 @@ void main() {
 
     await tester.tap(find.text('Тарифы').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+    await tester.enterText(
+        find.widgetWithText(
+            TextField, 'Город тарифа — начните вводить название'),
+        'Almaty');
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Almaty — ₸').last);
+    await tester.tap(find.textContaining('Almaty,').last);
     await tester.pumpAndSettle();
     await tester.enterText(
         find.widgetWithText(TextField, 'City tariff ID to deactivate'), 'ct-1');

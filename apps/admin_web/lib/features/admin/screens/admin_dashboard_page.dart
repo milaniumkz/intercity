@@ -651,6 +651,14 @@ class AdminCitiesPage extends StatefulWidget {
 
 class _AdminCitiesPageState extends State<AdminCitiesPage> {
   List<dynamic> _cities = [];
+  String _cityQuery = '';
+  String? _cityCountry;
+  Iterable<dynamic> get _filteredCities => _cities.where((city) =>
+      (_cityCountry == null || city['countryCode'] == _cityCountry) &&
+      [city['name'], city['region'], ...(city['aliases'] as List? ?? [])].any(
+          (name) =>
+              (name ?? '').toString().toLowerCase().contains(_cityQuery)));
+
   final _cityIdCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   final _regionCtrl = TextEditingController();
@@ -824,44 +832,62 @@ class _AdminCitiesPageState extends State<AdminCitiesPage> {
           ),
           const SizedBox(height: 16),
           _SectionCard(
-            title: 'Список городов',
-            child: _cities.isEmpty
-                ? const Text('Города не загружены.')
-                : Column(
-                    children: _cities.map((c) {
-                      final city = c as Map<String, dynamic>;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: ListTile(
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18)),
-                          tileColor: const Color(0xFFF7FAFC),
-                          onTap: () => setState(() {
-                            _cityIdCtrl.text = city['id'].toString();
-                            _nameCtrl.text = city['name'].toString();
-                            _regionCtrl.text =
-                                (city['region'] ?? '').toString();
-                            _latCtrl.text = city['lat'].toString();
-                            _lngCtrl.text = city['lng'].toString();
-                            _countryCode =
-                                (city['countryCode'] ?? 'KZ').toString();
-                            _isActive = city['isActive'] == true;
-                          }),
-                          title: Text(
-                              '${city['name']} • ${rideCurrencySymbol(city)}'),
-                          subtitle: Text(
-                              'ID ${city['id']} • ${city['region'] ?? '-'}\n${city['lat']}, ${city['lng']}'),
-                          isThreeLine: true,
-                          trailing: OutlinedButton(
-                            onPressed: _busyAction == null
-                                ? () => _delete(city['id'] as String)
-                                : null,
-                            child: const Text('Удалить'),
+            title: 'Города и населённые пункты',
+            child: Column(children: [
+              TextField(
+                  decoration: const InputDecoration(
+                      labelText: 'Поиск по названию или области'),
+                  onChanged: (value) =>
+                      setState(() => _cityQuery = value.trim().toLowerCase())),
+              DropdownButtonFormField<String>(
+                  decoration: const InputDecoration(labelText: 'Страна'),
+                  items: const [
+                    DropdownMenuItem(value: 'ALL', child: Text('Все страны')),
+                    DropdownMenuItem(value: 'KZ', child: Text('Казахстан')),
+                    DropdownMenuItem(value: 'RU', child: Text('Россия'))
+                  ],
+                  initialValue: 'ALL',
+                  onChanged: (value) => setState(
+                      () => _cityCountry = value == 'ALL' ? null : value)),
+              Text('Найдено: ${_filteredCities.length}. Показаны первые 100.'),
+              _cities.isEmpty
+                  ? const Text('Города не загружены.')
+                  : Column(
+                      children: _filteredCities.take(100).map((c) {
+                        final city = c as Map<String, dynamic>;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: ListTile(
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(18)),
+                            tileColor: const Color(0xFFF7FAFC),
+                            onTap: () => setState(() {
+                              _cityIdCtrl.text = city['id'].toString();
+                              _nameCtrl.text = city['name'].toString();
+                              _regionCtrl.text =
+                                  (city['region'] ?? '').toString();
+                              _latCtrl.text = city['lat'].toString();
+                              _lngCtrl.text = city['lng'].toString();
+                              _countryCode =
+                                  (city['countryCode'] ?? 'KZ').toString();
+                              _isActive = city['isActive'] == true;
+                            }),
+                            title: Text(
+                                '${city['name']} • ${rideCurrencySymbol(city)}'),
+                            subtitle: Text(
+                                'ID ${city['id']} • ${city['region'] ?? '-'}\n${city['lat']}, ${city['lng']}'),
+                            isThreeLine: true,
+                            trailing: OutlinedButton(
+                              onPressed: _busyAction == null
+                                  ? () => _delete(city['id'] as String)
+                                  : null,
+                              child: const Text('Удалить'),
+                            ),
                           ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
+                        );
+                      }).toList(),
+                    ),
+            ]),
           ),
         ],
       ),
@@ -887,6 +913,8 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
   final _kmCtrl = TextEditingController(text: '50');
   final _minCtrl = TextEditingController(text: '5');
   final _minimumCtrl = TextEditingController(text: '600');
+  String _cityLabel(Map city) =>
+      '${city['name']}, ${city['region'] ?? '${city['lat']}, ${city['lng']}'} — ${rideCurrencySymbol(city)}';
   String get _tariffSymbol => rideCurrencySymbol(_cities
       .cast<Map?>()
       .firstWhere((city) => city?['id'] == _cityIdCtrl.text,
@@ -1107,23 +1135,38 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
                 onPressed: _loading ? null : _load, loading: _loading),
             child: Column(
               children: [
-                DropdownButtonFormField<String>(
+                Autocomplete<Map<String, dynamic>>(
                   key: ValueKey(_cityIdCtrl.text),
-                  initialValue:
-                      _cities.any((city) => city['id'] == _cityIdCtrl.text)
-                          ? _cityIdCtrl.text
-                          : null,
-                  isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'Город тарифа'),
-                  items: _cities
-                      .map((city) => DropdownMenuItem<String>(
-                            value: city['id'].toString(),
-                            child: Text(
-                                '${city['name']} — ${rideCurrencySymbol(city as Map)}'),
-                          ))
-                      .toList(),
-                  onChanged: (value) => setState(() {
-                    _cityIdCtrl.text = value!;
+                  initialValue: TextEditingValue(
+                      text: _cities
+                              .where((city) => city['id'] == _cityIdCtrl.text)
+                              .map((city) => _cityLabel(city as Map))
+                              .firstOrNull ??
+                          ''),
+                  displayStringForOption: (city) => _cityLabel(city),
+                  optionsBuilder: (value) {
+                    final query = value.text.trim().toLowerCase();
+                    return _cities
+                        .cast<Map<String, dynamic>>()
+                        .where((city) => [
+                              city['name'],
+                              city['region'],
+                              ...(city['aliases'] as List? ?? [])
+                            ].any((name) => (name ?? '')
+                                .toString()
+                                .toLowerCase()
+                                .contains(query)))
+                        .take(50);
+                  },
+                  fieldViewBuilder: (context, controller, focusNode, submit) =>
+                      TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          decoration: const InputDecoration(
+                              labelText:
+                                  'Город тарифа — начните вводить название')),
+                  onSelected: (city) => setState(() {
+                    _cityIdCtrl.text = city['id'].toString();
                     _cityTariffIdCtrl.clear();
                   }),
                 ),

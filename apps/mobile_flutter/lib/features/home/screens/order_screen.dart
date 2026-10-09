@@ -2832,6 +2832,7 @@ class _OrderScreenState extends State<OrderScreen> {
                   subdomains: AppConstants.mapTileSubdomains,
                   userAgentPackageName: 'com.milanium.intercity',
                 ),
+                const MapDataAttribution(),
                 if (_userLocation != null)
                   MarkerLayer(
                     markers: [
@@ -6966,6 +6967,7 @@ class _OrderScreenState extends State<OrderScreen> {
               subdomains: AppConstants.mapTileSubdomains,
               userAgentPackageName: 'com.milanium.intercity',
             ),
+            const MapDataAttribution(),
             RoadRouteLayer(from: from, to: to, color: AppTheme.primaryColor),
             MarkerLayer(
               markers: [
@@ -7855,7 +7857,7 @@ class _OrderScreenState extends State<OrderScreen> {
             message = '';
           });
           try {
-            final found = await _searchCitiesOnMap(normalized);
+            final found = await _searchCitiesInDatabase(normalized);
             if (!mounted ||
                 !dialogOpen ||
                 controller.text.trim() != normalized) {
@@ -12374,7 +12376,8 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
-  Future<List<Map<String, dynamic>>> _searchCitiesOnMap(String query) async {
+  Future<List<Map<String, dynamic>>> _searchCitiesInDatabase(
+      String query) async {
     final normalized = query.trim();
     if (normalized.length < 2) return const [];
     final localFallback = _localCitySearchResults(normalized);
@@ -12388,9 +12391,7 @@ class _OrderScreenState extends State<OrderScreen> {
           .map((item) => Map<String, dynamic>.from(item))
           .where((item) => item['lat'] is num && item['lng'] is num)
           .toList();
-      return _dedupeCityResults([...parsed, ...localFallback])
-          .take(12)
-          .toList();
+      return _dedupeCityResults([...parsed, ...localFallback]);
     } catch (_) {
       return localFallback;
     }
@@ -12435,11 +12436,15 @@ class _OrderScreenState extends State<OrderScreen> {
     final seen = <String>{};
     final unique = <Map<String, dynamic>>[];
     for (final item in items) {
-      final key = [
-        (item['name'] ?? '').toString().trim().toLowerCase(),
-        (item['region'] ?? '').toString().trim().toLowerCase(),
-        (item['displayName'] ?? '').toString().trim().toLowerCase(),
-      ].where((part) => part.isNotEmpty).join('|');
+      final key = (item['id'] ?? '').toString().isNotEmpty
+          ? item['id'].toString()
+          : [
+              (item['name'] ?? '').toString().trim().toLowerCase(),
+              (item['region'] ?? '').toString().trim().toLowerCase(),
+              (item['displayName'] ?? '').toString().trim().toLowerCase(),
+              (item['lat'] ?? '').toString(),
+              (item['lng'] ?? '').toString(),
+            ].where((part) => part.isNotEmpty).join('|');
       if (key.isEmpty || !seen.add(key)) continue;
       unique.add(item);
       if (unique.length >= 12) break;

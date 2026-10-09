@@ -12,6 +12,7 @@ import '../../../core/utils/driver_access.dart';
 import '../../../core/utils/error_message_ru.dart';
 import '../../../core/utils/navigation_back.dart';
 import '../../../core/widgets/car_selector_fields.dart';
+import '../../../core/widgets/database_city_field.dart';
 import '../../../core/widgets/ic_premium.dart';
 import '../../../core/widgets/theme_settings_card.dart';
 import '../widgets/driver_bottom_nav.dart';
@@ -1077,36 +1078,15 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
             ],
           ),
           const SizedBox(height: 12),
-          DropdownButtonFormField<String?>(
-            initialValue: _cities.any((city) => city['id'] == _selectedCityId)
-                ? _selectedCityId
-                : null,
-            isExpanded: true,
-            decoration: _inputDecoration(
-              label: 'Город',
-              icon: Icons.radar_rounded,
-              helperText: 'Выберите город, где хотите получать заказы',
-            ),
-            items: [
-              const DropdownMenuItem<String?>(
-                value: null,
-                child: Text('Определять автоматически'),
-              ),
-              ..._cities.map(
-                (city) => DropdownMenuItem<String?>(
-                  value: city['id']?.toString(),
-                  child: Text(
-                    [
-                      city['name']?.toString() ?? '',
-                      city['region']?.toString() ?? '',
-                    ].where((part) => part.trim().isNotEmpty).join(', '),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ),
-            ],
-            onChanged: (value) => setState(() => _selectedCityId = value),
-          ),
+          DatabaseCityField(
+              cities: _cities,
+              value: _selectedCityId,
+              allowAutomatic: true,
+              decoration: _inputDecoration(
+                  label: 'Город',
+                  icon: Icons.radar_rounded,
+                  helperText: 'Выберите город, где хотите получать заказы'),
+              onChanged: (value) => setState(() => _selectedCityId = value)),
         ],
       ),
     );
@@ -1115,17 +1095,6 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   Widget _driverIntercityRoutesCard() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final cityItems = _cities
-        .map(
-          (city) => DropdownMenuItem<String>(
-            value: city['id']?.toString(),
-            child: Text(
-              (city['name'] ?? '').toString(),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        )
-        .toList();
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -1181,31 +1150,19 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
             ],
           ),
           const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            initialValue: _cities.any((city) => city['id'] == _routeFromCityId)
-                ? _routeFromCityId
-                : null,
-            isExpanded: true,
-            decoration: _inputDecoration(
-              label: 'Откуда',
-              icon: Icons.trip_origin_rounded,
-            ),
-            items: cityItems,
-            onChanged: (value) => setState(() => _routeFromCityId = value),
-          ),
+          DatabaseCityField(
+              cities: _cities,
+              value: _routeFromCityId,
+              decoration: _inputDecoration(
+                  label: 'Откуда', icon: Icons.trip_origin_rounded),
+              onChanged: (value) => setState(() => _routeFromCityId = value)),
           const SizedBox(height: 10),
-          DropdownButtonFormField<String>(
-            initialValue: _cities.any((city) => city['id'] == _routeToCityId)
-                ? _routeToCityId
-                : null,
-            isExpanded: true,
-            decoration: _inputDecoration(
-              label: 'Куда',
-              icon: Icons.location_on_rounded,
-            ),
-            items: cityItems,
-            onChanged: (value) => setState(() => _routeToCityId = value),
-          ),
+          DatabaseCityField(
+              cities: _cities,
+              value: _routeToCityId,
+              decoration: _inputDecoration(
+                  label: 'Куда', icon: Icons.location_on_rounded),
+              onChanged: (value) => setState(() => _routeToCityId = value)),
           const SizedBox(height: 10),
           ICGradientButton(
             label: _routeSaving ? 'Отправляем...' : 'Подать заявку на маршрут',

@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma.service';
+import { KazakhstanAddressIndex } from './kz-address-index';
 import { verifiedAddresses } from './verified-addresses';
-import { cityCatalog } from './city-catalog';
+import { cityCatalog } from './combined-city-catalog';
 import { currencyForCountry, countryCodeFromRegion } from '../common/currency';
 
 @Injectable()
@@ -82,6 +83,7 @@ export class GeoService {
     constructor(
         private prisma: PrismaService,
         private configService: ConfigService,
+        @Optional() private kzAddresses?: KazakhstanAddressIndex,
     ) {
         this.nominatimUrl = this.configService.get('NOMINATIM_URL') || 'https://nominatim.openstreetmap.org';
         this.osrmUrl = (this.configService.get('OSRM_URL') || 'https://router.project-osrm.org').replace(/^http:/, 'https:');
@@ -121,6 +123,7 @@ export class GeoService {
                     cityRecord = await this.prisma.city.findFirst({
                         where: {
                             name: { equals: city, mode: 'insensitive' },
+                            lat:{gte:lat-.5,lte:lat+.5},lng:{gte:lng-.5,lte:lng+.5},
                             countryCode,
                             isActive: true,
                         },
@@ -236,17 +239,7 @@ export class GeoService {
     }
 
     private async findNearestCity(lat: number, lng: number) {
-        const cities = await this.prisma.city.findMany({
-            where: { isActive: true },
-            select: {
-                id: true,
-                name: true,
-                region: true,
-                countryCode: true,
-                lat: true,
-                lng: true,
-            },
-        });
+        const cities = await this.activeCitySearchRows();
 
         let nearest: (typeof cities)[number] | null = null;
         let nearestDistance = Number.POSITIVE_INFINITY;
@@ -257,14 +250,7 @@ export class GeoService {
                 nearest = city;
             }
         }
-        for (const city of GeoService.fallbackCities) {
-            const distance = this.haversine(lat, lng, city.lat, city.lng);
-            if (distance < nearestDistance && distance < 50) {
-                nearestDistance = distance;
-                nearest = { ...city, id: null, countryCode: countryCodeFromRegion(city.region) };
-            }
-        }
-        return nearestDistance < 100 ? nearest : null;
+        return nearestDistance < 50 ? nearest : null;
     }
 
     async listActiveCities() {
@@ -273,6 +259,7 @@ export class GeoService {
             select: {
                 id: true,
                 name: true,
+                aliases:true,
                 region: true,
                 countryCode: true,
                 lat: true,
@@ -284,95 +271,35 @@ export class GeoService {
         });
     }
 
+    private citySearchSnapshot?: {expires:number; rows:any[]; exact:Map<string,any[]>};
+    private citySnapshotRequest?: Promise<any[]>;
+    private async activeCitySearchRows():Promise<any[]> {
+        if (this.citySearchSnapshot && this.citySearchSnapshot.expires>Date.now()) return this.citySearchSnapshot.rows;
+        if (this.citySnapshotRequest) return this.citySnapshotRequest;
+        this.citySnapshotRequest=this.prisma.city.findMany({where:{isActive:true},
+            select:{id:true,name:true,aliases:true,region:true,countryCode:true,lat:true,lng:true}}).then(rows=>{
+            const exact=new Map<string,any[]>();
+            for(const city of rows) {
+                const entry:any=city;
+                entry.searchTokens=[...new Set([entry.name,...(entry.aliases || [])].map(name=>this.normalizeCityToken(name)))];
+                for(const key of entry.searchTokens) {const values=exact.get(key)||[];values.push(entry);exact.set(key,values);}
+            }
+            this.citySearchSnapshot={expires:Date.now()+30000,rows,exact};return rows;
+        }).finally(()=>{this.citySnapshotRequest=undefined;});
+        return this.citySnapshotRequest;
+    }
     async searchCities(query: string) {
-        const normalized = (query || '').trim();
-        if (normalized.length < 2) return [];
-
-        const collected: Array<{ displayName: string; lat: number; lng: number; name?: string; region?: string | null; countryCode?: string; currency?: string }> = [];
-        const seen = new Set<string>();
-
-        const addCity = (item: { displayName: string; lat: number; lng: number; name?: string; region?: string | null; countryCode?: string; currency?: string }, matchesAlias = false) => {
-            if (!item.displayName || !Number.isFinite(item.lat) || !Number.isFinite(item.lng)) return;
-            if (!this.looksLikeLocalityResult(item)) return;
-            const canonical = this.normalizeLocalityName(item.name || this.firstDisplayNamePart(item.displayName));
-            const preferred = GeoService.fallbackCities.find(city => this.normalizeCityToken(city.name) === canonical);
-            if (preferred && item.name !== preferred.name) item = {...item, name:preferred.name, displayName:[preferred.name,item.region || preferred.region].filter(Boolean).join(', ')};
-            const name = this.normalizeCityToken(item.name || item.displayName);
-            const needle = this.normalizeCityToken(normalized);
-            if (!matchesAlias && !name.includes(needle)) return;
-            const key = `${item.countryCode || countryCodeFromRegion(item.region)}:${name}`;
-            if (seen.has(key)) return;
-            seen.add(key);
-            const countryCode = item.countryCode || countryCodeFromRegion(item.region);
-            collected.push({ ...item, countryCode, currency: currencyForCountry(countryCode) });
-        };
-
-        GeoService.fallbackCities
-            .filter((city) => {
-                const needle = this.normalizeCityToken(normalized);
-                const name = this.normalizeCityToken(city.name);
-                const region = this.normalizeCityToken(city.region);
-                return name.includes(needle) || region.includes(needle);
-            })
-            .sort((a, b) => {
-                const needle = this.normalizeCityToken(normalized);
-                const aStarts = this.normalizeCityToken(a.name).startsWith(needle);
-                const bStarts = this.normalizeCityToken(b.name).startsWith(needle);
-                if (aStarts !== bStarts) return aStarts ? -1 : 1;
-                return a.name.localeCompare(b.name, 'ru');
-            })
-            .forEach((city) => addCity({
-                displayName: `${city.name}, ${city.region}`,
-                name: city.name,
-                region: city.region,
-                lat: city.lat,
-                lng: city.lng,
-            }));
-
-        const dbCities = await this.prisma.city.findMany({
-            where: {
-                isActive: true,
-                OR: [
-                    { name: { contains: normalized, mode: 'insensitive' } },
-                    { region: { contains: normalized, mode: 'insensitive' } },
-                ],
-            },
-            select: { name: true, region: true, countryCode: true, lat: true, lng: true },
-            take: 8,
-        });
-        dbCities.forEach((city) => addCity({
-            displayName: [city.name, city.region].filter(Boolean).join(', '),
-            name: city.name,
-            region: city.region,
-            countryCode: city.countryCode,
-            lat: city.lat,
-            lng: city.lng,
-        }));
-
-        const needle = this.normalizeCityToken(normalized);
-        cityCatalog
-            .filter(city => [city.name, ...city.aliases].some(name => this.normalizeCityToken(name).includes(needle)))
-            .sort((a, b) => Number(this.normalizeCityToken(b.name).startsWith(needle)) - Number(this.normalizeCityToken(a.name).startsWith(needle)))
-            .forEach(city => addCity({ ...city, displayName: `${city.name}, ${city.countryCode === 'KZ' ? 'Казахстан' : 'Россия'}` }, true));
-        if (collected.length === 0 && needle.length >= 4) {
-            cityCatalog.filter(city => [city.name, ...city.aliases].some(name => this.isNearCityPrefix(this.normalizeCityToken(name), needle)))
-                .forEach(city => addCity({...city, displayName: `${city.name}, ${city.countryCode === 'KZ' ? 'Казахстан' : 'Россия'}`}, true));
+        const needle = this.normalizeCityToken((query || '').trim());
+        if (needle.length < 2) return [];
+        const rows = await this.activeCitySearchRows();
+        let matches = this.citySearchSnapshot!.exact.get(needle) || rows.filter(city => city.searchTokens.some(name => name.includes(needle)));
+        if (!matches.length && needle.length >= 4) {
+            matches = rows.filter(city => [city.name,...(city.aliases || [])].some(name => this.isNearCityPrefix(this.normalizeCityToken(name),needle)));
         }
-        if (collected.length > 0) return this.rankCityResults(collected, normalized);
-
-        try {
-            const osmCities = await this.fetchCitySearchResults(normalized);
-            osmCities.forEach(city => addCity(city));
-        } catch (_) { }
-
-        if (collected.length < 6 && this.yandexGeocoderApiKey) {
-            try {
-                const yandexCities = await this.fetchYandexCitySearchResults(normalized);
-                yandexCities.forEach(city => addCity(city));
-            } catch (_) { }
-        }
-
-        return this.rankCityResults(collected, normalized);
+        return this.rankCityResults(matches.map(city => ({...city,
+            displayName:[city.name,city.region,city.countryCode==='RU'?'Россия':'Казахстан'].filter(Boolean).join(', '),
+            currency:currencyForCountry(city.countryCode),
+        })),query).map(({aliases,searchTokens,...city})=>city);
     }
 
     private readonly addressCache = new Map<string, {expires: number; results: Array<{displayName: string; lat: number; lng: number}>}>();
@@ -420,6 +347,15 @@ export class GeoService {
                 .filter(address => !Number.isFinite(nearLat) || !Number.isFinite(nearLng) ||
                     this.haversine(nearLat!, nearLng!, address.lat, address.lng) <= this.addressSearchRadiusKm);
             if (verified.length > 0) return verified;
+            if (this.kzAddresses && cityContext) {
+                const indexed = await this.kzAddresses.search(query, {
+                    countryCode:cityContext.countryCode,
+                    lat:Number.isFinite(nearLat)?nearLat!:cityContext.lat,
+                    lng:Number.isFinite(nearLng)?nearLng!:cityContext.lng,
+                }).catch(() => []);
+                const nearby = indexed.filter(item => this.haversine(cityContext.lat,cityContext.lng,item.lat,item.lng)<=this.addressSearchRadiusKm);
+                if (nearby.length > 0) return nearby.slice(0,10);
+            }
             const context = cityContext ? { city: cityContext.name, region: cityContext.region, countryCode: cityContext.countryCode.toLowerCase() } : Number.isFinite(nearLat) && Number.isFinite(nearLng)
                 ? await this.getSearchContext(nearLat!, nearLng!)
                 : null;
@@ -818,7 +754,7 @@ export class GeoService {
             const name = this.normalizeCityToken(city.name || city.displayName);
             return name === needle ? 0 : name.startsWith(needle) ? 1 : 2;
         };
-        return items.sort((a, b) => score(a) - score(b) || (a.name || a.displayName).localeCompare(b.name || b.displayName, 'ru')).slice(0, 12);
+        return items.sort((a, b) => score(a) - score(b) || (a.name || a.displayName).localeCompare(b.name || b.displayName, 'ru')).slice(0, Math.max(12,Math.min(200,items.filter(city=>this.normalizeCityToken(city.name || city.displayName)===needle).length)));
     }
 
     private isNearCityPrefix(name: string, query: string) {

@@ -1,7 +1,7 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const {GeoService} = require('../dist/src/geo/geo.service');
-const makeGeo = () => {const geo = new GeoService({city:{findMany:async()=>[],findFirst:async()=>null}}, {get:()=>undefined});geo.fetchPhotonSearchResults=async()=>[];return geo;};
+const makeGeo = () => {const geo = new GeoService({city:{findMany:async()=>require('../dist/src/geo/combined-city-catalog').cityCatalog.map((c,i)=>({...c,id:'fixture-'+i})),findFirst:async()=>null}}, {get:()=>undefined});geo.fetchPhotonSearchResults=async()=>[];return geo;};
 
 test('city prefix search finds Shemonaikha locally, excludes unrelated places and duplicates', async()=>{
  const geo=makeGeo();geo.fetchCitySearchResults=async()=>{throw Error('must not need provider')};

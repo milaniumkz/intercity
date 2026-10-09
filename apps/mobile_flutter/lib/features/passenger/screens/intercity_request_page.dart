@@ -1484,6 +1484,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
               subdomains: AppConstants.mapTileSubdomains,
               userAgentPackageName: 'com.milanium.intercity',
             ),
+            const MapDataAttribution(),
             if (_fromPoint != null)
               MarkerLayer(
                 markers: [

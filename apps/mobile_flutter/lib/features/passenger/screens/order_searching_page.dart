@@ -1349,6 +1349,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
               subdomains: AppConstants.mapTileSubdomains,
               userAgentPackageName: 'com.milanium.intercity',
             ),
+            const MapDataAttribution(),
             if (_fromPoint != null)
               MarkerLayer(
                 markers: [

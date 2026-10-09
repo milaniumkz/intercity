@@ -15,7 +15,7 @@ void main() {
     addTearDown(() => AdminApiClient.debugOverride(null));
     await tester.pumpWidget(const MaterialApp(home: AdminCitiesPage()));
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.tap(find.byType(DropdownButtonFormField<String>).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Россия — рубли (₽)').last);
     await tester.pumpAndSettle();
@@ -42,9 +42,12 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: AdminTariffsPage()));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.enterText(
+        find.widgetWithText(
+            TextField, 'Город тарифа — начните вводить название'),
+        'Москва');
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Москва — ₽').last);
+    await tester.tap(find.textContaining('Москва,').last);
     await tester.pumpAndSettle();
     expect(find.text('₽'), findsNWidgets(4));
     await tester.enterText(
@@ -77,11 +80,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.updated.single, containsPair('pricePerKm', 30.0));
 
-    final city = find.byType(DropdownButtonFormField<String>);
+    final city = find.widgetWithText(
+        TextField, 'Город тарифа — начните вводить название');
     await tester.ensureVisible(city);
-    await tester.tap(city);
+    await tester.enterText(city, 'Алматы');
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Алматы — ₸').last);
+    await tester.tap(find.textContaining('Алматы,').last);
     await tester.pumpAndSettle();
     expect(find.text('₸'), findsNWidgets(4));
   });
