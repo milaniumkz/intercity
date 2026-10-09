@@ -12,6 +12,13 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "release-lockfile" ]]; then
+      python3 - "$APP_ROOT/current/apps/mobile_flutter/pubspec.lock" <<'PYLOCK'
+import base64, pathlib, sys
+print('RELEASE_LOCK_BASE64=' + base64.b64encode(pathlib.Path(sys.argv[1]).read_bytes()).decode())
+PYLOCK
+      exit 0
+    fi
     cat "$APP_ROOT/current_commit" 2>/dev/null || true
     compose ps
     command -v python3
