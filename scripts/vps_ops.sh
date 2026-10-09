@@ -12,6 +12,31 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "driver-7052597368" ]]; then
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -x -v ON_ERROR_STOP=1' <<'SQLDRIVER'
+SELECT d.id, d.status, d."acceptCityFixed", o."isOnline", c.name AS city,
+ o."lastLat", o."lastLng", o."lastLocationAt", r."ratingAvg", r."ratingCount",
+ s."activityScore", s."activityBlockedUntil", w.money, w."moneyRub"
+FROM "User" u JOIN "DriverProfile" d ON d."userId"=u.id
+LEFT JOIN "DriverOnline" o ON o."driverId"=d.id
+LEFT JOIN "City" c ON c.id=o."cityId"
+LEFT JOIN "DriverRating" r ON r."driverId"=d.id
+LEFT JOIN "DriverServiceStats" s ON s."driverId"=d.id
+LEFT JOIN "Wallet" w ON w."userId"=u.id
+WHERE regexp_replace(u.phone, '[^0-9]', '', 'g') LIKE '%7052597368';
+SELECT q.id, q.status, q."driverId", q."dispatchDriverId", q."dispatchExpiresAt", q."createdAt"
+FROM "Order" q JOIN "DriverProfile" d ON d.id=q."driverId" OR d.id=q."dispatchDriverId"
+JOIN "User" u ON u.id=d."userId"
+WHERE regexp_replace(u.phone, '[^0-9]', '', 'g') LIKE '%7052597368'
+AND q.status IN ('SEARCHING_DRIVER','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
+ORDER BY q."createdAt" DESC;
+SELECT q.id, q.status, q."selectedDriverId", q."updatedAt"
+FROM "IntercityRequest" q JOIN "User" u ON u.id=q."selectedDriverId"
+WHERE regexp_replace(u.phone, '[^0-9]', '', 'g') LIKE '%7052597368'
+AND q.status IN ('ACCEPTED','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS');
+SQLDRIVER
+      exit 0
+    fi
     if [[ "$TARGET" == "release-lockfile" ]]; then
       python3 - "$APP_ROOT/current/apps/mobile_flutter/pubspec.lock" <<'PYLOCK'
 import base64, pathlib, sys
