@@ -1,3 +1,5 @@
+import { startTripVerification, finishTripVerification } from '../common/trip-verification';
+import { consumeLockedBonus } from '../common/currency';
 import { ratingReviewHint, reviseDriverRating } from '../common/driver-rating-review';
 import { creditDriverDailyBonus } from '../common/driver-daily-bonus';
 import { applyDriverActivity } from '../common/driver-activity';
@@ -689,6 +691,7 @@ export class OrdersService {
         const updated = await this.prisma.$transaction(async (tx) => {
             const changed = await tx.order.updateMany({ where: { id: orderId, status: { notIn: ['COMPLETED', 'CANCELLED'] } }, data: { status: 'CANCELLED' } });
             if (changed.count !== 1) throw new BadRequestException('Order already completed or cancelled');
+            await tx.tripVerification.updateMany({where:{id:`CITY:${orderId}`,status:'PENDING'},data:{status:'CANCELLED'}});
             if (order.bonusUsedAmount > 0) {
                 const wallet = await tx.wallet.update({ where: { userId }, data: { [bonusField(order.currency)]: { increment: order.bonusUsedAmount } } });
                 await tx.walletTransaction.create({ data: { walletId: wallet.id, currency: order.currency, type: 'ORDER_BONUS_REFUND', direction: 'CREDIT', balanceSource: 'BONUS', amount: order.bonusUsedAmount, orderId } });
@@ -781,8 +784,10 @@ export class OrdersService {
         const updatedOrder = await this.prisma.$transaction(async tx => {
             const changed = await tx.order.updateMany({ where: { id: orderId, status: order.status }, data: updateData });
             if (changed.count !== 1) throw new BadRequestException('Order status changed. Refresh the order.');
+            if (targetStatus === 'IN_PROGRESS' && order.driver) await startTripVerification(tx, 'CITY', order, order.driver.id, order.driver.userId);
             if (targetStatus === 'COMPLETED') {
-                await this.applyReferralCommissionBonuses(order, tx);
+                const verification = order.driver ? await finishTripVerification(tx, 'CITY', order, order.driver.id, order.driver.userId, updateData.completedAt) : 'REVIEW';
+                if (verification === 'VERIFIED') await this.applyReferralCommissionBonuses(order, tx);
                 if (order.driverId) {
                     const profile = await tx.driverProfile.findUnique({ where: { id: order.driverId } });
                     if (profile) await creditDriverDailyBonus(tx, profile.id, profile.userId, order.currency, updateData.completedAt);
@@ -953,6 +958,7 @@ export class OrdersService {
                 data: { [moneyField(order.currency)]: { decrement: commissionAmount } },
                 select: { money: true, moneyRub: true },
             });
+            await consumeLockedBonus(tx, wallet.id, order.currency, commissionAmount);
             balanceAfterDebit = updatedWallet[moneyField(order.currency)];
             await (tx as any).walletTransaction.create({
                 data: {

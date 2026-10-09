@@ -59,7 +59,7 @@ export class RealtimeController {
             })),
         );
         const relatedEvents$ = this.realtimeService.stream().pipe(
-            filter((event) => event.entity === 'driver' && event.entityId === driverId),
+            filter((event) => (event.entity === 'driver' && event.entityId === driverId) || event.type === 'promotion.settings.changed'),
             map((event) => ({ type: 'driver-event', data: event })),
         );
         const orderEvents$ = this.realtimeService.stream().pipe(

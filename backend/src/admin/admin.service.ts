@@ -1,3 +1,4 @@
+import { releaseVerifiedTripRewards } from '../common/trip-verification';
 import { reviseDriverRating, validateReviewDecision } from '../common/driver-rating-review';
 import { parseDailyBonus } from '../common/driver-daily-bonus';
 import { moneyField, bonusField, walletCurrency } from '../common/currency';
@@ -620,6 +621,24 @@ export class AdminService {
         return this.notificationDispatchService.listJobs(limit ?? 100);
     }
 
+    async getTripReviews(status?: string) {
+        return this.prisma.tripVerification.findMany({ where: status ? { status } : { status: { in: ['REVIEW', 'APPROVED', 'REJECTED'] } }, orderBy: { completedAt: 'desc' }, take: 250 });
+    }
+    async decideTripReview(id: string, decision: string, note: string, adminId: string) {
+        if (!['APPROVE', 'REJECT'].includes(decision) || typeof note !== 'string' || note.trim().length < 5 || note.length > 2000) throw new BadRequestException('Выберите решение и укажите обоснование (5–2000 символов).');
+        const record = await this.prisma.$transaction(async tx => {
+            await tx.$executeRaw`SELECT id FROM "TripVerification" WHERE id = ${id} FOR UPDATE`;
+            const current = await tx.tripVerification.findUnique({where:{id}});
+            if (!current) throw new NotFoundException('Trip review not found');
+            if (current.status !== 'REVIEW') throw new BadRequestException('Решение уже принято. Обновите список.');
+            const updated = await tx.tripVerification.update({where:{id},data:{status:decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',resolutionNote:note.trim(),reviewedBy:adminId,reviewedAt:new Date()}});
+            if (decision === 'APPROVE') await releaseVerifiedTripRewards(tx,updated);
+            return updated;
+        });
+        this.realtimeService.publish({type:'driver.bonus.updated',entity:'driver',entityId:record.driverId,at:new Date().toISOString(),payload:{tripId:record.tripId,reviewStatus:record.status}});
+        return record;
+    }
+
     // Settings
     async getSettings() {
         return this.prisma.appSettings.findMany();
@@ -639,11 +658,13 @@ export class AdminService {
             const host = key === 'appStoreUrl' ? 'apps.apple.com' : 'play.google.com';
             if (url.protocol !== 'https:' || url.hostname !== host) throw new BadRequestException('Invalid app store URL');
         }
-        return this.prisma.appSettings.upsert({
+        const setting = await this.prisma.appSettings.upsert({
             where: { key },
             update: { value },
             create: { key, value },
         });
+        if (key.startsWith('driverDailyBonus')) this.realtimeService.publish({ type: 'promotion.settings.changed', entity: 'system', at: new Date().toISOString(), payload: { currency: key.endsWith('RUB') ? 'RUB' : 'KZT' } });
+        return setting;
     }
 
     // Topups
@@ -846,6 +867,7 @@ export class AdminService {
         if (payout.status !== 'PENDING') {
             throw new BadRequestException(`Payout already ${payout.status.toLowerCase()}`);
         }
+        if (await this.resolvePayoutRefundSource(this.prisma, id) === 'BONUS') throw new BadRequestException('Бонусы не выводятся. Отклоните заявку, чтобы вернуть бонусы.');
         const updated = await this.prisma.payoutRequest.update({
             where: { id },
             data: { status: 'APPROVED' },

@@ -1,3 +1,5 @@
+import { startTripVerification, finishTripVerification } from '../common/trip-verification';
+import { consumeLockedBonus } from '../common/currency';
 import { creditDriverDailyBonus } from '../common/driver-daily-bonus';
 import { applyDriverActivity } from '../common/driver-activity';
 import { DRIVER_ACTIVITY_RULES } from '../common/driver-performance';
@@ -525,12 +527,13 @@ export class IntercityService {
           request,
           driverUserId,
         );
-        await creditRideReferrals(tx, {
+        const profile = await tx.driverProfile.findUnique({ where: { userId: driverUserId } });
+        const verification = profile ? await finishTripVerification(tx, 'INTERCITY', request, profile.id, driverUserId, completedAt) : 'REVIEW';
+        if (verification === 'VERIFIED') await creditRideReferrals(tx, {
           id: requestId, currency: request.currency,
           commissionAmount: await this.getIntercityAcceptedRequestFee(request, driverUserId),
           passengerId: request.passengerId, driverUserId, intercity: true,
         });
-        const profile = await tx.driverProfile.findUnique({ where: { userId: driverUserId } });
         if (profile) await creditDriverDailyBonus(tx, profile.id, driverUserId, request.currency, completedAt);
         return tx.intercityRequest.update({
           where: { id: requestId },
@@ -539,9 +542,15 @@ export class IntercityService {
       });
     }
 
-    return this.prisma.intercityRequest.update({
-      where: { id: requestId },
-      data: { status: target },
+    return this.prisma.$transaction(async tx => {
+      const changed = await tx.intercityRequest.updateMany({ where: { id: requestId, status: current }, data: { status: target } });
+      if (changed.count !== 1) throw new BadRequestException('Request status changed. Refresh the request.');
+      if (target === 'IN_PROGRESS') {
+        const profile = await tx.driverProfile.findUnique({where:{userId:driverUserId}});
+        if (profile) await startTripVerification(tx,'INTERCITY',request,profile.id,driverUserId);
+      }
+      if (target === 'CANCELLED') await tx.tripVerification.updateMany({where:{id:`INTERCITY:${requestId}`,status:'PENDING'},data:{status:'CANCELLED'}});
+      return tx.intercityRequest.findUniqueOrThrow({where:{id:requestId}});
     });
   }
 
@@ -580,6 +589,7 @@ export class IntercityService {
       where: { id: wallet.id },
       data: { [moneyField(request["currency"])]: { decrement: fee } },
     });
+    await consumeLockedBonus(tx, wallet.id, request["currency"], fee);
     await txAny.walletTransaction
       .create({
         data: {
@@ -825,6 +835,7 @@ export class IntercityService {
       data: { [moneyField(request["currency"])]: { decrement: fee } },
     });
     if (charged.count !== 1) throw new BadRequestException("Selected driver has insufficient balance for intercity request.");
+    await consumeLockedBonus(tx, wallet.id, request["currency"], fee);
     await txAny.walletTransaction
       .create({
         data: {

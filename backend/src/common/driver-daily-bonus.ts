@@ -1,4 +1,4 @@
-import { moneyField } from './currency';
+import { lockedBonusField, moneyField } from './currency';
 
 export const dailyBonusSettingKey = (currency: string) => `driverDailyBonus${currency}`;
 export function serviceDay(now = new Date()) {
@@ -21,22 +21,30 @@ export async function driverDailyBonusProgress(db: any, driverId: string, userId
     if (!row) return null;
     let config;
     try { config = parseDailyBonus(row.value); } catch (_) { return null; }
-    if (!config.enabled) return null;
     const {day, start, end} = serviceDay(now);
+    const participation = await db.driverDailyParticipation.findUnique({ where: { driverId_day_currency: { driverId, day, currency } } });
+    if (!config.enabled && !participation) return null;
+    if (participation) config = { enabled: true, targetOrders: participation.targetOrders, rewardAmount: participation.rewardAmount };
+    const blocked = await db.tripVerification.findMany({ where: { driverId, currency, status: { in: ['REVIEW', 'REJECTED'] }, completedAt: { gte: start, lt: end } }, select: { kind: true, tripId: true, status: true } });
+    const cityExcluded = blocked.filter((r: any) => r.kind === 'CITY').map((r: any) => r.tripId);
+    const intercityExcluded = blocked.filter((r: any) => r.kind === 'INTERCITY').map((r: any) => r.tripId);
     const [city, intercity, credit] = await Promise.all([
-        db.order.count({ where: { driverId, currency, status: 'COMPLETED', completedAt: { gte: start, lt: end } } }),
-        db.intercityRequest.count({ where: { selectedDriverId: userId, currency, status: 'COMPLETED', completedAt: { gte: start, lt: end } } }),
+        db.order.count({ where: { driverId, currency, status: 'COMPLETED', completedAt: { gte: start, lt: end }, id: { notIn: cityExcluded } } }),
+        db.intercityRequest.count({ where: { selectedDriverId: userId, currency, status: 'COMPLETED', completedAt: { gte: start, lt: end }, id: { notIn: intercityExcluded } } }),
         db.walletTransaction.findFirst({ where: { idempotencyKey: `daily-driver:${driverId}:${day}:${currency}` } }),
     ]);
-    return { ...config, currency, day, completed: city + intercity, credited: !!credit, creditedAmount: credit?.amount ?? null, timeZone: 'UTC+5' };
+    return { ...config, currency, day, completed: city + intercity, heldOrders: blocked.filter((r: any) => r.status !== 'REJECTED').length, credited: !!credit, creditedAmount: credit?.amount ?? null, timeZone: 'UTC+5' };
 }
 export async function creditDriverDailyBonus(tx: any, driverId: string, userId: string, currency: string, now = new Date()) {
     await tx.$executeRaw`SELECT id FROM "DriverProfile" WHERE id = ${driverId} FOR UPDATE`;
     const progress = await driverDailyBonusProgress(tx, driverId, userId, currency, now);
+    if (progress && progress.completed + progress.heldOrders > 0) {
+        await tx.driverDailyParticipation.upsert({ where: { driverId_day_currency: { driverId, day: progress.day, currency } }, update: {}, create: { driverId, day: progress.day, currency, targetOrders: progress.targetOrders, rewardAmount: progress.rewardAmount } });
+    }
     if (!progress || progress.credited || progress.completed < progress.targetOrders) return null;
     const wallet = await tx.wallet.upsert({ where: { userId }, create: { userId }, update: {} });
     const amount = progress.rewardAmount;
-    await tx.wallet.update({ where: { id: wallet.id }, data: { [moneyField(currency)]: { increment: amount } } });
+    await tx.wallet.update({ where: { id: wallet.id }, data: { [moneyField(currency)]: { increment: amount }, [lockedBonusField(currency)]: { increment: amount } } });
     await tx.walletTransaction.create({ data: { walletId: wallet.id, currency, type: 'DRIVER_DAILY_BONUS', direction: 'CREDIT', balanceSource: 'MONEY', amount,
         idempotencyKey: `daily-driver:${driverId}:${progress.day}:${currency}`, note: `Ежедневная акция: ${progress.targetOrders} заказов, ${progress.day}` } });
     return progress;

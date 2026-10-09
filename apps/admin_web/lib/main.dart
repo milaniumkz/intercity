@@ -1,3 +1,4 @@
+import 'features/admin/screens/admin_trip_reviews_page.dart';
 import 'features/admin/screens/admin_rating_reviews_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -65,6 +66,7 @@ class IntercityAdminApp extends StatelessWidget {
         '/notifications': (context) => const AdminNotificationsPage(),
         '/finance-audit': (context) => const AdminFinanceAuditPage(),
         '/orders': (context) => const AdminOrdersPage(),
+        '/trip-reviews': (context) => const AdminTripReviewsPage(),
         '/rating-reviews': (context) => const AdminRatingReviewsPage(),
       },
     );

@@ -1,3 +1,4 @@
+import 'admin_trip_reviews_page.dart';
 import 'admin_rating_reviews_page.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -2226,6 +2227,7 @@ class AdminShell extends StatelessWidget {
     ('/notifications', 'Уведомления', Icons.notifications_active_outlined),
     ('/finance-audit', 'Финансовый аудит', Icons.receipt_long_outlined),
     ('/orders', 'Заказы', Icons.local_taxi_outlined),
+    ('/trip-reviews', 'Проверка поездок', Icons.route_outlined),
     ('/rating-reviews', 'Разбор оценок', Icons.rate_review_outlined),
   ];
 
@@ -2263,6 +2265,7 @@ class AdminShell extends StatelessWidget {
             title: Text(title),
             actions: [
               const AdminRatingReviewBell(),
+              const AdminTripReviewBell(),
               if (!wide)
                 IconButton(
                   tooltip: 'Выйти',
