@@ -21,3 +21,10 @@ test('city selection uses only active database entries and their aliases, return
  const result=await service.searchCities('старое название');assert.equal(result[0].id,'custom');assert.equal(result[0].currency,'KZT');
  assert.deepEqual(await service.searchCities('Москва'),[]);
 });
+
+test('large city centroid changes retain the existing city ID and tariff',async()=>{
+ const rows=[{id:'almaty-old',name:'Алматы',aliases:[],countryCode:'KZ',lat:43.222,lng:76.8512,region:'Алматы',isActive:true}];
+ const tx={$executeRawUnsafe:async()=>{},city:{findMany:async()=>rows,update:async({data})=>Object.assign(rows[0],data),createMany:async()=>assert.fail('Must preserve the existing city')}};
+ const result=await importCityCatalog({$transaction:async fn=>fn(tx)},[{name:'Алматы',aliases:['Алматы','Almaty'],countryCode:'KZ',lat:43.253,lng:76.93,population:2000000}]);
+ assert.equal(result.added,0);assert.equal(rows[0].id,'almaty-old');assert.equal(rows[0].lat,43.222);
+});
