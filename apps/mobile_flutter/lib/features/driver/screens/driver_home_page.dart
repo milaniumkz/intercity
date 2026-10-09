@@ -3831,12 +3831,64 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _boardDriverHomeScreen() {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final bg = isDark ? AppTheme.darkBackground : AppTheme.lightBackground;
-    final text = isDark ? Colors.white : const Color(0xFF15162C);
-    final muted = isDark ? Colors.white60 : const Color(0xFF77768A);
+  Future<void> _showDashboardPopover(BuildContext anchorContext) async {
+    final box = anchorContext.findRenderObject() as RenderBox;
+    final top = box.localToGlobal(Offset.zero).dy + box.size.height + 8;
+    unawaited(_loadDriverProfileState(metricsOnly: true));
+    unawaited(_loadDriverWallet());
+    Timer? refresh;
+    try {
+      await showDialog<void>(
+        context: context,
+        useSafeArea: false,
+        builder: (dialogContext) => StatefulBuilder(builder: (ctx, rebuild) {
+          refresh ??= Timer.periodic(const Duration(seconds: 2), (_) {
+            if (ctx.mounted && mounted) rebuild(() {});
+          });
+          return Align(
+            alignment: Alignment.topRight,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(16, top, 16, 16),
+              child: Material(
+                key: const ValueKey('driver-metrics-popover'),
+                elevation: 12,
+                borderRadius: BorderRadius.circular(20),
+                clipBehavior: Clip.antiAlias,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                      maxWidth: 380,
+                      maxHeight: MediaQuery.sizeOf(ctx).height - top - 16),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Row(children: [
+                        const Expanded(
+                            child: Text('Показатели',
+                                style: TextStyle(fontWeight: FontWeight.w700))),
+                        IconButton(
+                            tooltip: 'Закрыть',
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () => Navigator.pop(ctx),
+                            icon: const Icon(Icons.close_rounded)),
+                      ]),
+                      _driverDashboardMetrics(onBalance: () {
+                        Navigator.pop(ctx);
+                        context.push('/driver/wallet');
+                      }),
+                    ]),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+      );
+    } finally {
+      refresh?.cancel();
+    }
+  }
+
+  Widget _driverDashboardMetrics({VoidCallback? onBalance}) {
     final online = _driverProfile?['online'];
     final city = online is Map ? online['city'] : null;
     final rubles = city is Map && city['countryCode'] == 'RU';
@@ -3844,6 +3896,23 @@ class _DriverHomePageState extends State<DriverHomePage>
         '${formatWalletAmount(_driverWallet?[rubles ? 'moneyRub' : 'money'])} ${rubles ? '₽' : '₸'}';
     final todayCompleted =
         int.tryParse((_driverProfileValue('todayCompletedOrders') ?? '0')) ?? 0;
+
+    return DriverDashboardMetrics(
+      balance: balance,
+      today: todayCompleted,
+      performance: _driverProfile?['performance'] is Map
+          ? Map<String, dynamic>.from(_driverProfile!['performance'] as Map)
+          : null,
+      onBalance: onBalance,
+    );
+  }
+
+  Widget _boardDriverHomeScreen() {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final bg = isDark ? AppTheme.darkBackground : AppTheme.lightBackground;
+    final text = isDark ? Colors.white : const Color(0xFF15162C);
+    final muted = isDark ? Colors.white60 : const Color(0xFF77768A);
 
     return Scaffold(
       backgroundColor: bg,
@@ -3865,6 +3934,17 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ),
                   ),
                   const Spacer(),
+                  Builder(
+                      builder: (anchorContext) => IconButton(
+                            key:
+                                const ValueKey('driver-metrics-popover-button'),
+                            tooltip: 'Показатели водителя',
+                            icon: const Icon(Icons.dashboard_outlined),
+                            color: AppTheme.primaryColor,
+                            onPressed: () =>
+                                _showDashboardPopover(anchorContext),
+                          )),
+                  const SizedBox(width: 8),
                   InkWell(
                     onTap: _switchBusy ? null : () => _setOnline(!_isOnline),
                     borderRadius: BorderRadius.circular(999),
@@ -3893,16 +3973,6 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ],
               ),
               const SizedBox(height: 10),
-              DriverDashboardMetrics(
-                balance: balance,
-                today: todayCompleted,
-                performance: _driverProfile?['performance'] is Map
-                    ? Map<String, dynamic>.from(
-                        _driverProfile!['performance'] as Map)
-                    : null,
-                onBalance: () => context.push('/driver/wallet'),
-              ),
-              const SizedBox(height: 12),
               DriverDailyBonusCard(
                   bonus: _driverProfile?['dailyBonus'] is Map
                       ? Map<String, dynamic>.from(
