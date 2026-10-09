@@ -11,11 +11,23 @@ test('country currency uses departure country, never destination or phone', asyn
     assert.equal(currencyForCountry('RU'), 'RUB');
     assert.equal(currencyForCountry('ru'), 'RUB');
     assert.equal(currencyForCountry('KZ'), 'KZT');
-    const geo = new GeoService({ city: { findFirst: async ({ where }) => ({
-        name: where.name.equals, countryCode: where.name.equals === 'Москва' ? 'RU' : 'KZ',
-    }) } }, { get: () => undefined });
+    const geo = new GeoService({ city: { findMany: async () => [
+        {name:'Москва',aliases:[],countryCode:'RU',lat:55.75,lng:37.6},
+        {name:'Алматы',aliases:[],countryCode:'KZ',lat:43.2,lng:76.9},
+    ] } }, { get: () => undefined });
     assert.equal(await geo.departureCurrency(43.2, 76.9, 'Москва'), 'RUB');
     assert.equal(await geo.departureCurrency(55.8, 37.6, 'Алматы'), 'KZT');
+});
+
+test('same-named cities across countries use the selected departure point and country hint',async()=>{
+    const geo=new GeoService({city:{findMany:async()=>[
+        {id:'kz',name:'Актау',aliases:[],countryCode:'KZ',lat:43.65,lng:51.15},
+        {id:'ru',name:'Актау',aliases:[],countryCode:'RU',lat:55,lng:70},
+    ]}},{get:()=>undefined});
+    assert.equal(await geo.departureCurrency(55,70,'Актау'),'RUB');
+    assert.equal(await geo.departureCurrency(43.65,51.15,'Актау'),'KZT');
+    assert.equal(await geo.departureCurrency(null,null,'Актау, Россия'),'RUB');
+    assert.equal(await geo.departureCurrency(null,null,'Актау, Казахстан'),'KZT');
 });
 
 test('city preview uses only configured city rates and returns its currency', async () => {

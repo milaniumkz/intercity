@@ -179,15 +179,19 @@ export class GeoService {
 
     async departureCurrency(lat?: number | null, lng?: number | null, cityName?: string | null) {
         const name = (cityName || '').split(',')[0].trim();
-        const city = name ? await this.prisma.city.findFirst({
-            where: { name: { equals: name, mode: 'insensitive' }, isActive: true },
-        }) : null;
-        if (city) return currencyForCountry(city.countryCode);
+        const needle = this.normalizeCityToken(name);
+        const candidates = name ? (await this.activeCitySearchRows()).filter(city =>
+            [city.name,...(city.aliases || [])].some(alias=>this.normalizeCityToken(alias)===needle)) : [];
+        const hasPoint = Number.isFinite(lat) && Number.isFinite(lng);
+        if (candidates.length) {
+            if (hasPoint) candidates.sort((a,b)=>this.haversine(lat!,lng!,a.lat,a.lng)-this.haversine(lat!,lng!,b.lat,b.lng));
+            else if (/росси|russia|\bRU\b/i.test(cityName || '')) candidates.sort((a,b)=>Number(b.countryCode==='RU')-Number(a.countryCode==='RU'));
+            else if (/казахстан|kazakhstan|\bKZ\b/i.test(cityName || '')) candidates.sort((a,b)=>Number(b.countryCode==='KZ')-Number(a.countryCode==='KZ'));
+            return currencyForCountry(candidates[0].countryCode);
+        }
         const fallback = GeoService.fallbackCities.find(item => item.name.toLowerCase() === name.toLowerCase());
         if (fallback) return currencyForCountry(countryCodeFromRegion(fallback.region));
-        if (Number.isFinite(lat) && Number.isFinite(lng)) {
-            return (await this.reverseGeocode(lat!, lng!)).currency;
-        }
+        if (hasPoint) return (await this.reverseGeocode(lat!, lng!)).currency;
         return currencyForCountry(countryCodeFromRegion(cityName));
     }
 
