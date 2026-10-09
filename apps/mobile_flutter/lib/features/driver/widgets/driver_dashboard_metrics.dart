@@ -75,18 +75,23 @@ class DriverDashboardMetrics extends StatelessWidget {
           () => _showHelp(context, 'priority')),
     ];
     return LayoutBuilder(builder: (context, constraints) {
-      final width =
-          ((constraints.maxWidth - 32) / 5).clamp(128.0, double.infinity);
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: IntrinsicHeight(
-            child: Row(children: [
-          for (var i = 0; i < tiles.length; i++) ...[
-            if (i > 0) const SizedBox(width: 8),
-            SizedBox(width: width, child: tiles[i]),
-          ],
-        ])),
-      );
+      Widget row(List<Widget> items) => IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var i = 0; i < items.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 6),
+                  Expanded(child: items[i]),
+                ],
+              ],
+            ),
+          );
+      if (constraints.maxWidth >= 640) return row(tiles);
+      return Column(mainAxisSize: MainAxisSize.min, children: [
+        row(tiles.sublist(0, 2)),
+        const SizedBox(height: 6),
+        row(tiles.sublist(2)),
+      ]);
     });
   }
 
@@ -107,32 +112,33 @@ class DriverDashboardMetrics extends StatelessWidget {
             child: InkWell(
                 onTap: onTap,
                 child: Padding(
-                    padding: const EdgeInsets.all(10),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.labelSmall),
-                          const SizedBox(height: 4),
+                          FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text(label,
+                                  maxLines: 1,
+                                  style: theme.textTheme.labelSmall)),
+                          const SizedBox(height: 2),
                           Row(children: [
                             Expanded(
-                                child: Text(value,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.titleMedium
-                                        ?.copyWith(
-                                            fontWeight: FontWeight.w800,
-                                            color: accent))),
+                                child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(value,
+                                        maxLines: 1,
+                                        style: theme.textTheme.titleMedium
+                                            ?.copyWith(
+                                                fontWeight: FontWeight.w800,
+                                                color: accent)))),
+                            const SizedBox(width: 4),
                             Icon(icon, color: accent, size: 16),
                           ]),
-                          Text(subtitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                  color: theme.colorScheme.onSurfaceVariant)),
                         ])))));
   }
 
