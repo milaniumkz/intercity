@@ -10,6 +10,6 @@ import { RealtimeModule } from '../realtime/realtime.module';
     imports: [GeoModule, WalletModule, RealtimeModule],
     controllers: [OrdersController],
     providers: [OrdersService, AutoDispatchService],
-    exports: [OrdersService],
+    exports: [OrdersService, AutoDispatchService],
 })
 export class OrdersModule { }

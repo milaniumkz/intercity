@@ -575,18 +575,18 @@ class _DriverHomePageState extends State<DriverHomePage>
     Set<String> oldIds,
     List<Map<String, dynamic>> normalized,
   ) async {
-    if (!_isOnline ||
-        _activeOrder != null ||
-        _isWaitingAuctionDecision ||
-        normalized.isEmpty) {
-      return;
-    }
     final currentIds = normalized
         .map((o) => (o['id'] ?? '').toString())
         .where((id) => id.isNotEmpty)
         .toSet();
     _notifiedOfferIds.removeWhere((id) => !currentIds.contains(id));
     _spokenOfferIds.removeWhere((id) => !currentIds.contains(id));
+    if (!_isOnline ||
+        _activeOrder != null ||
+        _isWaitingAuctionDecision ||
+        normalized.isEmpty) {
+      return;
+    }
     final newOffers = normalized.where((o) {
       final id = (o['id'] ?? '').toString();
       return id.isNotEmpty && !oldIds.contains(id);
@@ -1689,8 +1689,8 @@ class _DriverHomePageState extends State<DriverHomePage>
             .where((item) => (item as Map<String, dynamic>)['id'] != id)
             .toList();
         _message = blockedUntil != null
-            ? 'Заказ отменен. Активность: ${activity ?? '-'} (блокировка на 12 часов)'
-            : 'Заказ отменен. Активность: ${activity ?? '-'}';
+            ? 'Вы отказались от предложения. Активность: ${activity ?? '-'} (блокировка на 12 часов)'
+            : 'Вы отказались от предложения. Активность: ${activity ?? '-'}';
       });
       _stopOfferAlarmIfMatches(id);
     } catch (e) {
