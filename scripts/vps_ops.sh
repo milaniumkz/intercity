@@ -12,6 +12,24 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "driver-2153-dispatch" ]]; then
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -x -v ON_ERROR_STOP=1' <<'SQLDISPATCH'
+SELECT q.id, q.status, q.mode, q."requestType", c.name AS city, q."driverId", q."dispatchDriverId",
+ q."dispatchExpiresAt", q."dispatchRetryAt", q."dispatchTriedDriverIds", q."createdAt", q."fromLat", q."fromLng"
+FROM "Order" q LEFT JOIN "City" c ON c.id=q."cityId"
+WHERE q.status IN ('CREATED','SEARCHING_DRIVER','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
+ORDER BY q."createdAt" DESC LIMIT 20;
+SELECT q.id, q.status, q."updatedAt" FROM "IntercityRequest" q
+WHERE q."selectedDriverId"=(SELECT "userId" FROM "DriverProfile" WHERE id='f9e18ab4-ef0b-4695-8769-5c6ae57403c7')
+AND q.status IN ('ACCEPTED','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS');
+SELECT o."isOnline", o."cityId", o."lastLat", o."lastLng", o."lastLocationAt", d."acceptCityFixed", d."acceptDelivery", d."acceptCargo", w.money,
+ s."activityBlockedUntil", s."activityScore" FROM "DriverProfile" d
+LEFT JOIN "DriverOnline" o ON o."driverId"=d.id LEFT JOIN "Wallet" w ON w."userId"=d."userId"
+LEFT JOIN "DriverServiceStats" s ON s."driverId"=d.id WHERE d.id='f9e18ab4-ef0b-4695-8769-5c6ae57403c7';
+SELECT key,value FROM "AppSettings" WHERE key IN ('driverMinOnlineBalance','driverMinOnlineBalanceRub','dispatchSearchRadiusKm','dispatchMinFreshSec');
+SQLDISPATCH
+      exit 0
+    fi
     if [[ "$TARGET" == "driver-7052597368" ]]; then
       docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -x -v ON_ERROR_STOP=1' <<'SQLDRIVER'
 SELECT d.id, d.status, d."acceptCityFixed", o."isOnline", c.name AS city,
