@@ -12,6 +12,10 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "audit-geo-catalog" ]]; then
+      docker exec -i -e BASE_URL=http://127.0.0.1:3000/api -e CATALOG_DIR=/app/dist/src/geo/data intercity-backend node < /tmp/intercity-audit-geo-catalog.js
+      exit 0
+    fi
     if [[ "$TARGET" == "geo-key-status" ]]; then
       docker exec -i intercity-backend node <<'JS'
 for (const name of ['YANDEX_GEOCODER_API_KEY','YANDEX_MAPS_API_KEY']) console.log(name, process.env[name]?.trim() ? 'configured' : 'missing');

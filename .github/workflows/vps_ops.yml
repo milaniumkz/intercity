@@ -54,5 +54,8 @@ jobs:
           ACTION: ${{ inputs.action }}
           TARGET: ${{ inputs.target }}
         run: |
+          if [[ "$TARGET" == "audit-geo-catalog" ]]; then
+            scp scripts/audit_geo_catalog.js "$VPS_USER@$VPS_HOST:/tmp/intercity-audit-geo-catalog.js"
+          fi
           scp scripts/vps_ops.sh "$VPS_USER@$VPS_HOST:/tmp/vps_ops.sh"
           ssh "$VPS_USER@$VPS_HOST" "bash /tmp/vps_ops.sh '$ACTION' '$TARGET'"
