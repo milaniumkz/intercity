@@ -12,6 +12,29 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "payment-config" ]]; then
+      docker exec -i intercity-backend node <<'JSPAYMENTCONFIG'
+(async () => {
+  const login=process.env.KASSA24_LOGIN || process.env.KASSA24_MERCHANT_ID || '';
+  const password=process.env.KASSA24_PASSWORD || '';
+  console.log(JSON.stringify({loginPresent:!!login,passwordPresent:!!password,tokenEncryptionKeyReady:(process.env.KASSA24_TOKEN_ENCRYPTION_KEY || process.env.JWT_SECRET || '').length>=32,acquiringIdPresent:!!process.env.KASSA24_ACQUIRING_ID,savedCardsEnabled:process.env.KASSA24_SAVED_CARDS_ENABLED==='true',demo:process.env.KASSA24_DEMO==='true',publicApiUrlPresent:!!(process.env.BACKEND_PUBLIC_URL || process.env.PUBLIC_API_URL),publicWebUrlPresent:!!(process.env.PUBLIC_WEB_URL || process.env.WEB_APP_URL || process.env.FRONTEND_URL)}));
+  if (login && password) {
+    try {
+      const base=process.env.KASSA24_API_URL || 'https://ecommerce.pult24.kz';
+      const url=new URL('payment/status?orderid=intercity-readonly-credential-check',base.replace(/\/+$/,'')+'/');
+      if (url.protocol!=='https:') throw new Error('TLS required');
+      const response=await fetch(url,{headers:{Authorization:'Basic '+Buffer.from(login+':'+password).toString('base64')},signal:AbortSignal.timeout(8000)});
+      console.log(JSON.stringify({authenticatedReadHttpStatus:response.status}));
+    } catch (_) {console.log(JSON.stringify({authenticatedReadUnavailable:true}));}
+  }
+})().catch(()=>process.exitCode=1);
+JSPAYMENTCONFIG
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQLPAYMENTCONFIG'
+SELECT key, value='true' AS enabled FROM "AppSettings" WHERE key='kassa24SavedCardsEnabled';
+SELECT key, value ~ '^[0-9]+$' AS numeric_value_present FROM "AppSettings" WHERE key='kassa24AcquiringId';
+SQLPAYMENTCONFIG
+      exit 0
+    fi
     if [[ "$TARGET" == driver-offers:* ]]; then
       driver_phone="${TARGET#driver-offers:}"
       [[ "$driver_phone" =~ ^[78][0-9]{10}$ ]] || { echo "Invalid driver phone" >&2; exit 1; }

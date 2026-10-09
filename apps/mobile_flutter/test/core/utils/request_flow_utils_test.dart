@@ -23,7 +23,8 @@ void main() {
           supportsVehicleClassForRequestType(requestTypeCityAuction), isFalse);
     });
 
-    test('delivery exposes only cash and card transfer payment methods', () {
+    test('delivery supports saved cards and transfers without bonus payment',
+        () {
       for (final requestType in const [
         requestTypeDeliveryCity,
         requestTypeDeliveryIntercity,
@@ -31,14 +32,19 @@ void main() {
       ]) {
         expect(
           paymentMethodsForRequestType(requestType),
-          const [paymentMethodCash, paymentMethodCardTransfer],
+          const [
+            paymentMethodCash,
+            paymentMethodCard,
+            paymentMethodCardTransfer
+          ],
         );
       }
     });
 
     test('labels stay user-facing and stable', () {
       expect(requestTypeLabel(requestTypeCityAuction), 'Аукцион');
-      expect(paymentMethodLabel(paymentMethodCardTransfer), 'безналичными');
+      expect(paymentMethodLabel(paymentMethodCardTransfer), 'переводом');
+      expect(paymentMethodLabel(paymentMethodCard), 'банковской картой');
       expect(paymentMethodLabel(paymentMethodBonus), 'бонусами');
       expect(vehicleClassLabel(vehicleClassBusiness), 'Бизнес');
     });

@@ -1355,6 +1355,9 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
                     'referralCommissionPercent': 'Бонус от комиссии, %',
                     'appStoreUrl': 'Ссылка App Store',
                     'googlePlayUrl': 'Ссылка Google Play',
+                    'kassa24SavedCardsEnabled':
+                        'Сохранённые карты Kassa24 (true/false)',
+                    'kassa24AcquiringId': 'Терминал Kassa24 (acquiringId)',
                   }.entries)
                     ActionChip(
                         label: Text(preset.value),

@@ -35,7 +35,13 @@ void main() {
     }
     final manifest = jsonDecode(
         File('web/navigation-voice/manifest.json').readAsStringSync()) as List;
-    expect(manifest.length, 32);
+    expect(manifest.length, 34);
+    for (final text in [
+      'Не удалось списать оплату с карты. Способ оплаты переведён на наличные.',
+      'Картадан төлем алынбады. Төлем әдісі қолма-қол ақшаға ауыстырылды.'
+    ]) {
+      expect(navigationVoiceRecordings.containsKey(text), isTrue);
+    }
     for (final row in manifest) {
       expect(
           row['voice'],

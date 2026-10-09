@@ -1,3 +1,4 @@
+import { CardPaymentsModule } from './payments/card-payments.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -34,6 +35,7 @@ import { VehicleCatalogModule } from './vehicle-catalog/vehicle-catalog.module';
         IntercityModule,
         RidesharingModule,
         WalletModule,
+        CardPaymentsModule,
         AdminModule,
         RealtimeModule,
         PrismaModule,

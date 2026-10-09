@@ -1,3 +1,4 @@
+import '../widgets/saved_payment_cards.dart';
 import 'package:flutter/material.dart';
 import 'package:intercity_shared/intercity_shared.dart';
 
@@ -350,10 +351,12 @@ class _WalletPageState extends State<WalletPage> {
               onTap: () => _selectPayment('Наличные'),
             ),
             const SizedBox(height: 10),
+            SavedPaymentCards(apiClient: widget.apiClient),
+            const SizedBox(height: 10),
             _PaymentMethodCard(
               icon: Icons.credit_card_rounded,
               title: 'На карту',
-              subtitle: 'Безналичная оплата в заказе',
+              subtitle: 'Перевод водителю по реквизитам',
               selected: _selectedPayment == 'На карту',
               onTap: () => _selectPayment('На карту'),
             ),

@@ -1,3 +1,4 @@
+import { CardPaymentsService } from '../payments/card-payments.service';
 import { startTripVerification, finishTripVerification } from '../common/trip-verification';
 import { consumeLockedBonus } from '../common/currency';
 import { ratingReviewHint, reviseDriverRating } from '../common/driver-rating-review';
@@ -32,6 +33,7 @@ export class OrdersService {
         private autoDispatchService: AutoDispatchService,
         private realtimeService: RealtimeService,
         private pushService: PushService,
+        private cardPayments: CardPaymentsService,
     ) { }
 
     private normalizeRequestType(raw?: string | null, mode?: string | null) {
@@ -64,7 +66,8 @@ export class OrdersService {
 
     private normalizePaymentMethod(raw?: string | null) {
         const normalized = (raw || '').trim().toUpperCase();
-        if (['CASH', 'CARD_TRANSFER', 'BONUSES'].includes(normalized)) {
+        if (normalized === 'BONUS') return 'BONUSES';
+        if (['CASH', 'CARD', 'CARD_TRANSFER', 'BONUSES'].includes(normalized)) {
             return normalized;
         }
         return 'CASH';
@@ -162,6 +165,7 @@ export class OrdersService {
         if (!isCityAuction && (!Number.isFinite(preview.price) || preview.price <= 0)) {
             throw new BadRequestException('Unable to calculate order price');
         }
+        const paymentCardId = paymentMethod === 'CARD' ? await this.cardPayments.cardForOrder(userId, preview.currency) : null;
         const settings = await this.prisma.appSettings.findMany({
             where: { key: { in: ['orderCommissionPercent'] } },
         });
@@ -213,6 +217,7 @@ export class OrdersService {
                     currency: preview.currency,
                     priceSource: isCityAuction ? 'DRIVER_OFFER' : 'SYSTEM',
                     paymentMethod,
+                    paymentCardId,
                     vehicleClass,
                     comment: dto.comment?.trim() || null,
                     hasUnconfirmedLocation: false,
@@ -405,7 +410,7 @@ export class OrdersService {
         if (!isAdmin && !isPassengerOwner && !isAssignedDriver && !isOfferDriver) {
             throw new ForbiddenException('Access denied to this order');
         }
-        return order;
+        return { ...order, cardPayment: this.cardPayments ? await this.cardPayments.state('CITY',order.id) : null };
     }
 
     async getOrderChat(orderId: string, actor: { userId: string; role?: string }) {
@@ -784,7 +789,10 @@ export class OrdersService {
         const updatedOrder = await this.prisma.$transaction(async tx => {
             const changed = await tx.order.updateMany({ where: { id: orderId, status: order.status }, data: updateData });
             if (changed.count !== 1) throw new BadRequestException('Order status changed. Refresh the order.');
-            if (targetStatus === 'IN_PROGRESS' && order.driver) await startTripVerification(tx, 'CITY', order, order.driver.id, order.driver.userId);
+            if (targetStatus === 'IN_PROGRESS' && order.driver) {
+                await startTripVerification(tx, 'CITY', order, order.driver.id, order.driver.userId);
+                if (order.paymentMethod === 'CARD') await this.cardPayments.schedule(tx, 'CITY', order, order.driver.userId);
+            }
             if (targetStatus === 'COMPLETED') {
                 const verification = order.driver ? await finishTripVerification(tx, 'CITY', order, order.driver.id, order.driver.userId, updateData.completedAt) : 'REVIEW';
                 if (verification === 'VERIFIED') await this.applyReferralCommissionBonuses(order, tx);
@@ -821,6 +829,7 @@ export class OrdersService {
         // Referral bonus is paid from service commission for both sides:
         // inviter of passenger and inviter of driver.
         if (targetStatus === 'COMPLETED' && order.status !== 'COMPLETED') {
+            if (order.paymentMethod === 'CARD') await this.cardPayments.settleCompletedTrip('CITY', order.id);
             await this.applyDriverOrderCommissionDebit(order);
         }
 

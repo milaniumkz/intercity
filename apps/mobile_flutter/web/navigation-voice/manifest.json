@@ -190,5 +190,17 @@
     "language": "kk",
     "voice": "kk-KZ-AigulNeural",
     "text": "Сіз келдіңіз"
+  },
+  {
+    "file": "ru_payment_fallback_0.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Не удалось списать оплату с карты. Способ оплаты переведён на наличные."
+  },
+  {
+    "file": "kk_payment_fallback_0.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "Картадан төлем алынбады. Төлем әдісі қолма-қол ақшаға ауыстырылды."
   }
 ]

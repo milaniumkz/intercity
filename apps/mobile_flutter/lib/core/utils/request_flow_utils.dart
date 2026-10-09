@@ -7,6 +7,7 @@ const String requestTypeDeliveryCity = 'DELIVERY_CITY';
 const String requestTypeDeliveryIntercity = 'DELIVERY_INTERCITY';
 const String requestTypeDeliveryRf = 'DELIVERY_RF';
 
+const String paymentMethodCard = 'CARD';
 const String paymentMethodCash = 'CASH';
 const String paymentMethodCardTransfer = 'CARD_TRANSFER';
 const String paymentMethodBonus = 'BONUS';
@@ -23,6 +24,7 @@ List<String> paymentMethodsForRequestType(String requestType) {
     case requestTypeIntercity:
       return const [
         paymentMethodCash,
+        paymentMethodCard,
         paymentMethodCardTransfer,
         paymentMethodBonus,
       ];
@@ -31,11 +33,13 @@ List<String> paymentMethodsForRequestType(String requestType) {
     case requestTypeDeliveryRf:
       return const [
         paymentMethodCash,
+        paymentMethodCard,
         paymentMethodCardTransfer,
       ];
     default:
       return const [
         paymentMethodCash,
+        paymentMethodCard,
         paymentMethodCardTransfer,
       ];
   }
@@ -94,8 +98,11 @@ String requestTypeLabel(String requestType) {
 
 String paymentMethodLabel(String? paymentMethod) {
   switch ((paymentMethod ?? '').toUpperCase()) {
+    case paymentMethodCard:
+      return LocalizationService.translate(
+          'банковской картой', 'банк картасымен');
     case paymentMethodCardTransfer:
-      return LocalizationService.translate('безналичными', 'қолма-қол ақшасыз');
+      return LocalizationService.translate('переводом', 'аударыммен');
     case paymentMethodBonus:
       return LocalizationService.translate('бонусами', 'бонустармен');
     case paymentMethodCash:

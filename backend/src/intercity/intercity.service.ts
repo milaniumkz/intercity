@@ -1,3 +1,4 @@
+import { CardPaymentsService } from '../payments/card-payments.service';
 import { startTripVerification, finishTripVerification } from '../common/trip-verification';
 import { consumeLockedBonus } from '../common/currency';
 import { creditDriverDailyBonus } from '../common/driver-daily-bonus';
@@ -18,7 +19,7 @@ import { clientUserSelect } from "../common/public-user-select";
 
 @Injectable()
 export class IntercityService {
-  constructor(private prisma: PrismaService, private geoService: GeoService) {}
+  constructor(private prisma: PrismaService, private geoService: GeoService, private cardPayments: CardPaymentsService) {}
 
   private normalizePhoneDigits(value?: string | null) {
     let digits = (value || "").replace(/\D/g, "");
@@ -80,11 +81,12 @@ export class IntercityService {
   }
 
   private normalizePaymentMethod(raw?: string | null, requestType?: string) {
-    const normalized = (raw || "").trim().toUpperCase();
+    const normalizedRaw = (raw || "").trim().toUpperCase();
+    const normalized = normalizedRaw === "BONUS" ? "BONUSES" : normalizedRaw;
     if (normalized === "BONUSES" && requestType?.startsWith("DELIVERY")) {
       throw new BadRequestException("Bonuses are not available for delivery");
     }
-    if (["CASH", "CARD_TRANSFER", "BONUSES"].includes(normalized)) {
+    if (["CASH", "CARD", "CARD_TRANSFER", "BONUSES"].includes(normalized)) {
       return normalized;
     }
     return "CASH";
@@ -217,6 +219,7 @@ export class IntercityService {
         : 0;
 
     const currency = await this.geoService.departureCurrency(fromLat, fromLng, data.fromCity);
+    const paymentCardId = paymentMethod === 'CARD' ? await this.cardPayments.cardForOrder(userId, currency) : null;
     return this.prisma.$transaction(async (tx) => {
       await requireNoActivePassengerOrder(tx, userId);
       return tx.intercityRequest.create({
@@ -237,6 +240,7 @@ export class IntercityService {
         fromAddressSource: fromSource,
         toAddressSource: toSource,
         paymentMethod,
+        paymentCardId,
         comment: this.coerceNonEmptyString(data.comment),
         baggage: this.coerceNonEmptyString(data.baggage),
         seats,
@@ -281,6 +285,7 @@ export class IntercityService {
 
     return {
       ...request,
+      cardPayment: this.cardPayments ? await this.cardPayments.state('INTERCITY',request.id) : null,
       offers: await this.enrichOffers(offers),
     };
   }
@@ -452,8 +457,14 @@ export class IntercityService {
     if (request.status === "CANCELLED") {
       return request;
     }
+    if (request.status === "COMPLETED") throw new BadRequestException('Завершённую поездку нельзя отменить');
 
     return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT id FROM "IntercityRequest" WHERE id=${requestId} FOR UPDATE`;
+      const current = await tx.intercityRequest.findUniqueOrThrow({where:{id:requestId}});
+      if (current.status === 'CANCELLED') return current;
+      if (current.status === 'COMPLETED') throw new BadRequestException('Завершённую поездку нельзя отменить');
+      await tx.tripVerification.updateMany({where:{id:`INTERCITY:${requestId}`,status:'PENDING'},data:{status:'CANCELLED'}});
       await this.refundPassengerBonusForCancelledRequest(
         tx,
         passengerId,
@@ -548,6 +559,11 @@ export class IntercityService {
       if (target === 'IN_PROGRESS') {
         const profile = await tx.driverProfile.findUnique({where:{userId:driverUserId}});
         if (profile) await startTripVerification(tx,'INTERCITY',request,profile.id,driverUserId);
+        if (request.paymentMethod === 'CARD') {
+          const offer=request.selectedOfferId ? await tx.intercityOffer.findUnique({where:{id:request.selectedOfferId}}) : null;
+          if (!offer || offer.requestId!==request.id || offer.driverId!==driverUserId || offer.status!=='ACCEPTED') throw new BadRequestException('Не удалось подтвердить согласованную стоимость поездки');
+          await this.cardPayments.schedule(tx,'INTERCITY',{...request,price:offer.price},driverUserId);
+        }
       }
       if (target === 'CANCELLED') await tx.tripVerification.updateMany({where:{id:`INTERCITY:${requestId}`,status:'PENDING'},data:{status:'CANCELLED'}});
       return tx.intercityRequest.findUniqueOrThrow({where:{id:requestId}});

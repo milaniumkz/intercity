@@ -1,3 +1,4 @@
+import '../../../core/services/payment_fallback_notifier.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -38,6 +39,7 @@ class IntercityRequestPage extends StatefulWidget {
 }
 
 class _IntercityRequestPageState extends State<IntercityRequestPage> {
+  final _paymentNotifier = PaymentFallbackNotifier();
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   final MapController _mapController = MapController();
   final DraggableScrollableController _sheetController =
@@ -87,6 +89,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
       final offers = List<dynamic>.from(request['offers'] as List? ?? const []);
 
       if (!mounted) return;
+      unawaited(_paymentNotifier.notify(context, request, 'PASSENGER'));
       setState(() {
         _request = request;
         _loading = false;

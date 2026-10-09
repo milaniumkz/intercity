@@ -476,6 +476,8 @@ export class DriverService {
         });
         const passengersById = new Map(passengers.map((passenger) => [passenger.id, passenger]));
 
+        const payments = this.prisma.tripCardPayment ? await this.prisma.tripCardPayment.findMany({where:{kind:'INTERCITY',tripId:{in:acceptedRequests.map(r=>r.id)}},select:{tripId:true,status:true,attempts:true,lastError:true}}) : [];
+        const paymentsById = new Map(payments.map(p=>[p.tripId,p]));
         return acceptedRequests.map((request: any) => {
             const offer = Array.isArray(request.offers) ? request.offers[0] : null;
             const seats = Number(offer?.seats ?? request.seats ?? 1);
@@ -494,6 +496,7 @@ export class DriverService {
                 toLat: request.toLat,
                 toLng: request.toLng,
                 paymentMethod: request.paymentMethod,
+                cardPayment: paymentsById.get(request.id) ?? null,
                 date: request.date,
                 seats,
                 price: offer?.price ?? request.price ?? null,

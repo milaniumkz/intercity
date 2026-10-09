@@ -1,3 +1,5 @@
+import '../../../core/services/payment_fallback_notifier.dart';
+import '../../passenger/widgets/saved_payment_cards.dart';
 import '../../../core/utils/current_location.dart';
 import '../../../core/utils/location_session.dart';
 import 'dart:async';
@@ -443,6 +445,8 @@ class _OrderScreenState extends State<OrderScreen> {
   int? _mapHomeSelectedIndex = 0;
   int _orderStep = 0; // 0 mode, 1 route, 2 options, 3 confirm
   String _paymentMethod = paymentMethodCash;
+  bool _savedCardReady = false;
+  String? _savedCardLast4;
   String _vehicleClass = vehicleClassEconomy;
   bool _intercityWholeCabin = false;
   int _intercitySeats = 1;
@@ -616,10 +620,26 @@ class _OrderScreenState extends State<OrderScreen> {
     _cityPreferenceReady = _loadSearchCityPreference();
     _loadCityOptions();
     _loadPassengerRuntimeSettings();
+    unawaited(_loadSavedCardAvailability());
     _draftReady = _restoreBoardDraft();
     if (widget.autoLocateOnStart) {
       unawaited(_startAutomaticLocation());
     }
+  }
+
+  Future<void> _loadSavedCardAvailability() async {
+    try {
+      final response = await _api.get('/payments/cards');
+      final data = response.data;
+      if (!mounted || data is! Map) return;
+      final cards = (data['cards'] as List? ?? [])
+          .whereType<Map>()
+          .where((c) => c['isDefault'] == true);
+      setState(() {
+        _savedCardReady = data['configured'] == true && cards.isNotEmpty;
+        _savedCardLast4 = cards.isEmpty ? null : '${cards.first['last4']}';
+      });
+    } catch (_) {/* Cash and transfer remain available. */}
   }
 
   Future<void> _loadPassengerRuntimeSettings() async {
@@ -3486,9 +3506,32 @@ class _OrderScreenState extends State<OrderScreen> {
                   onTap: () => _selectPaymentAndContinue(paymentMethodCash),
                 ),
                 const SizedBox(height: 14),
+                if (_rideCurrency == 'KZT') ...[
+                  SavedPaymentCards(
+                      apiClient: _api,
+                      onReadyChanged: (ready, last4) {
+                        if (mounted) {
+                          setState(() {
+                            _savedCardReady = ready;
+                            _savedCardLast4 = last4;
+                          });
+                        }
+                      }),
+                  const SizedBox(height: 12),
+                  _boardPaymentRow(
+                      title: 'Банковская карта',
+                      subtitle: _savedCardReady
+                          ? 'Списание при начале поездки · •••• ${_savedCardLast4 ?? ''}'
+                          : 'Сначала добавьте карту выше',
+                      icon: Icons.credit_card_rounded,
+                      selected: _paymentMethod == paymentMethodCard,
+                      onTap: () =>
+                          _selectPaymentAndContinue(paymentMethodCard)),
+                  const SizedBox(height: 12),
+                ],
                 _boardPaymentRow(
-                  title: 'На карту',
-                  subtitle: 'Онлайн-оплата',
+                  title: 'Перевод водителю',
+                  subtitle: 'По реквизитам водителя',
                   icon: Icons.credit_card_rounded,
                   selected: _paymentMethod == paymentMethodCardTransfer,
                   onTap: () =>
@@ -10184,7 +10227,9 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   bool _paymentMethodEnabled(String method) =>
-      paymentMethodsForRequestType(_requestType()).contains(method);
+      paymentMethodsForRequestType(_requestType()).contains(method) &&
+      (method != paymentMethodCard ||
+          (_rideCurrency == 'KZT' && _savedCardReady));
 
   String _nextPaymentMethod(String current) {
     final methods = paymentMethodsForRequestType(_requestType())
@@ -10196,6 +10241,7 @@ class _OrderScreenState extends State<OrderScreen> {
 
   IconData _paymentMethodIcon(String method) {
     switch (method) {
+      case paymentMethodCard:
       case paymentMethodCardTransfer:
         return Icons.credit_card_rounded;
       case paymentMethodBonus:
@@ -10208,8 +10254,10 @@ class _OrderScreenState extends State<OrderScreen> {
 
   String _paymentMethodSubtitle(String method) {
     switch (method) {
+      case paymentMethodCard:
+        return 'Списание при начале поездки · •••• ${_savedCardLast4 ?? ''}';
       case paymentMethodCardTransfer:
-        return 'Онлайн-оплата картой, водителю после завершения';
+        return 'Перевод водителю по реквизитам';
       case paymentMethodBonus:
         return 'Оплата бонусами до 100% стоимости поездки';
       case paymentMethodCash:
@@ -13141,6 +13189,7 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Future<void> _create() async {
+    unawaited(PaymentFallbackNotifier.prime());
     if (_loading) return;
     setState(() => _loading = true);
     try {

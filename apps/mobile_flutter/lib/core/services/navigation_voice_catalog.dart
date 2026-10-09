@@ -38,4 +38,8 @@ const navigationVoiceRecordings = <String, String>{
       "navigation-voice/ru_straight_300.mp3",
   "Через 300 метров следуйте по круговому движению":
       "navigation-voice/ru_roundabout_300.mp3",
+  "Не удалось списать оплату с карты. Способ оплаты переведён на наличные.":
+      "navigation-voice/ru_payment_fallback_0.mp3",
+  "Картадан төлем алынбады. Төлем әдісі қолма-қол ақшаға ауыстырылды.":
+      "navigation-voice/kk_payment_fallback_0.mp3",
 };

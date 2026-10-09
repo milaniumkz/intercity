@@ -154,6 +154,65 @@ model TripVerification {
   @@index([status, completedAt])
 }
 
+model SavedPaymentCard {
+  id String @id @default(uuid())
+  phone String
+  userId String
+  tokenEncrypted String
+  tokenHash String @unique
+  last4 String
+  acquiringId Int
+  demo Boolean
+  isDefault Boolean @default(false)
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([userId,active])
+}
+model CardBinding {
+  id String @id @default(uuid())
+  userId String
+  phone String
+  status String @default("PENDING")
+  providerId String?
+  acquiringId Int
+  demo Boolean
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model TripCardPayment {
+  id String @id
+  kind String
+  tripId String
+  passengerId String
+  driverUserId String
+  cardId String
+  amount Float
+  currency String
+  status String @default("PENDING")
+  attempts Int @default(0)
+  leaseUntil DateTime?
+  nextCheckAt DateTime @default(now())
+  lastError String?
+  paidAt DateTime?
+  refundedAt DateTime?
+  earningsCredited Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([kind,tripId])
+  @@index([status,nextCheckAt])
+}
+model CardPaymentAttempt {
+  id String @id
+  paymentId String
+  number Int
+  providerId String?
+  status String @default("PENDING")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([paymentId,number])
+}
+
 model Wallet {
   id        String          @id @default(uuid())
   userId    String          @unique
@@ -340,6 +399,7 @@ model Order {
   price              Float          @default(0)
   currency           String         @default("KZT")
   priceSource        String?        @default("SYSTEM")
+  paymentCardId      String?
   paymentMethod      String?        @default("CASH")
   vehicleClass       String?
   comment            String?
@@ -619,6 +679,7 @@ model IntercityRequest {
   toManualAddress String?
   fromAddressSource String?
   toAddressSource String?
+  paymentCardId String?
   paymentMethod String         @default("CASH")
   comment     String?
   baggage     String?
