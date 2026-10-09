@@ -12,6 +12,27 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == driver-offers:* ]]; then
+      driver_phone="${TARGET#driver-offers:}"
+      [[ "$driver_phone" =~ ^[78][0-9]{10}$ ]] || { echo "Invalid driver phone" >&2; exit 1; }
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 -v driver_phone="$1"' sh "$driver_phone" <<'SQLOFFERS'
+SELECT now();
+SELECT d.id,d.status,o."isOnline",o."lastLocationAt",s."activityScore"
+FROM "DriverProfile" d JOIN "User" u ON u.id=d."userId"
+LEFT JOIN "DriverOnline" o ON o."driverId"=d.id LEFT JOIN "DriverServiceStats" s ON s."driverId"=d.id
+WHERE right(regexp_replace(u.phone,'[^0-9]','','g'),10)=right(:'driver_phone',10);
+SELECT a.key,a.delta,a.score,a."createdAt" FROM "DriverActivityEvent" a
+JOIN "DriverProfile" d ON d.id=a."driverId" JOIN "User" u ON u.id=d."userId"
+WHERE right(regexp_replace(u.phone,'[^0-9]','','g'),10)=right(:'driver_phone',10)
+ORDER BY a."createdAt" DESC LIMIT 12;
+SELECT ord.id,ord.status,ord."dispatchDriverId",ord."dispatchExpiresAt",ord."updatedAt"
+FROM "Order" ord JOIN "DriverProfile" d ON d.id=ANY(ord."dispatchTriedDriverIds") OR d.id=ord."dispatchDriverId"
+JOIN "User" u ON u.id=d."userId"
+WHERE right(regexp_replace(u.phone,'[^0-9]','','g'),10)=right(:'driver_phone',10)
+ORDER BY ord."updatedAt" DESC LIMIT 10;
+SQLOFFERS
+      exit 0
+    fi
     if [[ "$TARGET" == "rating-storage" ]]; then
       docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQLRATING'
 SELECT to_regclass('public."Complaint"'), to_regclass('public."DriverRating"');
