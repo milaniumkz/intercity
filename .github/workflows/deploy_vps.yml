@@ -29,6 +29,15 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
 
+      - name: Check browser push configuration
+        env:
+          INTERCITY_FIREBASE_WEB_VAPID_KEY: ${{ secrets.INTERCITY_FIREBASE_WEB_VAPID_KEY }}
+        run: |
+          if [[ -z "$INTERCITY_FIREBASE_WEB_VAPID_KEY" ]]; then
+            echo "Missing INTERCITY_FIREBASE_WEB_VAPID_KEY: configure the production environment or repository secret."
+            exit 1
+          fi
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -62,10 +71,6 @@ jobs:
           INTERCITY_FIREBASE_WEB_VAPID_KEY: ${{ secrets.INTERCITY_FIREBASE_WEB_VAPID_KEY }}
         run: |
           test -n "$INTERCITY_API_BASE_URL"
-          if [[ -z "$INTERCITY_FIREBASE_WEB_VAPID_KEY" ]]; then
-            echo "Missing INTERCITY_FIREBASE_WEB_VAPID_KEY: configure the production environment or repository secret."
-            exit 1
-          fi
           bash scripts/build_vps_release_bundle.sh
 
       - name: Upload bundle
