@@ -11,6 +11,43 @@ compose() {
 }
 
 case "$ACTION" in
+  repair-kirovsk-country)
+    [[ "$(cat "$APP_ROOT/current_commit")" == "8a2be71212250194144f134922616588f9fb5254" ]] || { echo 'Release changed'; exit 1; }
+    [[ "$(sha256sum "$APP_ROOT/current/backend/src/geo/geo.service.ts" | cut -d' ' -f1)" == "c62c058d8e6d0cea86afcb8cea1f709317e71190efdb7f6be964b88d74025da9" ]] || { echo 'Source mismatch'; exit 1; }
+    backup_dir="$APP_ROOT/backups/$(date +%Y%m%d-%H%M%S)-kirovsk-country"
+    mkdir -p "$backup_dir"; chmod 700 "$backup_dir"
+    docker exec intercity-postgres sh -c 'exec pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$backup_dir/postgres.sql"
+    test -s "$backup_dir/postgres.sql"
+    grep -q 'PostgreSQL database dump complete' "$backup_dir/postgres.sql"
+    tar -C "$APP_ROOT/shared" -czf "$backup_dir/uploads.tar.gz" uploads
+    tar -tzf "$backup_dir/uploads.tar.gz" >/dev/null
+    docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' <<'SQL'
+BEGIN;
+DO $repair$
+DECLARE old_city "City"%ROWTYPE; duplicate "City"%ROWTYPE; relation RECORD; refs BIGINT;
+BEGIN
+ SELECT * INTO STRICT old_city FROM "City" WHERE id='b9259dbe-1d95-4943-a5fc-ccd4beee1ab0' FOR UPDATE;
+ SELECT * INTO STRICT duplicate FROM "City" WHERE id='9bc26cc6-ac90-522c-a086-2e811e088bc2' FOR UPDATE;
+ IF old_city.name<>'Кировск' OR old_city."countryCode"<>'KZ' OR abs(old_city.lat-67.6609434)>.00001 OR abs(old_city.lng-33.7190394)>.00001 THEN RAISE EXCEPTION 'Legacy city changed'; END IF;
+ IF duplicate.name<>'Кировск' OR duplicate."countryCode"<>'RU' OR abs(duplicate.lat-67.61475)>.00001 OR abs(duplicate.lng-33.67274)>.00001 THEN RAISE EXCEPTION 'Catalog city changed'; END IF;
+ FOR relation IN
+  SELECT c.conrelid::regclass AS table_name,a.attname AS column_name
+  FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=c.conkey[1]
+  WHERE c.contype='f' AND c.confrelid='"City"'::regclass
+ LOOP
+  EXECUTE format('SELECT count(*) FROM %s WHERE %I=$1',relation.table_name,relation.column_name) INTO refs USING duplicate.id;
+  IF refs<>0 THEN RAISE EXCEPTION 'Duplicate city acquired references'; END IF;
+ END LOOP;
+ UPDATE "City" SET "countryCode"='RU',region=duplicate.region,lat=duplicate.lat,lng=duplicate.lng,
+ aliases=ARRAY(SELECT DISTINCT value FROM unnest(old_city.aliases||duplicate.aliases) value ORDER BY value),
+ "updatedAt"=CURRENT_TIMESTAMP WHERE id=old_city.id;
+ DELETE FROM "City" WHERE id=duplicate.id;
+END $repair$;
+COMMIT;
+SELECT "countryCode",name,region,lat,lng FROM "City" WHERE id='b9259dbe-1d95-4943-a5fc-ccd4beee1ab0';
+SQL
+    echo "Country corrected; original city ID, tariff values and order history retained. Backup: $backup_dir"
+    ;;
   status)
     if [[ "$TARGET" == "inspect-city-country" ]]; then
       docker exec -i intercity-backend node <<'JS'
