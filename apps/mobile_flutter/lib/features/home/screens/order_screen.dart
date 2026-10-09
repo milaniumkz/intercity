@@ -25,6 +25,7 @@ import '../../../core/utils/request_flow_utils.dart';
 import '../../../core/utils/route_query.dart';
 import '../../../core/widgets/ic_premium.dart';
 import '../../../core/widgets/intercity_map_fallback.dart';
+import '../../../core/widgets/road_route_layer.dart';
 import '../../../core/widgets/intercity_static_tile_map.dart';
 import '../../passenger/widgets/passenger_bottom_nav.dart';
 
@@ -261,78 +262,6 @@ class _IntercityMapPainter extends CustomPainter {
   bool shouldRepaint(covariant _IntercityMapPainter oldDelegate) {
     return oldDelegate.lineColor != lineColor ||
         oldDelegate.routeColor != routeColor;
-  }
-}
-
-class _BoardCityRoutePainter extends CustomPainter {
-  const _BoardCityRoutePainter({required this.dark});
-
-  final bool dark;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final route = ui.Path()
-      ..moveTo(size.width * 0.25, size.height * 0.56)
-      ..cubicTo(
-        size.width * 0.36,
-        size.height * 0.40,
-        size.width * 0.45,
-        size.height * 0.62,
-        size.width * 0.56,
-        size.height * 0.42,
-      )
-      ..cubicTo(
-        size.width * 0.64,
-        size.height * 0.28,
-        size.width * 0.74,
-        size.height * 0.36,
-        size.width * 0.82,
-        size.height * 0.22,
-      );
-    canvas.drawPath(
-      route,
-      Paint()
-        ..color = AppTheme.primaryColor.withValues(alpha: 0.18)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 18
-        ..strokeCap = StrokeCap.round,
-    );
-    canvas.drawPath(
-      route,
-      Paint()
-        ..color = AppTheme.primaryColor
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 5
-        ..strokeCap = StrokeCap.round,
-    );
-    canvas.drawCircle(
-      Offset(size.width * 0.25, size.height * 0.56),
-      9,
-      Paint()..color = AppTheme.primaryColor,
-    );
-    canvas.drawCircle(
-      Offset(size.width * 0.82, size.height * 0.22),
-      9,
-      Paint()..color = AppTheme.primaryColor,
-    );
-
-    final carCenter = Offset(size.width * 0.62, size.height * 0.36);
-    canvas.save();
-    canvas.translate(carCenter.dx, carCenter.dy);
-    canvas.rotate(0.75);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTWH(-8, -18, 16, 36),
-        const Radius.circular(7),
-      ),
-      Paint()..color = dark ? const Color(0xFFE9DDFF) : const Color(0xFF251B3B),
-    );
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant _BoardCityRoutePainter oldDelegate) {
-    return oldDelegate.dark != dark;
   }
 }
 
@@ -3721,10 +3650,7 @@ class _OrderScreenState extends State<OrderScreen> {
       body: SafeArea(
         child: Stack(
           children: [
-            Positioned.fill(child: _decorativeMap(isDark: isDark)),
-            Positioned.fill(
-              child: CustomPaint(painter: _BoardCityRoutePainter(dark: isDark)),
-            ),
+            Positioned.fill(child: _routeMapPreview(isDark)),
             Positioned(
               left: 18,
               top: 12,
@@ -3908,12 +3834,7 @@ class _OrderScreenState extends State<OrderScreen> {
                     height: 142,
                     child: Stack(
                       children: [
-                        Positioned.fill(child: _decorativeMap(isDark: isDark)),
-                        Positioned.fill(
-                          child: CustomPaint(
-                            painter: _BoardCityRoutePainter(dark: isDark),
-                          ),
-                        ),
+                        Positioned.fill(child: _routeMapPreview(isDark)),
                         Positioned(
                           left: 42,
                           top: 22,
@@ -4482,22 +4403,12 @@ class _OrderScreenState extends State<OrderScreen> {
                 Expanded(
                   child: Stack(
                     children: [
-                      Positioned.fill(
-                        child: Opacity(
-                          opacity: 0.36,
-                          child: _decorativeMap(isDark: true),
-                        ),
-                      ),
-                      const Positioned.fill(
-                        child: CustomPaint(
-                          painter: _BoardCityRoutePainter(dark: true),
-                        ),
-                      ),
+                      Positioned.fill(child: _routeMapPreview(true)),
                       Positioned(
                         left: 38,
                         top: 10,
                         child: _boardDarkMapBadge(
-                          'Алматы',
+                          _displayFromAddress,
                           Icons.trip_origin_rounded,
                         ),
                       ),
@@ -4505,7 +4416,7 @@ class _OrderScreenState extends State<OrderScreen> {
                         right: 32,
                         bottom: 142,
                         child: _boardDarkMapBadge(
-                          'Астана',
+                          _displayToAddress,
                           Icons.location_on_rounded,
                         ),
                       ),
@@ -5287,12 +5198,7 @@ class _OrderScreenState extends State<OrderScreen> {
                     height: 176,
                     child: Stack(
                       children: [
-                        Positioned.fill(child: _decorativeMap(isDark: isDark)),
-                        Positioned.fill(
-                          child: CustomPaint(
-                            painter: _BoardCityRoutePainter(dark: isDark),
-                          ),
-                        ),
+                        Positioned.fill(child: _routeMapPreview(isDark)),
                         const Positioned(
                           left: 34,
                           bottom: 32,
@@ -6090,17 +5996,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 Expanded(
                   child: Stack(
                     children: [
-                      Positioned.fill(
-                        child: Opacity(
-                          opacity: 0.42,
-                          child: _decorativeMap(isDark: true),
-                        ),
-                      ),
-                      const Positioned.fill(
-                        child: CustomPaint(
-                          painter: _BoardCityRoutePainter(dark: true),
-                        ),
-                      ),
+                      Positioned.fill(child: _routeMapPreview(true)),
                       Positioned(
                         left: 6,
                         top: 28,
@@ -7061,6 +6957,8 @@ class _OrderScreenState extends State<OrderScreen> {
       children: [
         Positioned.fill(child: IntercityMapFallback(dark: isDark)),
         FlutterMap(
+          key: ValueKey(
+              'route-${from.latitude}-${from.longitude}-${to.latitude}-${to.longitude}'),
           options: MapOptions(initialCenter: center, initialZoom: zoom),
           children: [
             TileLayer(
@@ -7068,15 +6966,7 @@ class _OrderScreenState extends State<OrderScreen> {
               subdomains: AppConstants.mapTileSubdomains,
               userAgentPackageName: 'com.milanium.intercity',
             ),
-            PolylineLayer(
-              polylines: [
-                Polyline(
-                  points: [from, to],
-                  color: AppTheme.primaryColor,
-                  strokeWidth: 5,
-                ),
-              ],
-            ),
+            RoadRouteLayer(from: from, to: to, color: AppTheme.primaryColor),
             MarkerLayer(
               markers: [
                 Marker(
@@ -12374,7 +12264,7 @@ class _OrderScreenState extends State<OrderScreen> {
         query,
         anchor: anchor,
         cityIdOverride: cityIdOverride,
-      ).timeout(const Duration(seconds: 6));
+      ).timeout(const Duration(seconds: 12));
     } catch (_) {
       localFailed = true;
       anchored = const [];
@@ -12650,11 +12540,9 @@ class _OrderScreenState extends State<OrderScreen> {
       return const [];
     }
 
-    withDistance.sort(
-      (a, b) => (a['meters'] as double).compareTo(b['meters'] as double),
-    );
+    // Keep provider relevance: an exact house must precede a closer landmark.
     return withDistance
-        .take(5)
+        .take(8)
         .map((e) => Map<String, dynamic>.from(e['item'] as Map))
         .toList();
   }

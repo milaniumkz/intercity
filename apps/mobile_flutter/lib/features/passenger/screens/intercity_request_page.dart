@@ -15,6 +15,7 @@ import '../../../core/utils/location_display.dart';
 import '../../../core/utils/navigation_back.dart';
 import '../../../core/utils/request_flow_utils.dart';
 import '../../../core/widgets/intercity_map_fallback.dart';
+import '../../../core/widgets/road_route_layer.dart';
 import '../../shared/widgets/order_chat_sheet.dart';
 import '../widgets/passenger_bottom_nav.dart';
 
@@ -1514,15 +1515,11 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                 ],
               ),
             if (_fromPoint != null && _toPoint != null)
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: [_fromPoint!, _toPoint!],
-                    strokeWidth: 5,
-                    color: AppTheme.primaryColor,
-                  ),
-                ],
-              ),
+              RoadRouteLayer(
+                  from: _fromPoint!,
+                  to: _toPoint!,
+                  strokeWidth: 5,
+                  color: AppTheme.primaryColor),
           ],
         ),
       ],

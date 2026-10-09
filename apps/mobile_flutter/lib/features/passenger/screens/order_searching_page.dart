@@ -17,6 +17,7 @@ import '../../../core/utils/error_message_ru.dart';
 import '../../../core/utils/navigation_back.dart';
 import '../../../core/widgets/ic_premium.dart';
 import '../../../core/widgets/intercity_map_fallback.dart';
+import '../../../core/widgets/road_route_layer.dart';
 import '../../shared/widgets/order_chat_sheet.dart';
 import '../widgets/driver_rating_dialog.dart';
 import '../widgets/passenger_bottom_nav.dart';
@@ -1399,25 +1400,19 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                 ],
               ),
             if (_driverPoint != null && _fromPoint != null && step <= 3)
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: [_driverPoint!, _fromPoint!],
-                    strokeWidth: 4,
-                    color: Colors.orange,
-                  ),
-                ],
-              ),
-            if (_fromPoint != null && _toPoint != null && step >= 4)
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: [_fromPoint!, _toPoint!],
-                    strokeWidth: 4,
-                    color: AppTheme.primaryColor,
-                  ),
-                ],
-              ),
+              RoadRouteLayer(
+                  from: _driverPoint!,
+                  to: _fromPoint!,
+                  strokeWidth: 4,
+                  color: Colors.orange),
+            if (_fromPoint != null &&
+                _toPoint != null &&
+                (step >= 4 || _driverPoint == null))
+              RoadRouteLayer(
+                  from: _fromPoint!,
+                  to: _toPoint!,
+                  strokeWidth: 4,
+                  color: AppTheme.primaryColor),
           ],
         ),
       ],

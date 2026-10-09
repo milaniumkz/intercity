@@ -1,7 +1,7 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const {GeoService} = require('../dist/src/geo/geo.service');
-const makeGeo = () => new GeoService({city:{findMany:async()=>[],findFirst:async()=>null}}, {get:()=>undefined});
+const makeGeo = () => {const geo = new GeoService({city:{findMany:async()=>[],findFirst:async()=>null}}, {get:()=>undefined});geo.fetchPhotonSearchResults=async()=>[];return geo;};
 
 test('city prefix search finds Shemonaikha locally, excludes unrelated places and duplicates', async()=>{
  const geo=makeGeo();geo.fetchCitySearchResults=async()=>{throw Error('must not need provider')};
@@ -33,10 +33,9 @@ test('address provider failure does not discard successful later query',async()=
  assert((await geo.searchLocations('Ленина 10',54.989,73.368)).length>0);
 });
 
-test('NoRoute result still returns numeric fallback distance for fare calculation',async()=>{
+test('NoRoute never returns a fictitious air-distance fare',async()=>{
  const geo=makeGeo();geo.fetchGeo=async()=>({json:async()=>({code:'NoRoute',routes:[]})});
- const route=await geo.getRoute(54.989,73.368,55.009,73.388);
- assert(route.distance>0);assert(Number.isFinite(route.duration));
+ await assert.rejects(geo.getRoute(54.989,73.368,55.009,73.388),e=>e.getStatus()===503 && e.getResponse().code==='ROAD_ROUTE_UNAVAILABLE');
 });
 
 test('real Omsk street result is retained when OSM labels municipality instead of city',()=>{
