@@ -34,6 +34,18 @@ SELECT q.id, q.status, q."selectedDriverId", q."updatedAt"
 FROM "IntercityRequest" q JOIN "User" u ON u.id=q."selectedDriverId"
 WHERE regexp_replace(u.phone, '[^0-9]', '', 'g') LIKE '%7052597368'
 AND q.status IN ('ACCEPTED','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS');
+SELECT right(regexp_replace(u.phone, '[^0-9]', '', 'g'), 4) AS phone_last4,
+ d.id, d.status, o."isOnline", c.name AS city, o."lastLocationAt", s."activityScore",
+ r."ratingAvg", r."ratingCount", f."hasCheckers", f."hasBranding", s."serviceStartAt",
+ (b."bonusActiveUntil">now()) AS fuel_bonus_active
+FROM "DriverProfile" d JOIN "User" u ON u.id=d."userId"
+LEFT JOIN "DriverOnline" o ON o."driverId"=d.id
+LEFT JOIN "City" c ON c.id=o."cityId"
+LEFT JOIN "DriverServiceStats" s ON s."driverId"=d.id
+LEFT JOIN "DriverRating" r ON r."driverId"=d.id
+LEFT JOIN "DriverPriorityFlags" f ON f."driverId"=d.id
+LEFT JOIN "DriverPartnerFuelBonus" b ON b."driverId"=d.id
+WHERE o."isOnline"=true OR s."activityScore"=88;
 SQLDRIVER
       exit 0
     fi
