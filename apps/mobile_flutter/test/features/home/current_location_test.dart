@@ -79,6 +79,7 @@ void main() {
           tester.getRect(find.byKey(const ValueKey('passenger-visible-map')));
       final panel =
           tester.getRect(find.byKey(const ValueKey('passenger-order-panel')));
+      expect(find.byKey(const ValueKey('city-ride-selector')), findsNothing);
       expect(map.contains(marker.center), isTrue);
       expect(marker.bottom, lessThan(panel.top));
       expect(marker.center.dy, closeTo(map.center.dy, 1));

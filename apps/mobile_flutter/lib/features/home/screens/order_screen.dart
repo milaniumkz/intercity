@@ -2018,38 +2018,6 @@ class _OrderScreenState extends State<OrderScreen> {
         child: LayoutBuilder(
           builder: (context, constraints) => Column(
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                        decoration: BoxDecoration(
-                          color:
-                              theme.colorScheme.surface.withValues(alpha: 0.92),
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                            color:
-                                AppTheme.primaryColor.withValues(alpha: 0.14),
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.10),
-                              blurRadius: 18,
-                              offset: const Offset(0, 8),
-                            ),
-                          ],
-                        ),
-                        child: _citySelectionButton(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
               Expanded(
                 child: Stack(
                   key: const ValueKey('passenger-visible-map'),
