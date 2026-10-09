@@ -42,6 +42,11 @@ jobs:
           ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
           echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
           echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+      - name: Check geocoder credential presence
+        env:
+          YANDEX_GEOCODER_API_KEY: ${{ secrets.YANDEX_GEOCODER_API_KEY }}
+        run: |
+          if [[ -n "$YANDEX_GEOCODER_API_KEY" ]]; then echo "Actions geocoder key configured"; else echo "Actions geocoder key missing"; fi
       - name: Run operation
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}

@@ -12,6 +12,12 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "geo-key-status" ]]; then
+      docker exec -i intercity-backend node <<'JS'
+for (const name of ['YANDEX_GEOCODER_API_KEY','YANDEX_MAPS_API_KEY']) console.log(name, process.env[name]?.trim() ? 'configured' : 'missing');
+JS
+      exit 0
+    fi
     if [[ "$TARGET" == "verify-active" ]]; then
       docker exec -i intercity-backend node <<'JS'
 const {PrismaClient}=require('@prisma/client');const jwt=require('jsonwebtoken');const p=new PrismaClient();
