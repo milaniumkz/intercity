@@ -35,7 +35,9 @@ messaging.onBackgroundMessage((payload) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const payload = event.notification.data || {};
+  const notificationData = event.notification.data || {};
+  // Automatically displayed FCM notifications wrap our payload in FCM_MSG.
+  const payload = notificationData.FCM_MSG?.data || notificationData;
   const targetRoute = payload.route || '/profile';
   const targetUrl = new URL(targetRoute.startsWith('/#') ? targetRoute : `/#${targetRoute}`, self.location.origin).href;
 
