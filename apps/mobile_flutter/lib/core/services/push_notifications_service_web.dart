@@ -84,6 +84,22 @@ class PushNotificationsService {
     }
   }
 
+  Future<void> cancelDriverOfferNotification(String orderId) async {
+    _activeNotifications.remove('driver-offer-${orderId.hashCode}')?.close();
+    try {
+      final registration = await web.window.navigator.serviceWorker.ready.toDart
+          .timeout(const Duration(seconds: 2));
+      final notifications =
+          (await registration.getNotifications().toDart).toDart;
+      for (final notification in notifications) {
+        if (notification.tag == 'driver-offer-${orderId.hashCode}' ||
+            notification.tag == 'driver-offer-$orderId') {
+          notification.close();
+        }
+      }
+    } catch (_) {}
+  }
+
   Future<void> showDriverOfferNotification({
     required String orderId,
     required String fromAddress,

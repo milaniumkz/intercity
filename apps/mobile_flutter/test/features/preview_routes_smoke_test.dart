@@ -81,12 +81,12 @@ void main() {
     ('/driver/verification/personal', 'Личные данные'),
     ('/driver/verification/car', 'Информация'),
     ('/driver/verification/docs', 'Документы'),
-    ('/driver/home/driver_home', 'Доступные заказы'),
+    ('/driver/home/driver_home', 'Баланс'),
     ('/driver/home/fixed', 'Фиксированный заказ'),
     ('/driver/home/auction', 'Аукционный заказ'),
     ('/driver/home/offer', 'Предложите свою цену'),
     ('/driver/home/chosen', 'Пассажир выбрал вас'),
-    ('/driver/home/active', 'Доступные заказы'),
+    ('/driver/home/active', 'Баланс'),
     ('/driver/trip-create', 'Доступные заказы'),
     ('/driver/trip-create/detail', 'Детали заявки'),
     ('/driver/trip-create/commission', 'Подтверждение'),
@@ -562,7 +562,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.textContaining('Доступные заказы'), findsWidgets);
+    expect(find.textContaining('Баланс'), findsWidgets);
   });
 
   testWidgets('driver profile quick actions are interactive', (tester) async {
@@ -641,7 +641,8 @@ void main() {
       await tester.tap(backButton.first);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 900));
-      expect(find.textContaining(expectedText), findsWidgets);
+      expect(find.textContaining(expectedText), findsWidgets,
+          reason: 'Back from $route should show $expectedText');
     }
 
     await tapBackAndExpect('/profile/settings', 'Профиль');
@@ -649,10 +650,10 @@ void main() {
     await tapBackAndExpect('/forgot-password', 'Войдите');
     await tapBackAndExpect('/register', 'Войдите');
     await tapBackAndExpect('/intercity/request/active', 'Мои поездки');
-    await tapBackAndExpect('/driver/wallet', 'Доступные заказы');
+    await tapBackAndExpect('/driver/wallet', 'Баланс');
     await tapBackAndExpect('/driver/trip-create/detail', 'Доступные заказы');
-    await tapBackAndExpect('/driver/verification/docs', 'Доступные заказы');
-    await tapBackAndExpect('/driver/profile', 'Доступные заказы');
+    await tapBackAndExpect('/driver/verification/docs', 'Баланс');
+    await tapBackAndExpect('/driver/profile', 'Баланс');
   });
 }
 

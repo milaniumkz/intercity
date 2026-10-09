@@ -11,8 +11,8 @@ export function driverPriority(driver: any, now = new Date()) {
             rule: 'Подтверждённая шашка на автомобиле: +5 баллов.' },
         { key: 'branding', label: 'Обклейка', points: driver.priorityFlags?.hasBranding ? 10 : 0,
             rule: 'Подтверждённая фирменная обклейка: +10 баллов.' },
-        { key: 'rating', label: 'Рейтинг выше 4,9', points: driver.rating?.ratingAvg > 4.9 ? 10 : 0,
-            rule: 'Рейтинг строго выше 4,9: +10 баллов. При снижении до 4,9 или ниже этот бонус перестаёт действовать.' },
+        { key: 'rating', label: 'Рейтинг выше 4,9', points: driver.rating?.ratingCount > 0 && driver.rating?.ratingAvg > 4.9 ? 10 : 0,
+            rule: 'При наличии оценок рейтинг строго выше 4,9: +10 баллов. При снижении до 4,9 или ниже этот бонус перестаёт действовать.' },
         { key: 'service', label: 'Стаж в сервисе', points: days * 2,
             rule: 'Каждые полные сутки с даты подключения: +2 балла. Дата подключения устанавливается при одобрении профиля.' },
         { key: 'fuel', label: 'Партнёрская заправка',
@@ -35,7 +35,7 @@ export function driverPerformance(driver: any, now = new Date()) {
         score >= DRIVER_ACTIVITY_RULES.yellowFrom ? 'yellow' : 'red';
     return {
         activity: { score, blocked, blockedUntil, level, rules: DRIVER_ACTIVITY_RULES },
-        rating: { average: driver.rating?.ratingAvg ?? null, count: driver.rating?.ratingCount ?? 0 },
+        rating: { average: driver.rating?.ratingCount > 0 ? driver.rating.ratingAvg : null, count: driver.rating?.ratingCount ?? 0 },
         priority: driverPriority(driver, now),
     };
 }

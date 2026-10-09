@@ -24,8 +24,8 @@ test('Firebase HTTP v1 authenticates, caches tokens and sends audible driver off
     const message = JSON.parse(calls[1].options.body).message;
     assert.equal(message.token, 'device-token');
     assert.equal(message.data.type, 'driver_offer');
-    assert.equal(message.android.notification.sound, 'default');
-    assert.equal(message.apns.payload.aps.sound, 'default');
+    assert.equal(message.android.notification.sound, 'intercity_order');
+    assert.equal(message.apns.payload.aps.sound, 'intercity_order.wav');
     assert.equal(message.webpush.headers.TTL, '30');
   } finally {
     global.fetch = originalFetch;

@@ -1,0 +1,57 @@
+name: Native notification builds
+
+on:
+  pull_request:
+    paths:
+      - 'apps/mobile_flutter/lib/core/services/driver_offer_sound*'
+      - 'apps/mobile_flutter/lib/core/services/push_notifications_service_native.dart'
+      - 'apps/mobile_flutter/assets/sounds/**'
+      - 'apps/mobile_flutter/android/**'
+      - 'apps/mobile_flutter/ios/**'
+      - 'apps/mobile_flutter/pubspec*'
+      - '.github/workflows/native_notifications_verify.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Compile Android notifications
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.1'
+          channel: stable
+          cache: true
+      - name: Use runner JDK instead of the local Mac JDK path
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('apps/mobile_flutter/android/gradle.properties')
+          path.write_text('\n'.join(line for line in path.read_text().splitlines() if not line.startswith('org.gradle.java.home=')) + '\n')
+          PY
+      - name: Compile APK without release credentials
+        working-directory: apps/mobile_flutter
+        run: flutter build apk --debug
+  ios:
+    name: Compile iPhone notifications
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.1'
+          channel: stable
+          cache: true
+      - name: Compile iPhone app without signing or publishing
+        working-directory: apps/mobile_flutter
+        run: flutter build ios --release --no-codesign
