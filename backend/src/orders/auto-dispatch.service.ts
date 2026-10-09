@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { PushService } from '../notifications/push.service';
 
-interface DriverScore {
+export interface DriverScore {
     driverId: string;
     totalScore: number;
     distanceScore: number;
@@ -13,6 +13,11 @@ interface DriverScore {
     activityScore: number;
     priorityScore: number;
     randomJitter: number;
+}
+
+export function compareDriverScores(a: DriverScore, b: DriverScore) {
+    return b.priorityScore - a.priorityScore || b.activityScore - a.activityScore ||
+        b.ratingScore - a.ratingScore || b.distanceScore - a.distanceScore || a.driverId.localeCompare(b.driverId);
 }
 
 @Injectable()
@@ -101,7 +106,7 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
             }
             const scored = await Promise.all(remaining.map(async driver => ({driver,
                 score: await this.computeScore(driver, order.fromLat, order.fromLng)})));
-            scored.sort((a, b) => b.score.totalScore - a.score.totalScore);
+            scored.sort((a, b) => compareDriverScores(a.score, b.score));
             const best = scored[0];
             const expiresAt = new Date(now.getTime() + settings.dispatchTimeoutSec * 1000);
             const changed = await tx.order.updateMany({

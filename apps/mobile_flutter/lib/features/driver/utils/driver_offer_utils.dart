@@ -79,3 +79,6 @@ String _normalizeAddress(dynamic raw, {required String fallback}) {
   if (text.isEmpty) return fallback;
   return text;
 }
+
+String driverOfferIdentity(Map<String, dynamic> order) =>
+    '${order['id'] ?? ''}:${order['offerExpiresAt'] ?? order['dispatchExpiresAt'] ?? ''}';
