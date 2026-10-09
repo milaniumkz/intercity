@@ -12,59 +12,11 @@ compose() {
 
 case "$ACTION" in
   status)
-    if [[ "$TARGET" == "driver-2153-dispatch" ]]; then
-      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -x -v ON_ERROR_STOP=1' <<'SQLDISPATCH'
-SELECT q.id, q.status, q.mode, q."requestType", c.name AS city, q."driverId", q."dispatchDriverId",
- q."dispatchExpiresAt", q."dispatchRetryAt", q."dispatchTriedDriverIds", q."createdAt", q."fromLat", q."fromLng"
-FROM "Order" q LEFT JOIN "City" c ON c.id=q."cityId"
-WHERE q.status IN ('CREATED','SEARCHING_DRIVER','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
-ORDER BY q."createdAt" DESC LIMIT 20;
-SELECT q.id, q.status, q."updatedAt" FROM "IntercityRequest" q
-WHERE q."selectedDriverId"=(SELECT "userId" FROM "DriverProfile" WHERE id='f9e18ab4-ef0b-4695-8769-5c6ae57403c7')
-AND q.status IN ('ACCEPTED','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS');
-SELECT o."isOnline", o."cityId", o."lastLat", o."lastLng", o."lastLocationAt", d."acceptCityFixed", d."acceptDelivery", d."acceptCargo", w.money,
- s."activityBlockedUntil", s."activityScore" FROM "DriverProfile" d
-LEFT JOIN "DriverOnline" o ON o."driverId"=d.id LEFT JOIN "Wallet" w ON w."userId"=d."userId"
-LEFT JOIN "DriverServiceStats" s ON s."driverId"=d.id WHERE d.id='f9e18ab4-ef0b-4695-8769-5c6ae57403c7';
-SELECT key,value FROM "AppSettings" WHERE key IN ('driverMinOnlineBalance','driverMinOnlineBalanceRub','dispatchSearchRadiusKm','dispatchMinFreshSec');
-SQLDISPATCH
-      exit 0
-    fi
-    if [[ "$TARGET" == "driver-7052597368" ]]; then
-      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -x -v ON_ERROR_STOP=1' <<'SQLDRIVER'
-SELECT d.id, d.status, d."acceptCityFixed", o."isOnline", c.name AS city,
- o."lastLat", o."lastLng", o."lastLocationAt", r."ratingAvg", r."ratingCount",
- s."activityScore", s."activityBlockedUntil", w.money, w."moneyRub"
-FROM "User" u JOIN "DriverProfile" d ON d."userId"=u.id
-LEFT JOIN "DriverOnline" o ON o."driverId"=d.id
-LEFT JOIN "City" c ON c.id=o."cityId"
-LEFT JOIN "DriverRating" r ON r."driverId"=d.id
-LEFT JOIN "DriverServiceStats" s ON s."driverId"=d.id
-LEFT JOIN "Wallet" w ON w."userId"=u.id
-WHERE regexp_replace(u.phone, '[^0-9]', '', 'g') LIKE '%7052597368';
-SELECT q.id, q.status, q."driverId", q."dispatchDriverId", q."dispatchExpiresAt", q."createdAt"
-FROM "Order" q JOIN "DriverProfile" d ON d.id=q."driverId" OR d.id=q."dispatchDriverId"
-JOIN "User" u ON u.id=d."userId"
-WHERE regexp_replace(u.phone, '[^0-9]', '', 'g') LIKE '%7052597368'
-AND q.status IN ('SEARCHING_DRIVER','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS')
-ORDER BY q."createdAt" DESC;
-SELECT q.id, q.status, q."selectedDriverId", q."updatedAt"
-FROM "IntercityRequest" q JOIN "User" u ON u.id=q."selectedDriverId"
-WHERE regexp_replace(u.phone, '[^0-9]', '', 'g') LIKE '%7052597368'
-AND q.status IN ('ACCEPTED','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS');
-SELECT right(regexp_replace(u.phone, '[^0-9]', '', 'g'), 4) AS phone_last4,
- d.id, d.status, o."isOnline", c.name AS city, o."lastLocationAt", s."activityScore",
- r."ratingAvg", r."ratingCount", f."hasCheckers", f."hasBranding", s."serviceStartAt",
- (b."bonusActiveUntil">now()) AS fuel_bonus_active
-FROM "DriverProfile" d JOIN "User" u ON u.id=d."userId"
-LEFT JOIN "DriverOnline" o ON o."driverId"=d.id
-LEFT JOIN "City" c ON c.id=o."cityId"
-LEFT JOIN "DriverServiceStats" s ON s."driverId"=d.id
-LEFT JOIN "DriverRating" r ON r."driverId"=d.id
-LEFT JOIN "DriverPriorityFlags" f ON f."driverId"=d.id
-LEFT JOIN "DriverPartnerFuelBonus" b ON b."driverId"=d.id
-WHERE o."isOnline"=true OR s."activityScore"=88;
-SQLDRIVER
+    if [[ "$TARGET" == "rating-storage" ]]; then
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQLRATING'
+SELECT to_regclass('public."Complaint"'), to_regclass('public."DriverRating"');
+SELECT column_name FROM information_schema.columns WHERE table_name='Complaint' ORDER BY ordinal_position;
+SQLRATING
       exit 0
     fi
     if [[ "$TARGET" == "release-lockfile" ]]; then
