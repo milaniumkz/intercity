@@ -659,7 +659,12 @@ class _OrderScreenState extends State<OrderScreen> {
 
   bool get _useIntercityBoardUi => _modeIndex != 2;
 
-  void _goOrderBoard(String marker) {
+  Future<void> _goOrderBoard(String marker) async {
+    await _saveBoardDraft();
+    if (!mounted) return;
+    if (marker == 'routeprice' && _modeIndex == 0 && _cityModeIndex == 0) {
+      marker = 'fixed';
+    }
     final dark = routeHas(context, 'dark=1') ? '?dark=1' : '';
     context.go('/order/$marker$dark');
   }
@@ -668,6 +673,8 @@ class _OrderScreenState extends State<OrderScreen> {
     final from = _fromLocation;
     final to = _toLocation;
     final draft = <String, dynamic>{
+      'vehicleClass': _vehicleClass,
+      'paymentMethod': _paymentMethod,
       'mapHomeSelectedIndex': _mapHomeSelectedIndex,
       'modeIndex': _modeIndex,
       'cityModeIndex': _cityModeIndex,
@@ -730,6 +737,8 @@ class _OrderScreenState extends State<OrderScreen> {
                         : _cityModeIndex == 1
                             ? 1
                             : 0);
+        _vehicleClass = (draft['vehicleClass'] ?? _vehicleClass).toString();
+        _paymentMethod = (draft['paymentMethod'] ?? _paymentMethod).toString();
         _fromAddress = (draft['fromAddress'] ?? '').toString();
         _toAddress = (draft['toAddress'] ?? '').toString();
         _setAddressFieldValue(
@@ -811,7 +820,7 @@ class _OrderScreenState extends State<OrderScreen> {
     if (route == 'order') {
       return;
     }
-    _goOrderBoard(route);
+    _goOrderBoard(modeIndex == 0 && cityModeIndex == 0 ? 'class' : route);
   }
 
   void _selectMapHomeFare(int index) {
@@ -848,7 +857,7 @@ class _OrderScreenState extends State<OrderScreen> {
       _goOrderBoard('auction');
       return;
     }
-    _goOrderBoard('address');
+    _goOrderBoard('class');
   }
 
   void _ensureBoardPickupPoint() {
@@ -914,7 +923,8 @@ class _OrderScreenState extends State<OrderScreen> {
       if (_manualAddressForFrom || _cityModeIndex == 1) {
         _goOrderBoard(_cityModeIndex == 1 ? 'auction' : 'address');
       } else {
-        await _continueBoardFixedOrder();
+        await _board();
+        _goOrderBoard('fixed');
       }
     }
   }
@@ -926,7 +936,8 @@ class _OrderScreenState extends State<OrderScreen> {
       _goOrderBoard(_cityModeIndex == 1 ? 'auction' : 'address');
       return;
     }
-    await _continueBoardFixedOrder();
+    await _board();
+    _goOrderBoard('fixed');
   }
 
   Future<void> _continueBoardAuctionOrder() async {
@@ -1009,7 +1020,7 @@ class _OrderScreenState extends State<OrderScreen> {
       _goOrderBoard('address');
       return;
     }
-    _goOrderBoard('routeprice');
+    _goOrderBoard('payment');
   }
 
   Future<void> _continueBoardIntercityStart() async {
@@ -1093,12 +1104,6 @@ class _OrderScreenState extends State<OrderScreen> {
     return '${price.toStringAsFixed(0)} $_currencySymbol';
   }
 
-  String _displayClassPrice(double multiplier) {
-    final price = _boardPrice;
-    if (price == null) return 'После расчёта';
-    return '${(price * multiplier).round()} $_currencySymbol';
-  }
-
   String get _displayRouteMeta {
     final duration = _boardDuration;
     final distance = _boardDistance;
@@ -1108,15 +1113,20 @@ class _OrderScreenState extends State<OrderScreen> {
     return parts.isEmpty ? 'После выбора точек' : parts.join(' · ');
   }
 
-  void _selectVehicleClassAndContinue(String value) {
-    setState(() => _vehicleClass = value);
-    _goOrderBoard('payment');
+  Future<void> _selectVehicleClassAndContinue(String value) async {
+    setState(() {
+      _vehicleClass = value;
+      _boardPrice = null;
+      _boardRequestId++;
+    });
+    await _goOrderBoard('fixed');
+    if (mounted) _scheduleAutoBoard();
   }
 
   void _selectPaymentAndContinue(String value) {
     if (!_paymentMethodEnabled(value)) return;
     setState(() => _paymentMethod = value);
-    _goOrderBoard('confirm');
+    unawaited(_saveBoardDraft());
   }
 
   Future<void> _loadSearchCityPreference() async {
@@ -2008,38 +2018,6 @@ class _OrderScreenState extends State<OrderScreen> {
         child: LayoutBuilder(
           builder: (context, constraints) => Column(
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                        decoration: BoxDecoration(
-                          color:
-                              theme.colorScheme.surface.withValues(alpha: 0.92),
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                            color:
-                                AppTheme.primaryColor.withValues(alpha: 0.14),
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.10),
-                              blurRadius: 18,
-                              offset: const Offset(0, 8),
-                            ),
-                          ],
-                        ),
-                        child: _citySelectionButton(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
               Expanded(
                 child: Stack(
                   key: const ValueKey('passenger-visible-map'),
@@ -3169,7 +3147,11 @@ class _OrderScreenState extends State<OrderScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Цена рассчитается автоматически',
+                    _loading
+                        ? 'Рассчитываем стоимость…'
+                        : _boardPrice == null
+                            ? 'Укажите адрес назначения'
+                            : _displayPrice,
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w900,
                     ),
@@ -3185,7 +3167,7 @@ class _OrderScreenState extends State<OrderScreen> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Стоимость поездки по фиксированному тарифу будет известна после указания конечной точки.',
+                          '${vehicleClassLabel(_vehicleClass)} · $_displayRouteMeta',
                           style: TextStyle(
                             color: theme.colorScheme.onSurfaceVariant,
                             fontSize: 12,
@@ -3394,7 +3376,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 _boardClassRow(
                   'Эконом',
                   'Для повседневных поездок',
-                  _displayClassPrice(1),
+                  'После выбора адреса',
                   Icons.local_taxi_rounded,
                   _vehicleClass == vehicleClassEconomy,
                   onTap: () =>
@@ -3404,7 +3386,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 _boardClassRow(
                   'Оптимал',
                   'Больше пространства и комфорта',
-                  _displayClassPrice(1.18),
+                  'После выбора адреса',
                   Icons.directions_car_filled_rounded,
                   _vehicleClass == vehicleClassOptimal,
                   onTap: () =>
@@ -3414,7 +3396,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 _boardClassRow(
                   'Комфорт',
                   'Максимальный комфорт в каждой детали',
-                  _displayClassPrice(1.38),
+                  'После выбора адреса',
                   Icons.check_circle_rounded,
                   _vehicleClass == vehicleClassComfort,
                   onTap: () =>
@@ -3424,7 +3406,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 _boardClassRow(
                   'Бизнес',
                   'Премиальный уровень и сервис',
-                  _displayClassPrice(1.72),
+                  'После выбора адреса',
                   Icons.workspace_premium_rounded,
                   _vehicleClass == vehicleClassBusiness,
                   onTap: () =>
@@ -3513,7 +3495,26 @@ class _OrderScreenState extends State<OrderScreen> {
                   selected: _paymentMethod == paymentMethodBonus,
                   onTap: () => _selectPaymentAndContinue(paymentMethodBonus),
                 ),
-                const SizedBox(height: 152),
+                const SizedBox(height: 24),
+                Text(_displayPrice,
+                    style: theme.textTheme.headlineSmall
+                        ?.copyWith(fontWeight: FontWeight.w900)),
+                Text(vehicleClassLabel(_vehicleClass)),
+                const SizedBox(height: 16),
+                const Text(
+                    'Нажимая «Заказать», вы принимаете условия пользовательского соглашения.',
+                    style: TextStyle(fontSize: 12)),
+                const SizedBox(height: 12),
+                ICGradientButton(
+                    loading: _loading,
+                    label: 'Заказать',
+                    onPressed: _loading ? null : _create),
+                const SizedBox(height: 12),
+                if (_statusText.isNotEmpty)
+                  Text(_statusText,
+                      style:
+                          TextStyle(color: theme.colorScheme.onSurfaceVariant)),
+                const SizedBox(height: 24),
                 Row(
                   children: [
                     const Icon(
@@ -6617,14 +6618,18 @@ class _OrderScreenState extends State<OrderScreen> {
                 ],
               ),
             ),
-            Text(
-              price,
-              style: const TextStyle(
-                color: AppTheme.primaryColor,
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
+            SizedBox(
+                width: 90,
+                child: Text(
+                  price,
+                  maxLines: 2,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    color: AppTheme.primaryColor,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                )),
           ],
         ),
       ),
@@ -13034,6 +13039,7 @@ class _OrderScreenState extends State<OrderScreen> {
     final modeSnapshot = _mode();
     final requestTypeSnapshot = _requestType();
     final paymentMethodSnapshot = _paymentMethod;
+    final vehicleClassSnapshot = _vehicleClass;
     setState(() => _loading = true);
     try {
       if (!_supportsSystemPrice) {
@@ -13086,6 +13092,7 @@ class _OrderScreenState extends State<OrderScreen> {
           _toLocation != toSnapshot ||
           _mode() != modeSnapshot ||
           _paymentMethod != paymentMethodSnapshot ||
+          _vehicleClass != vehicleClassSnapshot ||
           _requestType() != requestTypeSnapshot) {
         return;
       }

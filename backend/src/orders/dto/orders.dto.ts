@@ -1,5 +1,7 @@
 import {
     IsString,
+    IsInt,
+    MaxLength,
     IsNumber,
     IsOptional,
     IsBoolean,
@@ -159,10 +161,16 @@ export class UpdateOrderStatusDto {
 
 export class RateOrderDto {
     @ApiProperty()
-    @IsNumber()
+    @IsInt()
     @Min(1)
     @Max(5)
     rating: number;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    @MaxLength(2000)
+    reason?: string;
 }
 
 export class CreateOrderOfferDto {

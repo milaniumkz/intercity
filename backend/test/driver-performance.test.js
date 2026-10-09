@@ -3,9 +3,9 @@ const {driverPriority,driverPerformance}=require('../dist/src/common/driver-perf
 const now=new Date('2026-10-09T12:00:00Z');
 test('priority breakdown equals the actual dispatch bonus and expiry removes only the expired bonus',()=>{
  const d={priorityFlags:{hasCheckers:true,hasBranding:true},rating:{ratingAvg:4.95,ratingCount:10},serviceStats:{serviceStartAt:new Date('2026-10-06T11:00:00Z')},fuelBonus:{bonusActiveUntil:new Date('2026-10-09T12:01:00Z')}};
- assert.equal(driverPriority(d,now).total,33);
+ assert.equal(driverPriority(d,now).total,27);
  d.rating.ratingAvg=4.9;d.fuelBonus.bonusActiveUntil=now;
- assert.equal(driverPriority(d,now).total,21);
+ assert.equal(driverPriority(d,now).total,15);
  assert.equal(driverPriority({serviceStats:{serviceStartAt:new Date('2026-10-10')}},now).total,0);
 });
 test('activity distinguishes healthy, warning, low and blocked and reflects expiry recovery',()=>{
@@ -28,7 +28,7 @@ test('the dashboard priority equals the score used to dispatch a real driver',as
 test('own profile exposes performance alongside the existing completed-trip counters',async()=>{
  const {DriverService}=require('../dist/src/driver/driver.service');
  const profile={id:'driver',rating:{ratingAvg:4.8,ratingCount:12},priorityFlags:{hasCheckers:true},serviceStats:{activityScore:97}};
- const prisma={driverProfile:{findUnique:async()=>profile},order:{count:async()=>3},intercityRequest:{count:async()=>1}};
+ const prisma={appSettings:{findMany:async()=>[]},driverProfile:{findUnique:async()=>profile},order:{count:async()=>3},intercityRequest:{count:async()=>1}};
  const result=await new DriverService(prisma,{}, {}, {}, {}).getMyProfile('user');
  assert.equal(result.performance.activity.score,97);assert.equal(result.performance.rating.average,4.8);
  assert.equal(result.performance.priority.total,5);assert.equal(result.todayCompletedOrders,4);assert.equal(result.completedTrips,4);
@@ -50,6 +50,7 @@ test('unrated drivers have no confirmed rating score or high-rating priority bon
  assert.equal(high.activityScore,50);
  assert.equal(high.priorityScore,15);
 });
+
  test('dispatch sorts priority first, then activity and confirmed rating before distance',()=>{
  const {compareDriverScores}=require('../dist/src/orders/auto-dispatch.service');
  const scores=[{driverId:'low-rating',priorityScore:0,activityScore:41,ratingScore:15,distanceScore:50},
@@ -57,4 +58,8 @@ test('unrated drivers have no confirmed rating score or high-rating priority bon
  {driverId:'middle',priorityScore:10,activityScore:41,ratingScore:25,distanceScore:50}];
  assert.deepEqual(scores.sort(compareDriverScores).map(s=>s.driverId),['best','middle','low-rating']);
  assert.ok(compareDriverScores({driverId:'a',priorityScore:0,activityScore:44,ratingScore:15,distanceScore:0},{driverId:'b',priorityScore:0,activityScore:41,ratingScore:25,distanceScore:50})<0);
+ });
+ test('service priority is monthly, including month-end anniversaries',()=>{
+ const d={serviceStats:{serviceStartAt:new Date('2026-01-31T12:00:00Z')}};
+ for(const [at,expected]of [['2026-02-28T11:59:59Z',0],['2026-02-28T12:00:00Z',2],['2026-03-30T12:00:00Z',2],['2026-03-31T12:00:00Z',4]]) assert.equal(driverPriority(d,new Date(at)).total,expected);
  });

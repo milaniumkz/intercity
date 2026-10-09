@@ -356,9 +356,11 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
       final submitted = await showDriverRatingDialog(
         context: context,
         driverName: driverUser?['name']?.toString(),
-        onSubmit: (rating) async {
+        onSubmit: (_) async {},
+        onSubmitWithReason: (rating, reason) async {
           try {
-            await _api.post('/orders/$orderId/rate', data: {'rating': rating});
+            await _api.post('/orders/$orderId/rate',
+                data: {'rating': rating, 'reason': reason});
           } catch (error) {
             throw Exception(errorMessageRu(error));
           }

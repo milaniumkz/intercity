@@ -4,12 +4,15 @@ import 'dart:js_interop';
 import 'package:web/web.dart' as web;
 
 import 'text_to_speech_service_base.dart';
+import 'navigation_voice_catalog.dart';
 
 TextToSpeechService createTextToSpeechService() {
   return _BrowserTextToSpeechService();
 }
 
 class _BrowserTextToSpeechService implements TextToSpeechService {
+  final _navigationAudio = web.HTMLAudioElement()..preload = 'auto';
+  int _generation = 0;
   String _language = 'en-US';
   double _speechRate = 1.0;
   double _volume = 1.0;
@@ -47,16 +50,59 @@ class _BrowserTextToSpeechService implements TextToSpeechService {
   @override
   Future<void> speak(String text) async {
     final normalized = text.trim();
-    if (normalized.isEmpty) return;
+    if (normalized.isEmpty) {
+      // Prime this same audio element from the driver's explicit Online tap.
+      _navigationAudio.src =
+          'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
+      try {
+        await _navigationAudio.play().toDart;
+      } catch (_) {}
+      return;
+    }
 
     await stop();
-
+    final recording = navigationVoiceRecordings[normalized];
+    if (recording != null) {
+      final completer = Completer<void>();
+      _activeSpeakCompleter = completer;
+      _navigationAudio
+        ..src = Uri.base.resolve(recording).toString()
+        ..volume = _volume.clamp(0, 1)
+        ..playbackRate = _speechRate.clamp(0.75, 1.25)
+        ..onended = ((web.Event _) => _completeSpeak(completer)).toJS
+        ..onerror = ((web.Event _) => _completeSpeak(completer)).toJS;
+      try {
+        await _navigationAudio.play().toDart;
+      } catch (_) {
+        _completeSpeak(completer);
+        rethrow;
+      }
+      if (_awaitSpeakCompletion) {
+        await completer.future.timeout(_speakTimeout(normalized),
+            onTimeout: () {
+          unawaited(stop());
+        });
+      }
+      return;
+    }
+    final generation = _generation;
+    var voice = _resolveVoice(_language);
+    for (var i = 0; voice == null && i < 5; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      if (generation != _generation) return;
+      voice = _resolveVoice(_language);
+    }
+    if (generation != _generation) return;
+    if (voice == null) {
+      throw StateError(
+          'Для озвучки установите голос языка $_language в настройках устройства.');
+    }
     final utterance = web.SpeechSynthesisUtterance(normalized)
       ..lang = _language
       ..rate = _speechRate
       ..volume = _volume
       ..pitch = _pitch
-      ..voice = _resolveVoice(_language);
+      ..voice = voice;
 
     final completer = Completer<void>();
     _activeSpeakCompleter = completer;
@@ -87,6 +133,11 @@ class _BrowserTextToSpeechService implements TextToSpeechService {
 
   @override
   Future<void> stop() async {
+    _generation++;
+    try {
+      _navigationAudio.pause();
+      _navigationAudio.currentTime = 0;
+    } catch (_) {}
     final completer = _activeSpeakCompleter;
     _activeSpeakCompleter = null;
     _cancelActiveUtterance(completer);
@@ -96,16 +147,35 @@ class _BrowserTextToSpeechService implements TextToSpeechService {
     try {
       final normalized = language.toLowerCase();
       final voices = _speechSynthesis.getVoices().toDart;
-      for (final voice in voices) {
-        if (voice.lang.toLowerCase() == normalized) {
-          return voice;
-        }
+      final prefix = normalized.split('-').first;
+      final candidates = voices
+          .where((voice) =>
+              voice.lang.toLowerCase().replaceAll('_', '-').split('-').first ==
+              prefix)
+          .toList();
+      int score(web.SpeechSynthesisVoice voice) {
+        final name = voice.name.toLowerCase();
+        final female = [
+          'svetlana',
+          'irina',
+          'dariya',
+          'female',
+          'amira',
+          'aigul',
+          'жанар',
+          'алтынай',
+          'ассель',
+          'google русский'
+        ].any(name.contains);
+        return (female ? 100 : 0) +
+            (voice.lang.toLowerCase().replaceAll('_', '-') == normalized
+                ? 10
+                : 0) +
+            (name.contains('google') ? 5 : 0);
       }
-      for (final voice in voices) {
-        if (voice.lang.toLowerCase().startsWith(normalized)) {
-          return voice;
-        }
-      }
+
+      candidates.sort((a, b) => score(b).compareTo(score(a)));
+      if (candidates.isNotEmpty) return candidates.first;
     } catch (_) {
       // Keep browser default voice when voice enumeration is unavailable.
     }

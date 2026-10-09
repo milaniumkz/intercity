@@ -1,3 +1,7 @@
+import { ratingReviewHint, reviseDriverRating } from '../common/driver-rating-review';
+import { creditDriverDailyBonus } from '../common/driver-daily-bonus';
+import { applyDriverActivity } from '../common/driver-activity';
+import { DRIVER_ACTIVITY_RULES } from '../common/driver-performance';
 import { Prisma } from '@prisma/client';
 import { creditRideReferrals } from '../common/referral-bonus';
 import { moneyField, bonusField } from '../common/currency';
@@ -566,6 +570,7 @@ export class OrdersService {
                 where: { orderId: offer.orderId, id: { not: offerId }, status: 'PENDING' },
                 data: { status: 'REJECTED' },
             });
+            await applyDriverActivity(tx, offer.driverId, `accept:city:${offer.orderId}:${offer.driverId}`, DRIVER_ACTIVITY_RULES.acceptReward);
             return tx.order.update({
                 where: { id: offer.orderId },
                 data: {
@@ -776,7 +781,13 @@ export class OrdersService {
         const updatedOrder = await this.prisma.$transaction(async tx => {
             const changed = await tx.order.updateMany({ where: { id: orderId, status: order.status }, data: updateData });
             if (changed.count !== 1) throw new BadRequestException('Order status changed. Refresh the order.');
-            if (targetStatus === 'COMPLETED') await this.applyReferralCommissionBonuses(order, tx);
+            if (targetStatus === 'COMPLETED') {
+                await this.applyReferralCommissionBonuses(order, tx);
+                if (order.driverId) {
+                    const profile = await tx.driverProfile.findUnique({ where: { id: order.driverId } });
+                    if (profile) await creditDriverDailyBonus(tx, profile.id, profile.userId, order.currency, updateData.completedAt);
+                }
+            }
             return tx.order.findUniqueOrThrow({ where: { id: orderId } });
         });
         await this.recordRideEventSafe({
@@ -1083,7 +1094,7 @@ export class OrdersService {
         }
     }
 
-    async rateOrder(orderId: string, userId: string, rating: number, ratedByDriver: boolean) {
+    async rateOrder(orderId: string, userId: string, rating: number, ratedByDriver: boolean, reason?: string) {
         const order = await this.prisma.order.findUnique({
             where: { id: orderId },
             include: {
@@ -1122,36 +1133,27 @@ export class OrdersService {
             if (order.driverRating != null) {
                 throw new BadRequestException('Driver rating already submitted');
             }
-            await this.prisma.order.update({
-                where: { id: orderId },
-                data: { driverRating: rating },
+            const low = rating <= 2;
+            const explanation = (reason ?? '').trim();
+            if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new BadRequestException('Выберите оценку от 1 до 5');
+            if (low && (explanation.length < 10 || explanation.length > 2000)) throw new BadRequestException('Для низкой оценки опишите случившееся: от 10 до 2000 символов');
+            await this.prisma.$transaction(async tx => {
+                await tx.$executeRaw`SELECT id FROM "DriverProfile" WHERE id = ${order.driverId} FOR UPDATE`;
+                const changed = await tx.order.updateMany({where:{id:orderId,driverRating:null},data:{driverRating:rating,driverRatingStatus:low?'PENDING':'COUNTED',driverRatingReason:low?explanation:null}});
+                if (!changed.count) throw new BadRequestException('Оценка уже отправлена');
+                if (low) {
+                    await tx.complaint.create({data:{type:'LOW_DRIVER_RATING',status:'NEW',text:JSON.stringify({rating,reason:explanation,automation:ratingReviewHint(explanation)}),userId,driverId:order.driverId,orderId}});
+                } else {
+                    await reviseDriverRating(tx,order.driverId!,null,rating);
+                }
             });
-            await this.updateDriverRating(order.driverId!, rating);
             this.realtimeService.publish({
                 type: 'driver.rating.updated', entity: 'driver', entityId: order.driverId!,
                 at: new Date().toISOString(), payload: { driverId: order.driverId!, orderId },
             });
         }
 
-        return { success: true };
+        return { success: true, pendingReview: !ratedByDriver && rating <= 2 };
     }
 
-    private async updateDriverRating(driverId: string, rating: number) {
-        const driverRating = await this.prisma.driverRating.findUnique({
-            where: { driverId },
-        });
-
-        if (driverRating) {
-            const newCount = driverRating.ratingCount + 1;
-            const newAvg = (driverRating.ratingAvg * driverRating.ratingCount + rating) / newCount;
-            await this.prisma.driverRating.update({
-                where: { driverId },
-                data: { ratingAvg: newAvg, ratingCount: newCount },
-            });
-        } else {
-            await this.prisma.driverRating.create({
-                data: { driverId, ratingAvg: rating, ratingCount: 1 },
-            });
-        }
-    }
 }

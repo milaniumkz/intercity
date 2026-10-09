@@ -1,0 +1,1 @@
+ALTER TABLE "Order" ADD COLUMN "driverRatingStatus" TEXT NOT NULL DEFAULT 'COUNTED', ADD COLUMN "driverRatingReason" TEXT;

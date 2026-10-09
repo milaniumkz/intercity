@@ -12,6 +12,13 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "rating-storage" ]]; then
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQLRATING'
+SELECT to_regclass('public."Complaint"'), to_regclass('public."DriverRating"');
+SELECT column_name FROM information_schema.columns WHERE table_name='Complaint' ORDER BY ordinal_position;
+SQLRATING
+      exit 0
+    fi
     if [[ "$TARGET" == "release-lockfile" ]]; then
       python3 - "$APP_ROOT/current/apps/mobile_flutter/pubspec.lock" <<'PYLOCK'
 import base64, pathlib, sys

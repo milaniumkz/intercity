@@ -1,3 +1,5 @@
+import { driverDailyBonusProgress, serviceDay } from '../common/driver-daily-bonus';
+import { applyDriverActivity, driverOfferActivityKey } from '../common/driver-activity';
 import { driverPerformance, DRIVER_ACTIVITY_RULES } from '../common/driver-performance';
 import { AutoDispatchService } from '../orders/auto-dispatch.service';
 import { currencyForCountry, moneyField } from '../common/currency';
@@ -214,6 +216,8 @@ export class DriverService {
             throw new BadRequestException('Driver profile not approved');
         }
         if (dto.isOnline) {
+            const stats = await this.ensureDriverActivityState(profile.id);
+            if (stats.activityScore <= 0 || (stats.activityBlockedUntil && stats.activityBlockedUntil > new Date())) throw new BadRequestException('Driver temporarily blocked due to low activity');
             await this.ensureDriverCanStayOnline(driverUserId, profile.id, dto.cityId);
         }
 
@@ -253,8 +257,7 @@ export class DriverService {
         });
         if (!profile) return profile;
 
-        const startOfDay = new Date();
-        startOfDay.setHours(0, 0, 0, 0);
+        const startOfDay = serviceDay().start;
         const [completedCityTrips, completedIntercityTrips, todayCityTrips, todayIntercityTrips] = await Promise.all([
             this.prisma.order.count({
                 where: { driverId: profile.id, status: 'COMPLETED' },
@@ -285,6 +288,8 @@ export class DriverService {
             performance: driverPerformance(profile),
             completedTrips: completedCityTrips + completedIntercityTrips,
             todayCompletedOrders: todayCityTrips + todayIntercityTrips,
+            dailyBonus: await driverDailyBonusProgress(this.prisma, profile.id, driverUserId,
+                profile.online?.city?.countryCode === 'RU' ? 'RUB' : 'KZT'),
         };
     }
 
@@ -594,14 +599,20 @@ export class DriverService {
             throw new BadRequestException('Для аукциона отправьте своё предложение цены');
         }
 
-        const accepted = await this.prisma.order.updateMany({
+        const result = await this.prisma.$transaction(async (tx) => {
+        const accepted = await tx.order.updateMany({
             where: { id: orderId, status: 'SEARCHING_DRIVER', driverId: null,
                 dispatchDriverId: profile.id, dispatchExpiresAt: { gt: new Date() } },
             data: { driverId: profile.id, status: 'DRIVER_EN_ROUTE',
                 dispatchDriverId: null, dispatchExpiresAt: null, dispatchRetryAt: null },
         });
         if (accepted.count !== 1) throw new BadRequestException('Время ответа истекло или заказ предложен другому водителю');
-        const updated = await this.prisma.order.findUnique({ where: { id: orderId } });
+        const activity = await applyDriverActivity(tx, profile.id, `accept:city:${orderId}:${profile.id}`, DRIVER_ACTIVITY_RULES.acceptReward);
+        return { order: await tx.order.findUnique({ where: { id: orderId } }), activity };
+
+        });
+        const updated = result.order;
+        this.realtimeService.publish({ type: 'driver.activity.updated', entity: 'driver', entityId: profile.id, at: new Date().toISOString(), payload: { activityScore: result.activity.activityScore } });
         await this.recordRideEventSafe({
             orderId: order.id,
             fromStatus: order.status,
@@ -640,20 +651,21 @@ export class DriverService {
             throw new BadRequestException('Order not available');
         }
 
-        if (order.requestType !== 'CITY_AUCTION') {
-            const declined = await this.prisma.order.updateMany({
-                where: { id: orderId, status: 'SEARCHING_DRIVER', driverId: null,
-                    dispatchDriverId: profile.id, dispatchExpiresAt: { gt: new Date() } },
-                data: { dispatchDriverId: null, dispatchExpiresAt: null, dispatchRetryAt: null },
-            });
-            if (declined.count !== 1) throw new BadRequestException('Время ответа истекло или заказ предложен другому водителю');
-        }
-        const previousRejection = await this.prisma.rideEvent.findFirst({
-            where: {orderId, actorUserId: driverUserId, reason: 'Driver rejected order'},
+        const updatedStats = await this.prisma.$transaction(async (tx) => {
+            if (order.requestType !== 'CITY_AUCTION') {
+                const declined = await tx.order.updateMany({
+                    where: { id: orderId, status: 'SEARCHING_DRIVER', driverId: null,
+                        dispatchDriverId: profile.id, dispatchExpiresAt: { gt: new Date() } },
+                    data: { dispatchDriverId: null, dispatchExpiresAt: null, dispatchRetryAt: null },
+                });
+                if (declined.count !== 1) throw new BadRequestException('Время ответа истекло или заказ предложен другому водителю');
+            }
+            const stats = await applyDriverActivity(tx, profile.id, driverOfferActivityKey(order, profile.id), -DRIVER_ACTIVITY_RULES.rejectPenalty);
+            if (stats.activityScore <= 0) await tx.driverOnline.updateMany({where:{driverId:profile.id},data:{isOnline:false}});
+            return stats;
         });
-        const updatedStats = previousRejection
-            ? await this.ensureDriverActivityState(profile.id)
-            : await this.applyRejectPenalty(profile.id);
+        this.realtimeService.publish({ type: 'driver.activity.updated', entity: 'driver', entityId: profile.id, at: new Date().toISOString(), payload: { activityScore: updatedStats.activityScore } });
+        if (updatedStats.activityScore <= 0) this.realtimeService.publish({type:'driver.online.changed',entity:'driver',entityId:profile.id,at:new Date().toISOString(),payload:{isOnline:false,reason:'ACTIVITY_BLOCKED'}});
         await this.recordRideEventSafe({
             orderId: order.id,
             fromStatus: order.status,
@@ -914,25 +926,6 @@ export class DriverService {
         }
 
         return stats;
-    }
-
-    private async applyRejectPenalty(driverId: string) {
-        const stats = await this.ensureDriverActivityState(driverId);
-        const now = new Date();
-        if (stats.activityBlockedUntil && stats.activityBlockedUntil > now) {
-            return stats;
-        }
-
-        const nextScore = Math.max(0, (stats.activityScore ?? DRIVER_ACTIVITY_RULES.initialScore) - DRIVER_ACTIVITY_RULES.rejectPenalty);
-        const updateData: any = { activityScore: nextScore };
-        if (nextScore <= 0) {
-            updateData.activityBlockedUntil = new Date(now.getTime() + DRIVER_ACTIVITY_RULES.blockHours * 60 * 60 * 1000);
-        }
-
-        return this.prisma.driverServiceStats.update({
-            where: { driverId },
-            data: updateData,
-        });
     }
 
     private async getOfferAcceptWindowSec(): Promise<number> {

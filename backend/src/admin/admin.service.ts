@@ -1,3 +1,5 @@
+import { reviseDriverRating, validateReviewDecision } from '../common/driver-rating-review';
+import { parseDailyBonus } from '../common/driver-daily-bonus';
 import { moneyField, bonusField, walletCurrency } from '../common/currency';
 import { Injectable, NotFoundException, BadRequestException, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -155,8 +157,9 @@ export class AdminService {
         });
     }
 
-    async setFuelBonus(driverId: string, hours: number) {
-        const bonusUntil = new Date(Date.now() + hours * 60 * 60 * 1000);
+    async setFuelBonus(driverId: string, hours = 24) {
+        if (hours !== 24) throw new BadRequestException('Бонус заправки действует 24 часа');
+        const bonusUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
         return this.prisma.driverPartnerFuelBonus.upsert({
             where: { driverId },
             update: { bonusActiveUntil: bonusUntil },
@@ -412,6 +415,24 @@ export class AdminService {
     }
 
     async updateComplaint(id: string, data: Record<string, unknown>) {
+        const complaint = await this.prisma.complaint.findUnique({where:{id}});
+        if (!complaint) throw new BadRequestException('Обращение не найдено');
+        if (complaint.type === 'LOW_DRIVER_RATING') {
+            const {decision,note,rating} = validateReviewDecision(data);
+            const result = await this.prisma.$transaction(async tx => {
+                const order = await tx.order.findUnique({where:{id:complaint.orderId!}});
+                if (!order?.driverId || order.driverRating == null) throw new BadRequestException('Оценка поездки не найдена');
+                await tx.$executeRaw`SELECT id FROM "DriverProfile" WHERE id = ${order.driverId} FOR UPDATE`;
+                const fresh = await tx.order.findUnique({where:{id:order.id}});
+                const oldRating = fresh!.driverRatingStatus === 'COUNTED' ? fresh!.driverRating : null;
+                const effectiveRating = decision === 'REJECT' ? null : decision === 'CHANGE' ? rating : fresh!.driverRating!;
+                await reviseDriverRating(tx,order.driverId,oldRating,effectiveRating);
+                await tx.order.update({where:{id:order.id},data:{driverRating:effectiveRating ?? fresh!.driverRating,driverRatingStatus:decision==='REJECT'?'REJECTED':'COUNTED'}});
+                return tx.complaint.update({where:{id},data:{status:'RESOLVED',resolutionNote:`${decision}: ${note}`}});
+            });
+            this.realtimeService.publish({type:'driver.rating.updated',entity:'driver',entityId:complaint.driverId!,at:new Date().toISOString(),payload:{driverId:complaint.driverId,orderId:complaint.orderId}});
+            return result;
+        }
         const payload: Record<string, unknown> = {};
         if (data['status'] != null) payload['status'] = data['status']?.toString().toUpperCase();
         if (data['resolutionNote'] != null) payload['resolutionNote'] = data['resolutionNote']?.toString();
@@ -605,6 +626,9 @@ export class AdminService {
     }
 
     async setSetting(key: string, value: string) {
+        if (['driverDailyBonusKZT', 'driverDailyBonusRUB'].includes(key)) {
+            try { parseDailyBonus(value); } catch (error: any) { throw new BadRequestException(error.message); }
+        }
         if (key === 'referralCommissionPercent') {
             const percent = Number(value);
             if (!value.trim() || !Number.isFinite(percent) || percent < 0 || percent > 100) throw new BadRequestException('Referral commission percentage must be between 0 and 100');

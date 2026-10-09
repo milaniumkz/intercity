@@ -20,7 +20,8 @@ test('chat participant check still rejects an unrelated user',async()=>{
 });
 test('driver rating update is published only after updated average is saved',async()=>{
  const steps=[];
- const service=new OrdersService({order:{findUnique:async()=>order,update:async()=>steps.push('order')},driverRating:{findUnique:async()=>({ratingCount:1,ratingAvg:4}),update:async({data})=>{assert.equal(data.ratingAvg,4.5); steps.push('rating');}}},null,null,{publish:e=>{assert.equal(e.type,'driver.rating.updated');assert.equal(e.entityId,'driver-profile');steps.push('event');}},null);
+ const tx={$executeRaw:async()=>1,order:{updateMany:async()=>{steps.push('order');return {count:1}}},driverRating:{findUnique:async()=>({ratingCount:1,ratingAvg:4}),upsert:async({update})=>{assert.equal(update.ratingAvg,4.5);steps.push('rating');}}};
+ const service=new OrdersService({order:{findUnique:async()=>order},$transaction:async fn=>fn(tx)},null,null,{publish:e=>{assert.equal(e.type,'driver.rating.updated');assert.equal(e.entityId,'driver-profile');steps.push('event');}},null);
  await service.rateOrder('ride','passenger',5,false);
  assert.deepEqual(steps,['order','rating','event']);
 });

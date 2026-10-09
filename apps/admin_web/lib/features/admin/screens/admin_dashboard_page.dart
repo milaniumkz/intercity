@@ -1,3 +1,5 @@
+import 'admin_rating_reviews_page.dart';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:intercity_shared/intercity_shared.dart';
@@ -1335,6 +1337,8 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
         children: [
           _StatusBanner(message: _message),
           const SizedBox(height: 16),
+          const _DriverDailyBonusSettingsCard(),
+          const SizedBox(height: 16),
           _SectionCard(
             title: 'Settings editor',
             trailing: _RefreshButton(
@@ -2222,6 +2226,7 @@ class AdminShell extends StatelessWidget {
     ('/notifications', 'Уведомления', Icons.notifications_active_outlined),
     ('/finance-audit', 'Финансовый аудит', Icons.receipt_long_outlined),
     ('/orders', 'Заказы', Icons.local_taxi_outlined),
+    ('/rating-reviews', 'Разбор оценок', Icons.rate_review_outlined),
   ];
 
   Future<void> _logout(BuildContext context) async {
@@ -2257,6 +2262,7 @@ class AdminShell extends StatelessWidget {
           appBar: AppBar(
             title: Text(title),
             actions: [
+              const AdminRatingReviewBell(),
               if (!wide)
                 IconButton(
                   tooltip: 'Выйти',
@@ -2626,4 +2632,135 @@ class _TariffList extends StatelessWidget {
       }).toList(),
     );
   }
+}
+
+class _DriverDailyBonusSettingsCard extends StatefulWidget {
+  const _DriverDailyBonusSettingsCard();
+  @override
+  State<_DriverDailyBonusSettingsCard> createState() =>
+      _DriverDailyBonusSettingsCardState();
+}
+
+class _DriverDailyBonusSettingsCardState
+    extends State<_DriverDailyBonusSettingsCard> {
+  final _targets = {
+    for (final c in ['KZT', 'RUB']) c: TextEditingController(text: '10')
+  };
+  final _rewards = {
+    for (final c in ['KZT', 'RUB']) c: TextEditingController(text: '1000')
+  };
+  final _enabled = {'KZT': false, 'RUB': false};
+  bool _busy = true;
+  bool _ready = false;
+  String _error = '';
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    for (final c in _targets.values) {
+      c.dispose();
+    }
+    for (final c in _rewards.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final res = await AdminApiClient.instance.get('/admin/settings');
+      if (!mounted) return;
+      for (final currency in _enabled.keys) {
+        final rows = (res.data as List)
+            .whereType<Map>()
+            .where((r) => r['key'] == 'driverDailyBonus$currency');
+        if (rows.isNotEmpty) {
+          final data = jsonDecode(rows.first['value'].toString()) as Map;
+          _enabled[currency] = data['enabled'] == true;
+          _targets[currency]!.text = '${data['targetOrders']}';
+          _rewards[currency]!.text = '${data['rewardAmount']}';
+        }
+      }
+      _ready = true;
+    } catch (e) {
+      _error = 'Не удалось загрузить акцию: $e';
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _save() async {
+    for (final c in _enabled.keys) {
+      final target = int.tryParse(_targets[c]!.text),
+          amount = double.tryParse(_rewards[c]!.text);
+      if (target == null ||
+          target < 1 ||
+          target > 1000 ||
+          amount == null ||
+          !amount.isFinite ||
+          amount <= 0 ||
+          amount > 1000000) {
+        setState(() => _error =
+            'Укажите от 1 до 1000 заказов и положительную сумму до 1000000.');
+        return;
+      }
+    }
+    setState(() => _busy = true);
+    try {
+      for (final c in _enabled.keys) {
+        await AdminApiClient.instance.post('/admin/settings', data: {
+          'key': 'driverDailyBonus$c',
+          'value': jsonEncode({
+            'enabled': _enabled[c],
+            'targetOrders': int.parse(_targets[c]!.text),
+            'rewardAmount': double.parse(_rewards[c]!.text)
+          })
+        });
+      }
+      if (mounted) setState(() => _error = 'Ежедневные бонусы сохранены');
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Ошибка сохранения: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _SectionCard(
+      title: 'Ежедневные бонусы водителям',
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text(
+            'Сутки акции: 00:00–24:00 UTC+5. Бонус за цель начисляется один раз в сутки на основной баланс. Городские и межгородские завершённые заказы учитываются в своей валюте.'),
+        for (final c in _enabled.keys) ...[
+          SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(c == 'KZT' ? 'Казахстан · тенге' : 'Россия · рубли'),
+              value: _enabled[c]!,
+              onChanged: _busy ? null : (v) => setState(() => _enabled[c] = v)),
+          Row(children: [
+            Expanded(
+                child: TextField(
+                    controller: _targets[c],
+                    keyboardType: TextInputType.number,
+                    decoration:
+                        const InputDecoration(labelText: 'Заказов за сутки'))),
+            const SizedBox(width: 12),
+            Expanded(
+                child: TextField(
+                    controller: _rewards[c],
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(labelText: 'Бонус, $c')))
+          ]),
+          const SizedBox(height: 12),
+        ],
+        if (_error.isNotEmpty) Text(_error),
+        FilledButton(
+            onPressed: _busy || !_ready ? null : _save,
+            child: Text(_busy ? 'Загрузка…' : 'Сохранить акцию')),
+      ]));
 }
