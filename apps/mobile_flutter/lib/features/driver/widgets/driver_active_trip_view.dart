@@ -1,3 +1,4 @@
+import 'driver_auto_action_button.dart';
 import 'package:flutter/material.dart';
 
 class DriverActiveTripView extends StatelessWidget {
@@ -14,13 +15,16 @@ class DriverActiveTripView extends StatelessWidget {
       required this.onCall,
       required this.onChat,
       required this.onNavigate,
+      this.onEnableVoice,
       this.instruction,
       this.message,
       this.onBack,
       this.actionLabel,
       this.actionIcon,
       this.onAction,
-      this.busy = false});
+      this.busy = false,
+      this.autoActionEligible = false,
+      this.actionKey});
 
   final Widget map;
   final String passenger, from, to, price, status, payment;
@@ -28,8 +32,10 @@ class DriverActiveTripView extends StatelessWidget {
   final VoidCallback? onBack;
   final IconData? actionIcon;
   final VoidCallback onRefresh, onCall, onChat, onNavigate;
-  final VoidCallback? onAction;
+  final VoidCallback? onAction, onEnableVoice;
   final bool busy;
+  final bool autoActionEligible;
+  final String? actionKey;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -112,6 +118,11 @@ class DriverActiveTripView extends StatelessWidget {
                             tooltip: 'Чат',
                             onPressed: onChat,
                             icon: const Icon(Icons.chat_bubble_outline)),
+                        if (onEnableVoice != null)
+                          IconButton(
+                              tooltip: 'Включить озвучку',
+                              onPressed: onEnableVoice,
+                              icon: const Icon(Icons.volume_up_outlined)),
                         IconButton(
                             tooltip: 'Навигатор',
                             onPressed: onNavigate,
@@ -120,28 +131,13 @@ class DriverActiveTripView extends StatelessWidget {
                   if (actionLabel != null)
                     SizedBox(
                         width: double.infinity,
-                        child: FilledButton(
-                            key: const ValueKey('driver-primary-ride-action'),
-                            style: FilledButton.styleFrom(
-                                minimumSize: const Size.fromHeight(56)),
-                            onPressed: busy ? null : onAction,
-                            child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  if (busy)
-                                    const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2))
-                                  else
-                                    Icon(actionIcon),
-                                  const SizedBox(width: 8),
-                                  Flexible(
-                                      child: Text(actionLabel!,
-                                          maxLines: 2,
-                                          textAlign: TextAlign.center)),
-                                ]))),
+                        child: DriverAutoActionButton(
+                            key: ValueKey(actionKey),
+                            label: actionLabel!,
+                            icon: actionIcon,
+                            eligible: autoActionEligible,
+                            busy: busy,
+                            onPressed: onAction)),
                 ]))),
       );
 

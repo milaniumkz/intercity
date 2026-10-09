@@ -101,9 +101,10 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
     }
   }
 
-  Future<void> _rate(String id, int rating) async {
+  Future<void> _rate(String id, int rating, [String reason = '']) async {
     try {
-      await ApiClient().post('/orders/$id/rate', data: {'rating': rating});
+      await ApiClient()
+          .post('/orders/$id/rate', data: {'rating': rating, 'reason': reason});
       setState(() => _message = 'Оценка для заказа $id отправлена');
       await _load();
     } catch (e) {
@@ -126,9 +127,10 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
       driverName: driverUser?['name']?.toString(),
       allowSkip: true,
       barrierDismissible: true,
-      onSubmit: (rating) async {
+      onSubmit: (_) async {},
+      onSubmitWithReason: (rating, reason) async {
         try {
-          await _rate(id, rating);
+          await _rate(id, rating, reason);
         } catch (error) {
           throw Exception(errorMessageRu(error));
         }

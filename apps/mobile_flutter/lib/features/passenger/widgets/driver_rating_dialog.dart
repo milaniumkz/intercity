@@ -6,6 +6,7 @@ import '../../../core/widgets/ic_premium.dart';
 Future<bool> showDriverRatingDialog({
   required BuildContext context,
   required Future<void> Function(int rating) onSubmit,
+  Future<void> Function(int rating, String reason)? onSubmitWithReason,
   String? driverName,
   bool allowSkip = false,
   bool barrierDismissible = false,
@@ -17,6 +18,7 @@ Future<bool> showDriverRatingDialog({
       driverName: driverName,
       allowSkip: allowSkip,
       onSubmit: onSubmit,
+      onSubmitWithReason: onSubmitWithReason,
     ),
   );
   return submitted == true;
@@ -25,11 +27,13 @@ Future<bool> showDriverRatingDialog({
 class _DriverRatingDialog extends StatefulWidget {
   const _DriverRatingDialog({
     required this.onSubmit,
+    this.onSubmitWithReason,
     this.driverName,
     this.allowSkip = false,
   });
 
   final Future<void> Function(int rating) onSubmit;
+  final Future<void> Function(int rating, String reason)? onSubmitWithReason;
   final String? driverName;
   final bool allowSkip;
 
@@ -38,6 +42,13 @@ class _DriverRatingDialog extends StatefulWidget {
 }
 
 class _DriverRatingDialogState extends State<_DriverRatingDialog> {
+  final _reason = TextEditingController();
+  @override
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
   int _selectedRating = 5;
   bool _submitting = false;
   String _errorText = '';
@@ -55,7 +66,9 @@ class _DriverRatingDialogState extends State<_DriverRatingDialog> {
         backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.all(20),
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 430),
+          constraints: BoxConstraints(
+              maxWidth: 430,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.85),
           decoration: BoxDecoration(
             color: theme.colorScheme.surface,
             borderRadius: BorderRadius.circular(28),
@@ -70,7 +83,8 @@ class _DriverRatingDialogState extends State<_DriverRatingDialog> {
               ),
             ],
           ),
-          child: Column(
+          child: SingleChildScrollView(
+              child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -234,6 +248,21 @@ class _DriverRatingDialogState extends State<_DriverRatingDialog> {
                         );
                       }),
                     ),
+                    if (_selectedRating <= 2) ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                          controller: _reason,
+                          minLines: 3,
+                          maxLines: 5,
+                          maxLength: 2000,
+                          decoration: const InputDecoration(
+                              labelText: 'Что произошло?',
+                              hintText:
+                                  'Опишите действия водителя и обстоятельства поездки')),
+                      const Text(
+                          'Оценка поступит на разбор. До решения администратора рейтинг водителя не изменится.',
+                          style: TextStyle(fontSize: 12)),
+                    ],
                     if (_errorText.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Text(
@@ -271,7 +300,7 @@ class _DriverRatingDialogState extends State<_DriverRatingDialog> {
                 ),
               ),
             ],
-          ),
+          )),
         ),
       ),
     );
@@ -293,12 +322,21 @@ class _DriverRatingDialogState extends State<_DriverRatingDialog> {
   }
 
   Future<void> _submit() async {
+    if (_selectedRating <= 2 && _reason.text.trim().length < 10) {
+      setState(
+          () => _errorText = 'Опишите случившееся — не менее 10 символов.');
+      return;
+    }
     setState(() {
       _submitting = true;
       _errorText = '';
     });
     try {
-      await widget.onSubmit(_selectedRating);
+      if (widget.onSubmitWithReason != null) {
+        await widget.onSubmitWithReason!(_selectedRating, _reason.text.trim());
+      } else {
+        await widget.onSubmit(_selectedRating);
+      }
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } catch (error) {

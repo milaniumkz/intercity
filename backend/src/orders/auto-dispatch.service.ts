@@ -1,11 +1,12 @@
 import { driverPriority, DRIVER_ACTIVITY_RULES } from '../common/driver-performance';
+import { applyDriverActivity, driverOfferActivityKey } from '../common/driver-activity';
 import { moneyField } from '../common/currency';
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { PushService } from '../notifications/push.service';
 
-interface DriverScore {
+export interface DriverScore {
     driverId: string;
     totalScore: number;
     distanceScore: number;
@@ -13,6 +14,11 @@ interface DriverScore {
     activityScore: number;
     priorityScore: number;
     randomJitter: number;
+}
+
+export function compareDriverScores(a: DriverScore, b: DriverScore) {
+    return b.priorityScore - a.priorityScore || b.activityScore - a.activityScore ||
+        b.ratingScore - a.ratingScore || b.distanceScore - a.distanceScore || a.driverId.localeCompare(b.driverId);
 }
 
 @Injectable()
@@ -60,6 +66,7 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
 
     async assignCityOrder(orderId: string) {
         const settings = await this.getSettings();
+        const timeouts: Array<{driverId: string; activityScore: number}> = [];
         const offer = await this.prisma.$transaction(async (tx) => {
             // One dispatcher across every API worker. Acceptance/rejection use conditional writes.
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302091)`;
@@ -74,15 +81,17 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
                 if (online?.isOnline && online.cityId === order.cityId) return null;
             }
             const queued = await tx.order.updateMany({
-                where: { id: orderId, status: { in: ['CREATED', 'SEARCHING_DRIVER'] }, driverId: null },
+                where: { id: orderId, status: { in: ['CREATED', 'SEARCHING_DRIVER'] }, driverId: null,
+                    dispatchDriverId: order.dispatchDriverId, dispatchExpiresAt: order.dispatchExpiresAt },
                 data: { status: 'SEARCHING_DRIVER', dispatchDriverId: null, dispatchExpiresAt: null },
             });
             if (!queued.count) return null;
-            // Expired reservations must not prevent another order using an available driver.
-            await tx.order.updateMany({
-                where: { status: 'SEARCHING_DRIVER', dispatchExpiresAt: { lte: now } },
-                data: { dispatchDriverId: null, dispatchExpiresAt: null },
-            });
+            if (order.dispatchDriverId && order.dispatchExpiresAt && order.dispatchExpiresAt <= now) {
+                const stats = await applyDriverActivity(tx, order.dispatchDriverId,
+                    driverOfferActivityKey(order, order.dispatchDriverId), -DRIVER_ACTIVITY_RULES.rejectPenalty, now);
+                await tx.driverOnline.updateMany({ where: { driverId: order.dispatchDriverId }, data: { isOnline: false } });
+                timeouts.push({ driverId: order.dispatchDriverId, activityScore: stats.activityScore });
+            }
             const drivers = await this.findEligibleDrivers(order.cityId, order.fromLat, order.fromLng,
                 settings.searchRadiusKm, settings.minDriverLocationFreshSec,
                 order.currency === 'RUB' ? settings.driverMinOnlineBalanceRub : settings.driverMinOnlineBalance,
@@ -101,7 +110,7 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
             }
             const scored = await Promise.all(remaining.map(async driver => ({driver,
                 score: await this.computeScore(driver, order.fromLat, order.fromLng)})));
-            scored.sort((a, b) => b.score.totalScore - a.score.totalScore);
+            scored.sort((a, b) => compareDriverScores(a.score, b.score));
             const best = scored[0];
             const expiresAt = new Date(now.getTime() + settings.dispatchTimeoutSec * 1000);
             const changed = await tx.order.updateMany({
@@ -112,6 +121,10 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
             });
             return changed.count ? {driverId: best.driver.driverId, userId: best.driver.driver.userId, expiresAt} : null;
         }, { maxWait: 10000, timeout: 15000 });
+        for (const timeout of timeouts) {
+            this.realtimeService.publish({type: 'driver.online.changed', entity: 'driver', entityId: timeout.driverId,
+                at: new Date().toISOString(), payload: { isOnline: false, reason: 'OFFER_TIMEOUT', activityScore: timeout.activityScore }});
+        }
         if (!offer) return;
         await this.recordRideEventSafe({orderId, fromStatus: 'SEARCHING_DRIVER', toStatus: 'SEARCHING_DRIVER',
             source: 'AUTO_DISPATCH', reason: 'Driver offered order',
@@ -270,7 +283,7 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
         const priorityScore = priorityPoints;
 
         // Random jitter: 0-1
-        const randomJitter = Math.random();
+        const randomJitter = 0;
 
         const totalScore = distanceScore + ratingScore + activityScore + priorityScore + randomJitter;
 

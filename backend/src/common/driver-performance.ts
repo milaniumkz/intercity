@@ -1,11 +1,21 @@
 export const DRIVER_ACTIVITY_RULES = {
-    initialScore: 100, rejectPenalty: 3, blockHours: 12, restoredScore: 30,
+    initialScore: 100, rejectPenalty: 3, acceptReward: 3, blockHours: 12, restoredScore: 30,
     greenFrom: 70, yellowFrom: 30,
 };
 
 export function driverPriority(driver: any, now = new Date()) {
     const start = driver.serviceStats?.serviceStartAt ? new Date(driver.serviceStats.serviceStartAt).getTime() : NaN;
-    const days = Number.isFinite(start) ? Math.max(0, Math.floor((now.getTime() - start) / 86400000)) : 0;
+    const startDate = new Date(start);
+    let months = Number.isFinite(start) ? Math.max(0,
+        (now.getUTCFullYear() - startDate.getUTCFullYear()) * 12 + now.getUTCMonth() - startDate.getUTCMonth()) : 0;
+    if (months > 0) {
+        const anniversary = new Date(start);
+        anniversary.setUTCDate(1);
+        anniversary.setUTCMonth(startDate.getUTCMonth() + months);
+        const lastDay = new Date(Date.UTC(anniversary.getUTCFullYear(), anniversary.getUTCMonth() + 1, 0)).getUTCDate();
+        anniversary.setUTCDate(Math.min(startDate.getUTCDate(), lastDay));
+        if (anniversary > now) months--;
+    }
     const items = [
         { key: 'checkers', label: 'Шашка', points: driver.priorityFlags?.hasCheckers ? 5 : 0,
             rule: 'Подтверждённая шашка на автомобиле: +5 баллов.' },
@@ -13,11 +23,11 @@ export function driverPriority(driver: any, now = new Date()) {
             rule: 'Подтверждённая фирменная обклейка: +10 баллов.' },
         { key: 'rating', label: 'Рейтинг выше 4,9', points: driver.rating?.ratingCount > 0 && driver.rating?.ratingAvg > 4.9 ? 10 : 0,
             rule: 'При наличии оценок рейтинг строго выше 4,9: +10 баллов. При снижении до 4,9 или ниже этот бонус перестаёт действовать.' },
-        { key: 'service', label: 'Стаж в сервисе', points: days * 2,
-            rule: 'Каждые полные сутки с даты подключения: +2 балла. Дата подключения устанавливается при одобрении профиля.' },
+        { key: 'service', label: 'Стаж в сервисе', points: months * 2,
+            rule: 'Каждый полный месяц с даты подключения: +2 балла. Дата подключения устанавливается при одобрении профиля.' },
         { key: 'fuel', label: 'Партнёрская заправка',
             points: driver.fuelBonus?.bonusActiveUntil && new Date(driver.fuelBonus.bonusActiveUntil) > now ? 2 : 0,
-            rule: 'Действующий бонус партнёрской заправки: +2 балла. После истечения срока этот бонус перестаёт действовать.' },
+            rule: 'Подтверждённая партнёрская заправка: +2 балла на 24 часа. Баллы не накапливаются.' },
     ];
     return { total: items.reduce((sum, item) => sum + item.points, 0), items };
 }

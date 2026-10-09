@@ -1,3 +1,6 @@
+import { creditDriverDailyBonus } from '../common/driver-daily-bonus';
+import { applyDriverActivity } from '../common/driver-activity';
+import { DRIVER_ACTIVITY_RULES } from '../common/driver-performance';
 import { creditRideReferrals } from '../common/referral-bonus';
 import { moneyField, bonusField } from '../common/currency';
 import { requireNoActivePassengerOrder } from '../common/active-passenger-order';
@@ -435,6 +438,8 @@ export class IntercityService {
         where: { requestId: freshOffer.requestId, id: { not: offerId } },
         data: { status: "REJECTED" },
       });
+      const profile = await tx.driverProfile.findUnique({ where: { userId: freshOffer.driverId } });
+      if (profile) await applyDriverActivity(tx, profile.id, `accept:intercity:${freshOffer.requestId}:${profile.id}`, DRIVER_ACTIVITY_RULES.acceptReward);
       return { success: true };
     });
   }
@@ -511,8 +516,9 @@ export class IntercityService {
     }
 
     if (target === "COMPLETED") {
+      const completedAt = new Date();
       return this.prisma.$transaction(async (tx) => {
-        const changed = await tx.intercityRequest.updateMany({ where: { id: requestId, status: request.status }, data: { status: target } });
+        const changed = await tx.intercityRequest.updateMany({ where: { id: requestId, status: request.status }, data: { status: target, completedAt } });
         if (changed.count !== 1) return tx.intercityRequest.findUniqueOrThrow({ where: { id: requestId } });
         await this.chargeDriverForCompletedIntercityRequest(
           tx,
@@ -524,6 +530,8 @@ export class IntercityService {
           commissionAmount: await this.getIntercityAcceptedRequestFee(request, driverUserId),
           passengerId: request.passengerId, driverUserId, intercity: true,
         });
+        const profile = await tx.driverProfile.findUnique({ where: { userId: driverUserId } });
+        if (profile) await creditDriverDailyBonus(tx, profile.id, driverUserId, request.currency, completedAt);
         return tx.intercityRequest.update({
           where: { id: requestId },
           data: { status: target },

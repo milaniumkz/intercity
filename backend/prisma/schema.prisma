@@ -178,6 +178,7 @@ model DriverProfile {
   rating               DriverRating?
   priorityFlags        DriverPriorityFlags?
   serviceStats         DriverServiceStats?
+  activityEvents       DriverActivityEvent[]
   fuelBonus            DriverPartnerFuelBonus?
   intercityRoutes      DriverIntercityRoute[]
   orders               Order[]                 @relation("DriverOrders")
@@ -250,6 +251,18 @@ model DriverServiceStats {
   updatedAt            DateTime      @updatedAt
 }
 
+model DriverActivityEvent {
+  id          String        @id @default(uuid())
+  key         String        @unique
+  driverId    String
+  driver      DriverProfile @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  delta       Int
+  score       Int
+  createdAt   DateTime      @default(now())
+
+  @@index([driverId, createdAt])
+}
+
 model DriverPartnerFuelBonus {
   id               String        @id @default(uuid())
   driverId         String        @unique
@@ -307,6 +320,8 @@ model Order {
   paidWithBonus      Boolean        @default(false)
   passengerRating    Int?
   driverRating       Int?
+  driverRatingStatus String         @default("COUNTED")
+  driverRatingReason String?
   cityId             String?
   city               City?          @relation(fields: [cityId], references: [id])
   promoUsages        PromoUsage[]
@@ -575,6 +590,7 @@ model IntercityRequest {
   selectedOfferId String?
   selectedDriverId String?
   acceptedAt  DateTime?
+  completedAt DateTime?
   offers      IntercityOffer[]
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt

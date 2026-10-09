@@ -3,6 +3,13 @@ import 'package:intercity_mobile/features/driver/utils/driver_offer_utils.dart';
 
 void main() {
   group('driver offer utils', () {
+    test('re-offering the same order starts a new notification identity', () {
+      expect(
+          driverOfferIdentity(
+              {'id': 'one', 'offerExpiresAt': '2026-10-09T12:00:00Z'}),
+          isNot(driverOfferIdentity(
+              {'id': 'one', 'offerExpiresAt': '2026-10-09T12:01:00Z'})));
+    });
     test('counts down from absolute expiry time instead of static seconds', () {
       final now = DateTime.utc(2026, 5, 4, 10, 0, 0);
       final order = <String, dynamic>{

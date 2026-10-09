@@ -131,6 +131,6 @@ export class OrdersController {
     @ApiBearerAuth()
     @ApiOperation({ summary: 'Rate order' })
     async rate(@Param('id') id: string, @Request() req, @Body() dto: RateOrderDto) {
-        return this.ordersService.rateOrder(id, req.user.sub, dto.rating, false);
+        return this.ordersService.rateOrder(id, req.user.sub, dto.rating, false, dto.reason);
     }
 }

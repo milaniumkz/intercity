@@ -1,0 +1,194 @@
+[
+  {
+    "file": "ru_left_50.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Поверните налево"
+  },
+  {
+    "file": "ru_left_100.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Через 100 метров поверните налево"
+  },
+  {
+    "file": "ru_right_50.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Поверните направо"
+  },
+  {
+    "file": "ru_left_300.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Через 300 метров поверните налево"
+  },
+  {
+    "file": "ru_right_300.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Через 300 метров поверните направо"
+  },
+  {
+    "file": "ru_right_100.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Через 100 метров поверните направо"
+  },
+  {
+    "file": "ru_uturn_50.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Выполните разворот"
+  },
+  {
+    "file": "ru_uturn_100.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Через 100 метров выполните разворот"
+  },
+  {
+    "file": "ru_uturn_300.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Через 300 метров выполните разворот"
+  },
+  {
+    "file": "ru_straight_50.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Продолжайте движение прямо"
+  },
+  {
+    "file": "ru_straight_100.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Через 100 метров продолжайте движение прямо"
+  },
+  {
+    "file": "ru_straight_300.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Через 300 метров продолжайте движение прямо"
+  },
+  {
+    "file": "ru_roundabout_50.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Следуйте по круговому движению"
+  },
+  {
+    "file": "ru_roundabout_100.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Через 100 метров следуйте по круговому движению"
+  },
+  {
+    "file": "ru_roundabout_300.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Через 300 метров следуйте по круговому движению"
+  },
+  {
+    "file": "ru_arrival_0.mp3",
+    "language": "ru",
+    "voice": "ru-RU-SvetlanaNeural",
+    "text": "Вы прибыли"
+  },
+  {
+    "file": "kk_left_50.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "Солға бұрылыңыз"
+  },
+  {
+    "file": "kk_left_100.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "100 метрден кейін солға бұрылыңыз"
+  },
+  {
+    "file": "kk_left_300.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "300 метрден кейін солға бұрылыңыз"
+  },
+  {
+    "file": "kk_right_50.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "Оңға бұрылыңыз"
+  },
+  {
+    "file": "kk_right_100.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "100 метрден кейін оңға бұрылыңыз"
+  },
+  {
+    "file": "kk_right_300.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "300 метрден кейін оңға бұрылыңыз"
+  },
+  {
+    "file": "kk_uturn_50.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "Кері бұрылыңыз"
+  },
+  {
+    "file": "kk_uturn_100.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "100 метрден кейін кері бұрылыңыз"
+  },
+  {
+    "file": "kk_straight_50.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "Тура жүріңіз"
+  },
+  {
+    "file": "kk_uturn_300.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "300 метрден кейін кері бұрылыңыз"
+  },
+  {
+    "file": "kk_straight_100.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "100 метрден кейін тура жүріңіз"
+  },
+  {
+    "file": "kk_straight_300.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "300 метрден кейін тура жүріңіз"
+  },
+  {
+    "file": "kk_roundabout_50.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "Айналма жолмен жүріңіз"
+  },
+  {
+    "file": "kk_roundabout_100.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "100 метрден кейін айналма жолмен жүріңіз"
+  },
+  {
+    "file": "kk_roundabout_300.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "300 метрден кейін айналма жолмен жүріңіз"
+  },
+  {
+    "file": "kk_arrival_0.mp3",
+    "language": "kk",
+    "voice": "kk-KZ-AigulNeural",
+    "text": "Сіз келдіңіз"
+  }
+]

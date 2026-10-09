@@ -1,3 +1,8 @@
+import '../../../core/services/text_to_speech_service.dart';
+import '../../../core/utils/localization_service.dart';
+import '../widgets/navigation_instruction.dart';
+import '../utils/navigation_distance.dart';
+import '../widgets/driver_daily_bonus_card.dart';
 import '../widgets/driver_offer_expiry_watcher.dart';
 import '../widgets/driver_navigation_map.dart';
 import '../../../core/services/driver_offer_sound.dart';
@@ -72,6 +77,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   StreamSubscription<Position>? _positionStream;
   double _driverHeading = 0;
   LatLng? _lastGpsPoint;
+  DateTime? _lastGpsAt;
+  double? _lastGpsAccuracy;
+  bool _navigationVoiceWarningShown = false;
   Timer? _activeOrderPollTimer;
   Timer? _nearbyPollTimer;
   Timer? _offerCountdownTimer;
@@ -103,6 +111,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   int _navStepIndex = 0;
   DateTime? _lastRealtimeRefreshAt;
   bool _initialized = false;
+  final _navigationSpeech = createTextToSpeechService();
+  final _spokenManeuvers = <String, int>{};
   Timer? _dashboardMetricsTimer;
 
   bool get _isDriverApproved => isApprovedDriverStatus(_driverStatus);
@@ -165,6 +175,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    unawaited(_navigationSpeech.stop());
     _notificationTapSub?.cancel();
     _dashboardMetricsTimer?.cancel();
     _locationTimer?.cancel();
@@ -192,7 +203,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _appLifecycleState = state;
+    if (mounted) setState(() => _appLifecycleState = state);
     if (state == AppLifecycleState.resumed &&
         _isOnline &&
         _activeOrder == null) {
@@ -340,6 +351,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _setOnline(bool value) async {
     if (value) {
+      unawaited(_navigationSpeech.speak(''));
       unawaited(DriverOfferSound.prepare());
       unawaited(PushNotificationsService.instance.enableDriverNotifications());
     }
@@ -356,10 +368,19 @@ class _DriverHomePageState extends State<DriverHomePage>
         } catch (_) {
           // Use the last known/default point if browser GPS is unavailable.
         }
-        final locationSaved = await _updateLocation(silent: true);
-        if (!locationSaved) return;
+        final locationSaved = await _updateLocation(silent: false);
+        if (!locationSaved) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(_message.isEmpty
+                    ? 'Не удалось сохранить местоположение. Вы остались вне линии.'
+                    : _message)));
+          }
+          await _loadDriverProfileState();
+          return;
+        }
       }
-      await ApiClient().post(
+      final onlineResponse = await ApiClient().post(
         '/driver/online',
         data: {
           'isOnline': value,
@@ -367,7 +388,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         },
       );
       setState(() {
-        _isOnline = value;
+        _isOnline = onlineResponse.data is Map &&
+            onlineResponse.data['isOnline'] == true;
         _message = 'Статус онлайн: ${value ? 'включен' : 'выключен'}';
       });
       if (value) {
@@ -377,7 +399,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
     } catch (e) {
       final message = errorMessageRu(e);
-      setState(() => _message = message);
+      if (mounted) {
+        setState(() => _message = message);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+      }
       await _showTopupRequiredDialogIfNeeded(message);
       await _loadDriverProfileState();
     } finally {
@@ -532,7 +558,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     try {
       final oldIds = _nearby
           .whereType<Map>()
-          .map((e) => (e['id'] ?? '').toString())
+          .map((e) => driverOfferIdentity(Map<String, dynamic>.from(e)))
           .where((id) => id.isNotEmpty)
           .toSet();
       final res = await ApiClient().get('/driver/orders/nearby');
@@ -614,7 +640,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     List<Map<String, dynamic>> normalized,
   ) async {
     final currentIds = normalized
-        .map((o) => (o['id'] ?? '').toString())
+        .map(driverOfferIdentity)
         .where((id) => id.isNotEmpty)
         .toSet();
     _notifiedOfferIds.removeWhere((id) => !currentIds.contains(id));
@@ -627,22 +653,23 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     final newOffers = normalized.where((o) {
       final id = (o['id'] ?? '').toString();
-      return id.isNotEmpty && !oldIds.contains(id);
+      return id.isNotEmpty && !oldIds.contains(driverOfferIdentity(o));
     }).toList();
     if (newOffers.isEmpty) return;
     final first = newOffers.first;
     final firstId = (first['id'] ?? '').toString();
     if (firstId.isEmpty) return;
-    if (_notifiedOfferIds.contains(firstId)) return;
-    _notifiedOfferIds.add(firstId);
-    await PushNotificationsService.instance
+    final offerIdentity = driverOfferIdentity(first);
+    if (_notifiedOfferIds.contains(offerIdentity)) return;
+    _notifiedOfferIds.add(offerIdentity);
+    unawaited(PushNotificationsService.instance
         .showDriverOfferNotification(
           orderId: firstId,
           fromAddress: (first['fromAddress'] ?? 'Точка подачи').toString(),
           toAddress: (first['toAddress'] ?? 'Точка назначения').toString(),
           secondsLeft: _offerSecondsLeft(first),
         )
-        .catchError((Object _) {});
+        .catchError((Object _) {}));
     if (_appLifecycleState == AppLifecycleState.resumed) {
       if (_offerDialogOpen) {
         _pendingOfferOrderId = firstId;
@@ -736,7 +763,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final orderId = (order['id'] ?? '').toString();
     if (orderId.isEmpty) return;
     _offerDialogOpen = true;
-    _playNewOfferSoundOnce(orderId);
+    _playNewOfferSoundOnce(driverOfferIdentity(order));
     _startOfferAlarm(orderId);
     var secondsLeft = _offerSecondsLeft(order);
     final typeRaw =
@@ -2008,6 +2035,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         await ApiClient().post('/orders/$id/status', data: {'status': status});
         await _loadOrderById(id);
       }
+      if (status == 'DRIVER_ARRIVED' && _navSteps.isNotEmpty) {
+        _announceManeuver(_navSteps.last, 0);
+      }
       setState(() => _message = 'Статус заказа обновлен');
       if (status == 'COMPLETED' || status == 'CANCELLED') {
         _activeOrderPollTimer?.cancel();
@@ -2043,6 +2073,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     final previous = _lastGpsPoint;
     final point = LatLng(position.latitude, position.longitude);
     _lastGpsPoint = point;
+    _lastGpsAt = position.timestamp;
+    _lastGpsAccuracy = position.accuracy;
     var heading = _driverHeading;
     if (position.speed > 1 &&
         position.heading.isFinite &&
@@ -2120,17 +2152,50 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (raw is! Map) return;
       final data = Map<String, dynamic>.from(raw);
       final type = (data['type'] ?? '').toString().toLowerCase();
-      if (type == 'driver.rating.updated') {
+      if (type == 'driver.rating.updated' ||
+          type == 'driver.activity.updated' ||
+          type == 'driver.bonus.updated') {
         await _loadDriverProfileState(metricsOnly: true);
+        if (type == 'driver.bonus.updated') await _loadDriverWallet();
         return;
       }
       if (type == 'driver.location.updated') return;
+      if (type == 'order.status.changed') {
+        unawaited(_loadDriverProfileState(metricsOnly: true));
+        unawaited(_loadDriverWallet());
+      }
       if (type == 'driver.online.changed') {
         final payload = data['payload'] is Map
             ? Map<String, dynamic>.from(data['payload'] as Map)
             : <String, dynamic>{};
         final isOnline = payload['isOnline'] == true;
         final reason = (payload['reason'] ?? '').toString().toUpperCase();
+        if (!isOnline && reason == 'OFFER_TIMEOUT') {
+          setState(() {
+            _isOnline = false;
+            _nearby = const [];
+          });
+          await _disableDriverFeeds();
+          await _loadDriverProfileState(metricsOnly: true);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text(
+                  'Заказ пропущен: −3 балла активности. Вы сняты с линии.'),
+            ));
+          }
+          return;
+        }
+        if (!isOnline && reason == 'ACTIVITY_BLOCKED') {
+          if (mounted) {
+            setState(() {
+              _isOnline = false;
+              _nearby = const [];
+            });
+          }
+          await _disableDriverFeeds();
+          await _loadDriverProfileState(metricsOnly: true);
+          return;
+        }
         if (!isOnline && reason == 'LOW_BALANCE') {
           final minBalance = (payload['minBalance'] ?? 100).toString();
           final balance = (payload['balance'] ?? 0).toString();
@@ -2326,37 +2391,65 @@ class _DriverHomePageState extends State<DriverHomePage>
     return LatLng(latRaw.toDouble(), lngRaw.toDouble());
   }
 
-  String _navInstructionRu(Map<String, dynamic> step) {
-    final maneuver = step['maneuver'] is Map
-        ? Map<String, dynamic>.from(step['maneuver'] as Map)
-        : <String, dynamic>{};
-    final type = (maneuver['type'] ?? '').toString();
-    final modifier = (maneuver['modifier'] ?? '').toString();
-    final roadName = (step['name'] ?? '').toString().trim();
+  String _navInstructionRu(Map<String, dynamic> step) => navigationAction(
+      step, LocalizationService.currentLanguage == AppLanguage.kazakh);
 
-    String action;
-    if (type == 'arrive') {
-      action = 'Вы прибыли к точке назначения';
-    } else if (type == 'depart') {
-      action = 'Начинайте движение прямо';
-    } else if (type == 'roundabout' || type == 'rotary') {
-      action = 'На круговом движении продолжайте по направлению';
-    } else if (modifier == 'left' || modifier == 'slight left') {
-      action = 'Поверните налево';
-    } else if (modifier == 'right' || modifier == 'slight right') {
-      action = 'Поверните направо';
-    } else if (modifier == 'sharp left') {
-      action = 'Резкий поворот налево';
-    } else if (modifier == 'sharp right') {
-      action = 'Резкий поворот направо';
-    } else if (modifier == 'uturn' || modifier == 'uturn left') {
-      action = 'Выполните разворот';
-    } else {
-      action = 'Продолжайте движение прямо';
+  void _announceManeuver(Map<String, dynamic> step, double km) {
+    final maneuver =
+        step['maneuver'] is Map ? step['maneuver'] as Map : const {};
+    if (maneuver['type'] == 'depart' ||
+        _appLifecycleState != AppLifecycleState.resumed) {
+      return;
     }
-
-    if (roadName.isEmpty || type == 'arrive') return action;
-    return '$action на $roadName';
+    if (_lastGpsPoint == null ||
+        (_lastGpsAccuracy ?? double.infinity) > 40 ||
+        _lastGpsAt == null ||
+        DateTime.now().difference(_lastGpsAt!).inSeconds > 30) {
+      return;
+    }
+    final arrival = maneuver['type'] == 'arrive';
+    final stepPoint = _navStepPoint(step);
+    if (arrival &&
+        (stepPoint == null ||
+            const Distance().as(LengthUnit.Meter, _lastGpsPoint!, stepPoint) >
+                50)) {
+      return;
+    }
+    if (km > (arrival ? 0.02 : 0.3)) return;
+    final threshold = arrival
+        ? 0
+        : km <= 0.05
+            ? 50
+            : km <= 0.1
+                ? 100
+                : 300;
+    final kazakh = LocalizationService.currentLanguage == AppLanguage.kazakh;
+    final key =
+        '${_activeOrder?['id']}:${_activeOrder?['status'] == 'IN_PROGRESS' ? 'trip' : 'pickup'}:${maneuver['location']}:${maneuver['type']}:${maneuver['modifier']}:$kazakh';
+    final previous = _spokenManeuvers[key];
+    if (previous != null && previous <= threshold) return;
+    _spokenManeuvers[key] = threshold;
+    if (_spokenManeuvers.length > 300) {
+      _spokenManeuvers.remove(_spokenManeuvers.keys.first);
+    }
+    unawaited(() async {
+      try {
+        await _navigationSpeech.setLanguage(kazakh ? 'kk-KZ' : 'ru-RU');
+        await _navigationSpeech.setSpeechRate(0.9);
+        await _navigationSpeech.setPitch(1.05);
+        await _navigationSpeech.setVolume(1);
+        await _navigationSpeech
+            .speak(navigationSpeech(step, threshold, kazakh));
+      } catch (_) {
+        if (mounted && !_navigationVoiceWarningShown) {
+          _navigationVoiceWarningShown = true;
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(kazakh
+                  ? 'Дыбысты қосу үшін «Желіде» түймесін басып, браузерде дыбысқа рұқсат беріңіз.'
+                  : 'Для озвучки нажмите «На линии» и разрешите звук в браузере.')));
+        }
+      }
+    }());
   }
 
   String _formatDistanceRu(double km) {
@@ -2377,19 +2470,32 @@ class _DriverHomePageState extends State<DriverHomePage>
       final step = _navSteps[index];
       final stepPoint = _navStepPoint(step);
       if (stepPoint == null) break;
-      final km = _distanceKm(
-        driver.latitude,
-        driver.longitude,
-        stepPoint.latitude,
-        stepPoint.longitude,
-      );
-      if (km <= 0.04) {
+      final roadKm =
+          navigationRoadDistance(_activeRoutePolyline, driver, stepPoint);
+      final km = roadKm ??
+          _distanceKm(driver.latitude, driver.longitude, stepPoint.latitude,
+              stepPoint.longitude);
+      if (roadKm != null && roadKm >= -0.02) {
+        _announceManeuver(step, km.clamp(0, double.infinity));
+      }
+      final maneuver =
+          step['maneuver'] is Map ? step['maneuver'] as Map : const {};
+      if (maneuver['type'] == 'depart' || km <= 0.012) {
         index += 1;
       } else {
         break;
       }
     }
 
+    if (index == _navSteps.length - 1) {
+      final point = _navStepPoint(_navSteps[index]);
+      if (point != null) {
+        final km = navigationRoadDistance(_activeRoutePolyline, driver, point);
+        if (km != null && km >= -0.02) {
+          _announceManeuver(_navSteps[index], km.clamp(0, double.infinity));
+        }
+      }
+    }
     if (index != _navStepIndex && mounted) {
       setState(() => _navStepIndex = index);
     }
@@ -2403,12 +2509,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     final stepPoint = _navStepPoint(step);
     double? distanceKm;
     if (driver != null && stepPoint != null) {
-      distanceKm = _distanceKm(
-        driver.latitude,
-        driver.longitude,
-        stepPoint.latitude,
-        stepPoint.longitude,
-      );
+      distanceKm =
+          navigationRoadDistance(_activeRoutePolyline, driver, stepPoint)
+                  ?.clamp(0, double.infinity) ??
+              _distanceKm(driver.latitude, driver.longitude, stepPoint.latitude,
+                  stepPoint.longitude);
     }
     return {
       'index': index,
@@ -3575,7 +3680,21 @@ class _DriverHomePageState extends State<DriverHomePage>
       onCall: () => _callPassenger(order),
       onChat: () => _openActiveOrderChat(order),
       onNavigate: _openActiveOrderInNavigator,
+      onEnableVoice: () {
+        _navigationVoiceWarningShown = false;
+        unawaited(_navigationSpeech.speak(''));
+      },
       actionLabel: action?.label,
+      actionKey: '${order['id']}:${action?.nextStatus}',
+      autoActionEligible: _appLifecycleState == AppLifecycleState.resumed &&
+          (action?.nextStatus == 'IN_PROGRESS' ||
+              action?.nextStatus == 'DRIVER_ARRIVED' &&
+                  _lastGpsPoint != null &&
+                  (_lastGpsAccuracy ?? double.infinity) <= 40 &&
+                  _lastGpsAt != null &&
+                  DateTime.now().difference(_lastGpsAt!).inSeconds <= 30 &&
+                  remaining != null &&
+                  remaining <= 0.05),
       actionIcon: action?.icon,
       busy: _rideStatusBusy,
       onAction: action != null && _canMoveToStatus(action.nextStatus)
@@ -3765,6 +3884,11 @@ class _DriverHomePageState extends State<DriverHomePage>
                 onBalance: () => context.push('/driver/wallet'),
               ),
               const SizedBox(height: 12),
+              DriverDailyBonusCard(
+                  bonus: _driverProfile?['dailyBonus'] is Map
+                      ? Map<String, dynamic>.from(
+                          _driverProfile!['dailyBonus'] as Map)
+                      : null),
               Expanded(
                   child: ClipRRect(
                 borderRadius: BorderRadius.circular(18),

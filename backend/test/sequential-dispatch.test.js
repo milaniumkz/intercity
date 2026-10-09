@@ -19,7 +19,7 @@ test('durable sequential dispatch: rejection, timeout, repeat rounds, restart, e
     online:{create:{isOnline:true,cityId:city.id,lastLat:49.9,lastLng:82.6,lastLocationAt:new Date()}},serviceStats:{create:{activityScore:100}}}});
    drivers.push({id:driver.id,userId:user.id});
   }
-  const makeService=()=>{const s=new AutoDispatchService(p,realtime,push);s.computeScore=async d=>({totalScore:100-drivers.findIndex(x=>x.id===d.driverId)});return s};
+  const makeService=()=>{const s=new AutoDispatchService(p,realtime,push);s.computeScore=async d=>({driverId:d.driverId,totalScore:100,priorityScore:100-drivers.findIndex(x=>x.id===d.driverId),activityScore:50,ratingScore:0,distanceScore:50,randomJitter:0});return s};
   const dispatch=makeService();const driverApi=new DriverService(p,{},realtime,push,dispatch);
   const create=()=>p.order.create({data:{passengerId:passenger.id,cityId:city.id,fromLat:49.9,fromLng:82.6,toLat:49.91,toLng:82.61,fromAddress:'Test start',toAddress:'Test end'}});
   const read=id=>p.order.findUnique({where:{id}});
@@ -40,13 +40,19 @@ test('durable sequential dispatch: rejection, timeout, repeat rounds, restart, e
   const waiting=await read(a.id);assert.equal(waiting.status,'SEARCHING_DRIVER');assert.equal(waiting.dispatchDriverId,null);assert.ok(waiting.dispatchRetryAt>new Date());
   await makeService().processQueue();assert.equal((await read(a.id)).dispatchDriverId,null);
   await retry(a.id);await makeService().processQueue();assert.equal((await read(a.id)).dispatchDriverId,drivers[0].id);
-  await driverApi.rejectOrder(drivers[0].userId,a.id);assert.equal((await p.driverServiceStats.findUnique({where:{driverId:drivers[0].id}})).activityScore,97);
+  await driverApi.rejectOrder(drivers[0].userId,a.id);assert.equal((await p.driverServiceStats.findUnique({where:{driverId:drivers[0].id}})).activityScore,94);
   assert.equal((await read(a.id)).dispatchDriverId,drivers[1].id);
   await expired(a.id);await assert.rejects(driverApi.acceptOrder(drivers[1].userId,a.id));
   await makeService().processQueue();assert.equal((await read(a.id)).dispatchDriverId,drivers[2].id);
+  assert.equal((await p.driverOnline.findUnique({where:{driverId:drivers[1].id}})).isOnline,false);
+  assert.equal((await p.driverServiceStats.findUnique({where:{driverId:drivers[1].id}})).activityScore,94);
+  await dispatch.assignCityOrder(a.id);
+  assert.equal((await p.driverServiceStats.findUnique({where:{driverId:drivers[1].id}})).activityScore,94);
   const results=await Promise.allSettled([driverApi.acceptOrder(drivers[2].userId,a.id),driverApi.acceptOrder(drivers[2].userId,a.id),driverApi.acceptOrder(drivers[1].userId,a.id)]);
   assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal((await read(a.id)).driverId,drivers[2].id);
   await dispatch.assignCityOrder(a.id);assert.equal((await read(a.id)).status,'DRIVER_EN_ROUTE');
+  assert.equal((await p.driverServiceStats.findUnique({where:{driverId:drivers[2].id}})).activityScore,100);
+  await p.driverOnline.update({where:{driverId:drivers[1].id},data:{isOnline:true}});
   const b=await create(),c=await create();
   await Promise.all([dispatch.assignCityOrder(b.id),makeService().assignCityOrder(c.id)]);
   const pending=await p.order.findMany({where:{id:{in:[b.id,c.id]}},select:{dispatchDriverId:true}});
