@@ -15,8 +15,18 @@ class _FlowApi extends ApiClient {
           {Map<String, dynamic>? queryParameters, Options? options}) async =>
       Response(
           requestOptions: RequestOptions(path: path),
-          data:
-              path == '/geo/cities' ? [] : {'passengerMapHomeEnabled': false});
+          data: path == '/geo/cities'
+              ? []
+              : path == '/geo/search'
+                  ? [
+                      {
+                        'displayName': 'Серикбаева 8/1А',
+                        'lat': 49.96,
+                        'lng': 82.61,
+                        'countryCode': 'KZ'
+                      }
+                    ]
+                  : {'passengerMapHomeEnabled': false});
   @override
   Future<Response<dynamic>> post(String path,
       {dynamic data,
@@ -33,6 +43,49 @@ class _FlowApi extends ApiClient {
 }
 
 void main() {
+  testWidgets(
+      'class without destination opens search and booking addresses remain editable',
+      (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    tester.view.physicalSize = const Size(600, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await AppPreferences.setOrderDraft(jsonEncode(
+        {'fromLat': 49.95, 'fromLng': 82.6, 'fromAddress': 'Шакарима 10'}));
+    final api = _FlowApi();
+    final router = GoRouter(initialLocation: '/order/class', routes: [
+      GoRoute(
+          path: '/order/:stage',
+          builder: (_, state) => OrderScreen(
+              routeStage: state.pathParameters['stage'],
+              apiClient: api,
+              enableLiveMap: false,
+              autoLocateOnStart: false)),
+    ]);
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Комфорт'));
+    await tester.pumpAndSettle();
+    expect(find.text('Куда поедем?'), findsOneWidget);
+    expect(find.text('Заказ поездки'), findsNothing);
+    expect(api.calls, isEmpty);
+    await tester.enterText(find.byType(TextField).first, 'Серикбаева 8/1А');
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Выбрать адрес').first);
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.text('Заказ поездки'), findsOneWidget);
+    expect(find.text('900 ₸'), findsOneWidget);
+    await tester.tap(find.text('Серикбаева 8/1А').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Куда поедем?'), findsOneWidget);
+    expect(api.calls.where((path) => path == '/orders'), isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets(
       'class precedes addresses with price, then payment submits directly',
       (tester) async {

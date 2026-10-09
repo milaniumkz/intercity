@@ -1119,7 +1119,8 @@ class _OrderScreenState extends State<OrderScreen> {
       _boardPrice = null;
       _boardRequestId++;
     });
-    await _goOrderBoard('fixed');
+    _ensureBoardPickupPoint();
+    await _goOrderBoard(_toLocation == null ? 'address' : 'fixed');
     if (mounted) _scheduleAutoBoard();
   }
 
@@ -3077,12 +3078,18 @@ class _OrderScreenState extends State<OrderScreen> {
                     label: 'Откуда',
                     address: _displayFromAddress,
                     first: true,
+                    onTap: () {
+                      _manualAddressForFrom = true;
+                      _manualAddressController.text = _fromController.text;
+                      _goOrderBoard('manual');
+                    },
                   ),
                   const SizedBox(height: 12),
                   _boardRouteLine(
                     label: 'Куда',
                     address: _displayToAddress,
                     first: false,
+                    onTap: () => _goOrderBoard('address'),
                   ),
                 ],
               ),
@@ -6640,47 +6647,51 @@ class _OrderScreenState extends State<OrderScreen> {
     required String label,
     required String address,
     required bool first,
+    VoidCallback? onTap,
   }) {
     final theme = Theme.of(context);
-    return Row(
-      children: [
-        Icon(
-          first ? Icons.trip_origin_rounded : Icons.location_on_rounded,
-          color: AppTheme.primaryColor,
-          size: 22,
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              Text(
-                address,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: theme.colorScheme.onSurface,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (!first)
+    return InkWell(
+      onTap: onTap,
+      child: Row(
+        children: [
           Icon(
-            Icons.close_rounded,
-            color: theme.colorScheme.onSurfaceVariant,
-            size: 18,
+            first ? Icons.trip_origin_rounded : Icons.location_on_rounded,
+            color: AppTheme.primaryColor,
+            size: 22,
           ),
-      ],
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  address,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurface,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (!first)
+            Icon(
+              Icons.close_rounded,
+              color: theme.colorScheme.onSurfaceVariant,
+              size: 18,
+            ),
+        ],
+      ),
     );
   }
 

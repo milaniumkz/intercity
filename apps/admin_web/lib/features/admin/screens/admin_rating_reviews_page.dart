@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 import '../../../core/api/admin_api_client.dart';
 import 'admin_dashboard_page.dart';
 
@@ -43,6 +44,8 @@ class _AdminRatingReviewsPageState extends State<AdminRatingReviewsPage> {
 
   Future<void> _decide(Map<String, dynamic> item, String decision) async {
     final note = TextEditingController();
+    var saving = false;
+    String? error;
     var rating = (item['order']?['driverRating'] as num?)?.toInt() ?? 2;
     final route = DialogRoute<bool>(
         context: context,
@@ -68,42 +71,68 @@ class _AdminRatingReviewsPageState extends State<AdminRatingReviewsPage> {
                         minLines: 3,
                         maxLines: 5,
                         maxLength: 2000,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                             labelText: 'Обоснование решения',
-                            hintText: 'Укажите проверенные обстоятельства')),
+                            hintText:
+                                'Минимум 5 символов: проверенные обстоятельства',
+                            errorText: error)),
                   ])),
                   actions: [
                     TextButton(
-                        onPressed: () => Navigator.pop(ctx, false),
+                        onPressed:
+                            saving ? null : () => Navigator.pop(ctx, false),
                         child: const Text('Назад')),
                     FilledButton(
-                        onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('Сохранить'))
+                        onPressed: saving
+                            ? null
+                            : () async {
+                                final explanation = note.text.trim();
+                                if (explanation.length < 5) {
+                                  setDialog(() => error =
+                                      'Укажите пояснение не менее 5 символов');
+                                  return;
+                                }
+                                setDialog(() {
+                                  saving = true;
+                                  error = null;
+                                });
+                                try {
+                                  await AdminApiClient.instance.patch(
+                                      '/admin/complaints/${item['id']}',
+                                      data: {
+                                        'ratingDecision': decision,
+                                        'rating': rating,
+                                        'resolutionNote': explanation,
+                                      });
+                                  if (ctx.mounted) Navigator.pop(ctx, true);
+                                } catch (e) {
+                                  if (!ctx.mounted) return;
+                                  final data = e is DioException
+                                      ? e.response?.data
+                                      : null;
+                                  final message =
+                                      data is Map ? data['message'] : null;
+                                  setDialog(() {
+                                    saving = false;
+                                    error = message is List
+                                        ? message.join('\n')
+                                        : message?.toString() ??
+                                            'Не удалось сохранить решение. Попробуйте ещё раз.';
+                                  });
+                                }
+                              },
+                        child: Text(saving ? 'Сохранение…' : 'Сохранить'))
                   ],
                 )));
     final approved = await Navigator.of(context).push(route);
-    final explanation = note.text.trim();
     await route.completed;
     note.dispose();
     if (approved != true || !mounted) return;
-    if (explanation.length < 5) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Укажите пояснение не менее 5 символов')));
-      return;
-    }
-    try {
-      await AdminApiClient.instance.patch('/admin/complaints/${item['id']}',
-          data: {
-            'ratingDecision': decision,
-            'rating': rating,
-            'resolutionNote': explanation
-          });
-      await _load();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
-      }
+    await _load();
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('Решение сохранено')));
     }
   }
 
