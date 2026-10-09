@@ -106,17 +106,18 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           YANDEX_GEOCODER_API_KEY: ${{ secrets.YANDEX_GEOCODER_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
         run: |
           bundle="output/intercity-vps-${GITHUB_SHA}.tar.gz"
           scp "$bundle" "scripts/vps_deploy_release.sh" "$VPS_USER@$VPS_HOST:/tmp/"
           key_file="$RUNNER_TEMP/yandex-geocoder.json"
           trap 'rm -f "$key_file"' EXIT
-          if [[ -n "$YANDEX_GEOCODER_API_KEY" ]]; then
+          if [[ -n "$YANDEX_GEOCODER_API_KEY" || -n "$FIREBASE_SERVICE_ACCOUNT_JSON" ]]; then
             python3 - "$key_file" <<'PYKEY'
           import json, os, sys
           fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
           with os.fdopen(fd, 'w') as file:
-              json.dump({'key': os.environ['YANDEX_GEOCODER_API_KEY']}, file)
+              json.dump({'key': os.environ.get('YANDEX_GEOCODER_API_KEY', ''), 'firebase': os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON', '')}, file)
           PYKEY
             scp -p "$key_file" "$VPS_USER@$VPS_HOST:/tmp/intercity-yandex-$GITHUB_SHA.json"
           fi

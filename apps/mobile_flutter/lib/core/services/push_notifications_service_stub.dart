@@ -10,6 +10,8 @@ class PushNotificationsService {
 
   Future<void> init() async {}
 
+  Future<void> enableDriverNotifications() async {}
+
   Future<void> syncTokenIfAuthorized() async {}
 
   Future<void> showDriverOfferNotification({

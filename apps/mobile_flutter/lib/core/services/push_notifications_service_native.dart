@@ -43,6 +43,7 @@ class PushNotificationsService {
   Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
+    await _initLocalNotifications();
 
     try {
       await _initializeFirebaseForSupportedNativePlatform();
@@ -54,7 +55,6 @@ class PushNotificationsService {
     }
 
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-    await _initLocalNotifications();
 
     final messaging = FirebaseMessaging.instance;
     await messaging.requestPermission(
@@ -72,12 +72,19 @@ class PushNotificationsService {
     }
 
     FirebaseMessaging.onMessage.listen(_onForegroundMessage);
-    FirebaseMessaging.onMessageOpenedApp.listen((_) {
-      // TODO: Add deep-link routing by notification type when payload schema is finalized.
+    FirebaseMessaging.onMessageOpenedApp.listen((message) {
+      _payloadStreamController.add(Map<String, dynamic>.from(message.data));
     });
     FirebaseMessaging.instance.onTokenRefresh.listen((token) async {
       await _sendTokenToBackend(token);
     });
+  }
+
+  Future<void> enableDriverNotifications() async {
+    if (!_firebaseReady) return;
+    await FirebaseMessaging.instance
+        .requestPermission(alert: true, badge: true, sound: true);
+    await syncTokenIfAuthorized();
   }
 
   Future<void> syncTokenIfAuthorized() async {
@@ -95,7 +102,8 @@ class PushNotificationsService {
   Future<void> _initLocalNotifications() async {
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
-    const initSettings = InitializationSettings(android: androidSettings);
+    const initSettings = InitializationSettings(
+        android: androidSettings, iOS: DarwinInitializationSettings());
     await _localNotifications.initialize(
       initSettings,
       onDidReceiveNotificationResponse: _onDidReceiveNotificationResponse,
@@ -117,6 +125,7 @@ class PushNotificationsService {
   }
 
   Future<void> _onForegroundMessage(RemoteMessage message) async {
+    _payloadStreamController.add(Map<String, dynamic>.from(message.data));
     final notification = message.notification;
     if (notification == null) return;
     await _localNotifications.show(
@@ -124,6 +133,7 @@ class PushNotificationsService {
       notification.title ?? 'INTERCITY',
       notification.body ?? '',
       const NotificationDetails(
+        iOS: DarwinNotificationDetails(presentSound: true),
         android: AndroidNotificationDetails(
           'intercity_default_channel',
           'INTERCITY уведомления',
@@ -132,6 +142,7 @@ class PushNotificationsService {
           priority: Priority.high,
         ),
       ),
+      payload: encodePushPayload(Map<String, dynamic>.from(message.data)),
     );
   }
 
@@ -154,6 +165,7 @@ class PushNotificationsService {
         secondsLeft: sec,
       ),
       NotificationDetails(
+        iOS: const DarwinNotificationDetails(presentSound: true),
         android: AndroidNotificationDetails(
           'intercity_default_channel',
           'INTERCITY уведомления',
@@ -185,6 +197,7 @@ class PushNotificationsService {
       title,
       body,
       const NotificationDetails(
+        iOS: DarwinNotificationDetails(presentSound: true),
         android: AndroidNotificationDetails(
           'intercity_default_channel',
           'INTERCITY уведомления',

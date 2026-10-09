@@ -13,6 +13,8 @@ firebase.initializeApp({
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
+  // FCM displays notification messages itself; only display data-only messages.
+  if (payload.notification) return;
   const notification = payload.notification || {};
   const data = payload.data || {};
   const title = notification.title || 'INTERCITY';
