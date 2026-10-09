@@ -11,6 +11,53 @@ compose() {
 }
 
 case "$ACTION" in
+  reset-admin-password)
+    backup_dir="$APP_ROOT/backups/$(date +%Y%m%d-%H%M%S)-admin-password"
+    mkdir -p "$backup_dir"; chmod 700 "$backup_dir"
+    docker exec intercity-postgres sh -c 'exec pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$backup_dir/postgres.sql"
+    chmod 600 "$backup_dir/postgres.sql"
+    test -s "$backup_dir/postgres.sql"
+    grep -q 'PostgreSQL database dump complete' "$backup_dir/postgres.sql"
+    docker exec -i intercity-backend node <<'JS'
+const {PrismaClient}=require('@prisma/client');const bcrypt=require('bcrypt');const crypto=require('crypto');const p=new PrismaClient();
+const publicKey=`-----BEGIN PUBLIC KEY-----
+MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAy9dpUKTorvUnJNZKHz6I
+X/TJhHQ8EWiUVQL7Y//FqFZjKYZEzSzIF2occ2jXSkcwyR3s9hFvdDssuUnbdkwL
+dN5KoETFeti4dj7Njmoyjd0zdFfW5fREKASu2fl8erL7oeLg5sdAC84yW6cc3Pjo
+ewWyS0KxzNTAjqYHpTSidvLA+7A2ntYKSQkHzzfLtVK3G0Vdj7Qx/qNGKyr0225N
+/4hNPzMspvc21sPm1quyXhiH3bsnugX4oHkzBeqtlDauORegmuVUywllTt+ROc/e
+28hi6YY6SsyTN/m0fMMmPIYN4wtTY3XB1t1QvMPnh0EfrUHOVshGD9T07AcUUZuc
+DNdbKK5ZZviWrhoste8zA0JsOHtL7TtXxQarTqxatBIwGBB0PDZsyOMQ//y5Qdo2
+GGf9x/QFkNmrAF9lIAqF2cd44QYHfeN8jDM8dr6cfIuRIpDBKPniyJZ3Bqvk5wDL
+dTHe7PG5aKiFBuN8SlPGUNo5sAzZGQF95CE4UiNDfHTxAgMBAAE=
+-----END PUBLIC KEY-----
+`;
+(async()=>{
+ const phone='+70000000000';
+ const u=await p.user.findUnique({where:{phone},select:{id:true,role:true,password:true}});
+ if(!u||u.role!=='ADMIN')throw Error('Expected administrator missing');
+ const password=crypto.randomBytes(18).toString('base64url');
+ const encrypted=crypto.publicEncrypt({key:publicKey,oaepHash:'sha256',padding:crypto.constants.RSA_PKCS1_OAEP_PADDING},Buffer.from(password)).toString('base64');
+ const hash=await bcrypt.hash(password,12);
+ const changed=await p.user.updateMany({where:{id:u.id,role:'ADMIN',password:u.password},data:{password:hash}});
+ if(changed.count!==1)throw Error('Administrator changed during operation');
+ try {
+  const r=await fetch('http://127.0.0.1:3000/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,password})});
+  if(!r.ok)throw Error('Login verification failed');
+  const data=await r.json();
+  const token=data.accessToken||data.access_token||data.tokens?.accessToken;
+  if(data.user?.role!=='ADMIN'||!token)throw Error('Administrator token missing');
+  const admin=await fetch('http://127.0.0.1:3000/api/admin/cities',{headers:{Authorization:'Bearer '+token}});
+  if(!admin.ok)throw Error('Admin access verification failed');
+  console.log('ADMIN_RESET_VERIFIED '+phone);
+  console.log('ENCRYPTED_ADMIN_PASSWORD '+encrypted);
+ } catch(e) {
+  await p.user.updateMany({where:{id:u.id,password:hash},data:{password:u.password}});
+  throw e;
+ }
+})().catch(e=>{console.error(e.message);process.exitCode=1}).finally(()=>p.$disconnect());
+JS
+    ;;
   repair-kirovsk-country)
     [[ "$(cat "$APP_ROOT/current_commit")" == "8a2be71212250194144f134922616588f9fb5254" ]] || { echo 'Release changed'; exit 1; }
     [[ "$(sha256sum "$APP_ROOT/current/backend/src/geo/geo.service.ts" | cut -d' ' -f1)" == "c62c058d8e6d0cea86afcb8cea1f709317e71190efdb7f6be964b88d74025da9" ]] || { echo 'Source mismatch'; exit 1; }

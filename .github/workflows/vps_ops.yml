@@ -14,6 +14,7 @@ on:
           - redeploy-current
           - rollback
           - repair-kirovsk-country
+          - reset-admin-password
       target:
         description: Service for logs or release commit for rollback
         required: false
