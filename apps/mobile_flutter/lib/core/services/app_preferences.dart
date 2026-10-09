@@ -6,6 +6,19 @@ class AppPreferences {
   static final SecureStore _storage =
       createSecureStore(namespace: AppConstants.secureStoreNamespace);
 
+  static Future<bool> claimPaymentFallbackNotice(String key) async {
+    const storageKey = 'payment_fallback_notices';
+    final stored = await _storage.read(storageKey);
+    final seen = stored == null
+        ? <String>[]
+        : (jsonDecode(stored) as List).cast<String>();
+    if (seen.contains(key)) return false;
+    seen.add(key);
+    if (seen.length > 40) seen.removeAt(0);
+    await _storage.write(storageKey, jsonEncode(seen));
+    return true;
+  }
+
   static Future<bool> claimDailyBonusNotice(
       String driverId, String day, String currency) async {
     final key = 'driver_daily_bonus_notice:$driverId:$currency';

@@ -1,3 +1,4 @@
+import '../../../core/services/payment_fallback_notifier.dart';
 import '../../../core/services/text_to_speech_service.dart';
 import '../../../core/utils/localization_service.dart';
 import '../widgets/navigation_instruction.dart';
@@ -116,6 +117,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   DateTime? _lastRealtimeRefreshAt;
   bool _initialized = false;
   final _navigationSpeech = createTextToSpeechService();
+  late final _paymentNotifier =
+      PaymentFallbackNotifier(speech: _navigationSpeech);
   final _spokenManeuvers = <String, int>{};
   Timer? _dashboardMetricsTimer;
   final _pickupDeparture = PickupDepartureTracker();
@@ -1850,6 +1853,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (!mounted) return;
       final order = Map<String, dynamic>.from(res.data as Map);
       final status = (order['status'] ?? '').toString().toUpperCase();
+      unawaited(_paymentNotifier.notify(context, order, 'DRIVER'));
       setState(() => _activeOrder = order);
       await _syncActiveRoutePolyline(order);
       if (const ['COMPLETED', 'CANCELLED'].contains(status)) {
@@ -1895,6 +1899,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         await _loadIntercityMainState();
         return;
       }
+      unawaited(_paymentNotifier.notify(context, request, 'DRIVER'));
       setState(() => _activeOrder = request);
       await _syncActiveRoutePolyline(request);
     } catch (e) {
@@ -2217,6 +2222,29 @@ class _DriverHomePageState extends State<DriverHomePage>
           type == 'promotion.settings.changed') {
         await _loadDriverProfileState(metricsOnly: true);
         if (type == 'driver.bonus.updated') await _loadDriverWallet();
+        return;
+      }
+      if (type == 'driver.payment.changed') {
+        if (!mounted) return;
+        final payload = data['payload'];
+        if (payload is Map && payload['paymentStatus'] == 'CASH') {
+          unawaited(_paymentNotifier.notify(
+              context,
+              {
+                'id': payload['tripId'],
+                'cardPayment': {'status': 'CASH'}
+              },
+              'DRIVER'));
+        }
+        final id = _activeOrder?['id']?.toString();
+        if (id != null) {
+          if (_activeOrderIsIntercity) {
+            unawaited(_loadActiveIntercityById(id));
+          } else {
+            unawaited(_loadOrderById(id));
+          }
+        }
+        unawaited(_loadDriverWallet());
         return;
       }
       if (type == 'driver.location.updated') return;
@@ -3732,7 +3760,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       price: '${order['price'] ?? '-'} ${rideCurrencySymbol(order)}',
       status:
           '${_orderStatusRu(activeOrderStatus)}${remaining == null ? '' : ' · ${_formatDistanceRu(remaining)}'}',
-      payment: paymentMethodLabel(order['paymentMethod']?.toString()),
+      payment: cardPaymentStatusLabel(order).isNotEmpty
+          ? cardPaymentStatusLabel(order)
+          : paymentMethodLabel(order['paymentMethod']?.toString()),
       instruction: nav == null
           ? null
           : '${nav['instruction']}${nav['distanceKm'] is double ? ' · ${_formatDistanceRu(nav['distanceKm'] as double)}' : ''}',

@@ -1,3 +1,4 @@
+import '../../../core/services/payment_fallback_notifier.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -50,6 +51,7 @@ class OrderSearchingPage extends StatefulWidget {
 }
 
 class _OrderSearchingPageState extends State<OrderSearchingPage> {
+  final _paymentNotifier = PaymentFallbackNotifier();
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   final MapController _mapController = MapController();
   final DraggableScrollableController _sheetController =
@@ -280,6 +282,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
       final points = _extractPoints(order);
 
       if (!mounted) return;
+      unawaited(_paymentNotifier.notify(context, order, 'PASSENGER'));
       setState(() {
         _order = order;
         _loading = false;

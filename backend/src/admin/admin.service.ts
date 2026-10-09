@@ -645,6 +645,8 @@ export class AdminService {
     }
 
     async setSetting(key: string, value: string) {
+        if (key === 'kassa24SavedCardsEnabled' && !['true','false'].includes(value)) throw new BadRequestException('Укажите true или false');
+        if (key === 'kassa24AcquiringId' && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0)) throw new BadRequestException('Укажите числовой acquiringId терминала Kassa24');
         if (['driverDailyBonusKZT', 'driverDailyBonusRUB'].includes(key)) {
             try { parseDailyBonus(value); } catch (error: any) { throw new BadRequestException(error.message); }
         }
