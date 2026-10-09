@@ -134,6 +134,10 @@ String? _translateServerMessage(String? message) {
     return LocalizationService.translate(russianText, kazakhText);
   }
 
+  if (lower.contains('не удалось построить маршрут по дорогам')) {
+    return t('Не удалось построить маршрут по дорогам. Повторите попытку.',
+        'Жол бойымен бағыт құру мүмкін болмады. Қайта көріңіз.');
+  }
   if (lower.contains('insufficient bonus balance')) {
     return t(
       'Недостаточно бонусов для оплаты поездки. Выберите наличные или перевод.',

@@ -70,6 +70,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _updatingLocation = false;
   final Set<String> _declinedNextOfferIds = <String>{};
   List<LatLng> _activeRoutePolyline = [];
+  int _activeRouteRequest = 0;
   String? _activeRouteCacheKey;
   final Set<String> _notifiedOfferIds = <String>{};
   String? _pendingOfferOrderId;
@@ -1761,6 +1762,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _syncActiveRoutePolyline(Map<String, dynamic> order) async {
     final status = (order['status'] ?? '').toString().toUpperCase();
     if (status == 'COMPLETED' || status == 'CANCELLED') {
+      _activeRouteRequest++;
       if (mounted) {
         setState(() {
           _activeRoutePolyline = [];
@@ -1803,6 +1805,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       toLng.toStringAsFixed(4),
     ].join('|');
     if (_activeRouteCacheKey == cacheKey) return;
+    final request = ++_activeRouteRequest;
 
     try {
       final res = await ApiClient().get(
@@ -1828,8 +1831,11 @@ class _DriverHomePageState extends State<DriverHomePage>
           }
         }
       }
+      if (points.length < 2) {
+        throw const FormatException('Road route unavailable');
+      }
       final steps = _extractNavSteps(data);
-      if (!mounted) return;
+      if (!mounted || request != _activeRouteRequest) return;
       final hadSteps = _navSteps.isNotEmpty;
       setState(() {
         _activeRoutePolyline = points;
@@ -1840,7 +1846,14 @@ class _DriverHomePageState extends State<DriverHomePage>
       });
       _updateNavigationProgress(announce: !hadSteps && steps.isNotEmpty);
     } catch (_) {
-      // Keep fallback straight line rendering if route API fails.
+      if (mounted && request == _activeRouteRequest) {
+        setState(() {
+          _activeRoutePolyline = [];
+          _activeRouteCacheKey = null;
+          _navSteps = const [];
+          _navStepIndex = 0;
+        });
+      }
     }
   }
 
@@ -2464,14 +2477,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final from = _orderPoint(order['fromLat'], order['fromLng']);
     final to = _orderPoint(order['toLat'], order['toLng']);
     final driver = _activeDriverPoint();
-    final destination = _activeNavigationDestination(order);
-    final routePoints = _activeRoutePolyline.isNotEmpty
-        ? _activeRoutePolyline
-        : <LatLng>[
-            if (driver != null) driver,
-            if (driver == null && from != null) from,
-            if (destination != null) destination,
-          ];
+    final routePoints = _activeRoutePolyline;
     final center = _routeCenter(routePoints) ??
         from ??
         driver ??
@@ -2646,7 +2652,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
           if (_activeRoutePolyline.isEmpty)
             const Text(
-              'по прямой',
+              'маршрут уточняется',
               style: TextStyle(
                 color: Colors.white54,
                 fontSize: 12,

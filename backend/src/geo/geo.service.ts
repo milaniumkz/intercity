@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma.service';
 import { verifiedAddresses } from './verified-addresses';
@@ -62,9 +62,9 @@ export class GeoService {
 
     private readonly logger = new Logger(GeoService.name);
 
-    private async fetchGeo(input: string, options: RequestInit = {}) {
+    private async fetchGeo(input: string, options: RequestInit = {}, timeoutMs = 4000) {
         try {
-            const response = await fetch(input, { ...options, signal: AbortSignal.timeout(4000) });
+            const response = await fetch(input, { ...options, signal: AbortSignal.timeout(timeoutMs) });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return response;
         } catch (error) {
@@ -84,7 +84,7 @@ export class GeoService {
         private configService: ConfigService,
     ) {
         this.nominatimUrl = this.configService.get('NOMINATIM_URL') || 'https://nominatim.openstreetmap.org';
-        this.osrmUrl = this.configService.get('OSRM_URL') || 'http://router.project-osrm.org';
+        this.osrmUrl = (this.configService.get('OSRM_URL') || 'https://router.project-osrm.org').replace(/^http:/, 'https:');
         this.yandexGeocoderApiKey =
             this.configService.get<string>('YANDEX_GEOCODER_API_KEY')?.trim() || undefined;
     }
@@ -294,6 +294,9 @@ export class GeoService {
         const addCity = (item: { displayName: string; lat: number; lng: number; name?: string; region?: string | null; countryCode?: string; currency?: string }, matchesAlias = false) => {
             if (!item.displayName || !Number.isFinite(item.lat) || !Number.isFinite(item.lng)) return;
             if (!this.looksLikeLocalityResult(item)) return;
+            const canonical = this.normalizeLocalityName(item.name || this.firstDisplayNamePart(item.displayName));
+            const preferred = GeoService.fallbackCities.find(city => this.normalizeCityToken(city.name) === canonical);
+            if (preferred && item.name !== preferred.name) item = {...item, name:preferred.name, displayName:[preferred.name,item.region || preferred.region].filter(Boolean).join(', ')};
             const name = this.normalizeCityToken(item.name || item.displayName);
             const needle = this.normalizeCityToken(normalized);
             if (!matchesAlias && !name.includes(needle)) return;
@@ -351,6 +354,10 @@ export class GeoService {
             .filter(city => [city.name, ...city.aliases].some(name => this.normalizeCityToken(name).includes(needle)))
             .sort((a, b) => Number(this.normalizeCityToken(b.name).startsWith(needle)) - Number(this.normalizeCityToken(a.name).startsWith(needle)))
             .forEach(city => addCity({ ...city, displayName: `${city.name}, ${city.countryCode === 'KZ' ? 'Казахстан' : 'Россия'}` }, true));
+        if (collected.length === 0 && needle.length >= 4) {
+            cityCatalog.filter(city => [city.name, ...city.aliases].some(name => this.isNearCityPrefix(this.normalizeCityToken(name), needle)))
+                .forEach(city => addCity({...city, displayName: `${city.name}, ${city.countryCode === 'KZ' ? 'Казахстан' : 'Россия'}`}, true));
+        }
         if (collected.length > 0) return this.rankCityResults(collected, normalized);
 
         try {
@@ -418,12 +425,14 @@ export class GeoService {
                 : null;
             const queries = [
                 this.combineQuery(query, cityContext?.name || context?.city),
-                query.trim(),
-                this.combineQuery(query, cityContext?.name || context?.city, cityContext?.region || context?.region),
                 this.combineQuery(query.replace(/[,\s]+\d+[\p{L}\d\/\-]*\s*$/u, ''), cityContext?.name || context?.city),
-            ].filter((value, index, arr): value is string =>
-                Boolean(value && value.trim()) && arr.indexOf(value) === index
-            );
+            ].filter((value, index, arr): value is string => Boolean(value?.trim()) && arr.indexOf(value) === index);
+            const photonRequest = cityContext
+                ? this.fetchPhotonSearchResults(query, cityContext).catch(() => [])
+                : Promise.resolve([]);
+            const yandexRequest = cityContext && this.yandexGeocoderApiKey
+                ? this.fetchYandexSearchResults(queries[0], cityContext).catch(() => [])
+                : Promise.resolve([]);
 
             const collected: Array<{ displayName: string; lat: number; lng: number }> = [];
             const seen = new Set<string>();
@@ -450,23 +459,16 @@ export class GeoService {
                     seen.add(key);
                     collected.push(mapped);
                 }
-                if (collected.length >= 10) break;
+                if (collected.length >= 6 || collected.some((item: any) => item.road && item.houseNumber)) break;
+            }
+            for (const item of await photonRequest) {
+                const key = `${item.lat}:${item.lng}:${item.displayName}`;
+                if (!seen.has(key)) { seen.add(key); collected.push(item); }
             }
 
-            if (collected.length < 6 && cityContext && this.yandexGeocoderApiKey) {
-                for (const candidate of queries) {
-                    const data = await this.fetchYandexSearchResults(
-                        candidate,
-                        cityContext,
-                    ).catch(() => []);
-                    for (const item of data) {
-                        const key = `${item.lat}:${item.lng}:${item.displayName}`;
-                        if (seen.has(key)) continue;
-                        seen.add(key);
-                        collected.push(item);
-                    }
-                    if (collected.length >= 10) break;
-                }
+            for (const item of await yandexRequest) {
+                const key = `${item.lat}:${item.lng}:${item.displayName}`;
+                if (!seen.has(key)) { seen.add(key); collected.push(item); }
             }
 
             const house = query.match(/(?:^|\s)(\d+[\p{L}]?(?:\/\d+[\p{L}]?)?)(?:\s|$)/u)?.[1]?.toLowerCase();
@@ -577,11 +579,14 @@ export class GeoService {
         return !addressWords.some((word) => name.includes(word) || display.startsWith(`${word} `));
     }
 
+    private nominatimSearchRetryAt = 0;
+
     private async fetchSearchResults(
         query: string,
         countryCode?: string,
         cityContext?: { id: string; name: string; region: string | null; lat: number; lng: number },
     ) {
+        if (Date.now() < this.nominatimSearchRetryAt) return [];
         const url = new URL(`${this.nominatimUrl}/search`);
         url.searchParams.set('q', query);
         url.searchParams.set('format', 'json');
@@ -602,14 +607,39 @@ export class GeoService {
             url.searchParams.set('bounded', '1');
         }
         const response = await this.fetchGeo(url.toString(), {
-            headers: {
-                'User-Agent': 'INTERCITY/1.0',
-            },
+            headers: { 'User-Agent': 'INTERCITY/1.0' },
+        }).catch(error => {
+            if (error instanceof Error && /HTTP (429|403)/.test(error.message)) this.nominatimSearchRetryAt = Date.now() + 60000;
+            throw error;
         });
         const data = await response.json();
         if (!Array.isArray(data)) return [];
         if (!cityContext) return data;
         return data.filter((item: any) => this.belongsToCityContext(item, cityContext));
+    }
+
+    private async fetchPhotonSearchResults(query: string, city: {name: string; countryCode?: string; lat: number; lng: number}) {
+        const url = new URL(`${this.configService.get('PHOTON_URL') || 'https://photon.komoot.io'}/api/`);
+        url.searchParams.set('q', query.trim());
+        url.searchParams.set('limit', '15');
+        url.searchParams.set('lat', String(city.lat));
+        url.searchParams.set('lon', String(city.lng));
+        const box = this.buildCityViewBox(city);
+        url.searchParams.set('bbox', `${box.west},${box.south},${box.east},${box.north}`);
+        const response = await this.fetchGeo(url.toString());
+        const data = await response.json();
+        return (Array.isArray(data.features) ? data.features : []).flatMap((feature: any) => {
+            const p = feature.properties || {};
+            const c = feature.geometry?.coordinates;
+            if (!Array.isArray(c) || !Number.isFinite(c[0]) || !Number.isFinite(c[1])) return [];
+            if (city.countryCode && p.countrycode?.toUpperCase() !== city.countryCode.toUpperCase()) return [];
+            const displayName = [...new Set([p.name, p.street, p.housenumber, p.city, p.country].filter(Boolean))].join(', ');
+            const item = {display_name: displayName, address: {city:p.city, town:p.town, road:p.street, country_code:p.countrycode}};
+            if (!this.belongsToCityContext(item, city)) return [];
+            if (this.haversine(city.lat, city.lng, c[1], c[0]) > this.addressSearchRadiusKm) return [];
+            return [{displayName, lat:c[1], lng:c[0], houseNumber:p.housenumber || null,
+                road:p.street || (p.osm_key === 'highway' ? p.name : null), source:'photon'}];
+        });
     }
 
     private buildCityViewBox(
@@ -694,10 +724,14 @@ export class GeoService {
                 .map((value: unknown) => (typeof value === 'string' ? value.trim() : ''))
                 .find((value: string) => value.length > 0) || `${lat}, ${lng}`;
 
+        const components = feature?.metaDataProperty?.GeocoderMetaData?.Address?.Components;
+        const part = (kind: string) => Array.isArray(components) ? components.find((c: any) => c.kind === kind)?.name || null : null;
         return {
             displayName,
             lat,
             lng,
+            houseNumber: part('house'),
+            road: part('street'),
             countryCode: feature?.metaDataProperty?.GeocoderMetaData?.Address?.country_code?.toUpperCase(),
         };
     }
@@ -757,10 +791,25 @@ export class GeoService {
         return expected === actual || (/городская администрация/iu.test(rawCity) && actual === `${expected}а`);
     }
 
+    private static localityAliases: Map<string, string>;
+
     private normalizeLocalityName(value: string) {
-        return this.normalizeCityToken(value)
+        const normalized = this.normalizeCityToken(value)
             .replace(/^(городская администрация|городской округ|город|г\.)\s+/u, '')
             .replace(/\s+городская администрация$/u, '');
+        if (!GeoService.localityAliases) {
+            const aliases = new Map<string, string>();
+            const preferred = new Map(GeoService.fallbackCities.map(city => [this.normalizeCityToken(city.name), city]));
+            for (const city of cityCatalog) {
+                const names = [city.name, ...city.aliases].map(name => this.normalizeCityToken(name));
+                const known = names.map(name => preferred.get(name)).find(item => item && countryCodeFromRegion(item.region) === city.countryCode);
+                const canonical = this.normalizeCityToken(known?.name || city.name);
+                for (const name of names) if (!aliases.has(name)) aliases.set(name, canonical);
+            }
+            for (const name of preferred.keys()) aliases.set(name, name);
+            GeoService.localityAliases = aliases;
+        }
+        return GeoService.localityAliases.get(normalized) || normalized;
     }
 
     private rankCityResults<T extends {name?: string; displayName: string}>(items: T[], query: string): T[] {
@@ -772,11 +821,27 @@ export class GeoService {
         return items.sort((a, b) => score(a) - score(b) || (a.name || a.displayName).localeCompare(b.name || b.displayName, 'ru')).slice(0, 12);
     }
 
+    private isNearCityPrefix(name: string, query: string) {
+        const oneEdit = (a: string, b: string) => {
+            if (Math.abs(a.length - b.length) > 1) return false;
+            let i=0, j=0, edits=0;
+            while (i<a.length && j<b.length) {
+                if (a[i] === b[j]) { i++; j++; continue; }
+                if (++edits > 1) return false;
+                if (a.length >= b.length) i++;
+                if (b.length >= a.length) j++;
+            }
+            return edits + (a.length-i) + (b.length-j) <= 1;
+        };
+        return [query.length-1, query.length, query.length+1].some(length => oneEdit(name.slice(0,length),query));
+    }
+
     private normalizeCityToken(value: string) {
         return value
             .trim()
             .toLowerCase()
-            .replaceAll('ё', 'е');
+            .replaceAll('ё', 'е')
+            .replace(/[‐‑–—-]+/g, ' ').replace(/\s+/g, ' ');
     }
 
     private async getSearchContext(lat: number, lng: number) {
@@ -805,19 +870,45 @@ export class GeoService {
 
     private combineQuery(query: string, city?: string | null, region?: string | null) {
         const parts = [query.trim(), city?.trim(), region?.trim()].filter(Boolean);
-        if (parts.length <= 1) return null;
+        if (parts.length === 0) return null;
         return parts.join(', ');
     }
 
+    private readonly routeCache = new Map<string, {expires: number; route: any}>();
+    private readonly routeRequests = new Map<string, Promise<any>>();
+
     async getRoute(fromLat: number, fromLng: number, toLat: number, toLng: number) {
-        try {
+        if (![fromLat, fromLng, toLat, toLng].every(Number.isFinite) || Math.abs(fromLat)>90 || Math.abs(toLat)>90 || Math.abs(fromLng)>180 || Math.abs(toLng)>180) {
+            throw new BadRequestException('Invalid route coordinates');
+        }
+        const key = [fromLat, fromLng, toLat, toLng].join(':');
+        const cached = this.routeCache.get(key);
+        if (cached && cached.expires > Date.now()) return cached.route;
+        const pending = this.routeRequests.get(key);
+        if (pending) return pending;
+        const request = this.loadRoadRoute(fromLat, fromLng, toLat, toLng).then(route => {
+            if (this.routeCache.size >= 500) this.routeCache.delete(this.routeCache.keys().next().value);
+            this.routeCache.set(key, {expires:Date.now()+300000,route});
+            return route;
+        }).finally(() => this.routeRequests.delete(key));
+        this.routeRequests.set(key, request);
+        return request;
+    }
+
+    private async loadRoadRoute(fromLat: number, fromLng: number, toLat: number, toLng: number) {
+        const providers = [...new Set([this.osrmUrl, this.configService.get('OSRM_FALLBACK_URL') || 'https://routing.openstreetmap.de/routed-car'])];
+        for (const provider of providers) {
+          try {
             const response = await this.fetchGeo(
-                `${this.osrmUrl}/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson&steps=true&alternatives=false`
+                `${provider.replace(/\/$/, '')}/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson&steps=true&alternatives=false`, {}, 8000
             );
             const data = await response.json();
-
-            if (data.routes && data.routes.length > 0) {
+            if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
                 const route = data.routes[0];
+                const coords = route.geometry?.coordinates;
+                if (route.geometry?.type !== 'LineString' || !Array.isArray(coords) || coords.length < 2 ||
+                    !coords.every((c: any) => Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1]) && Math.abs(c[0]) <= 180 && Math.abs(c[1]) <= 90) ||
+                    !Number.isFinite(route.distance) || route.distance < 0 || !Number.isFinite(route.duration) || route.duration < 0) throw new Error('Invalid road route');
                 const steps = Array.isArray(route.legs)
                     ? route.legs.flatMap((leg: any) =>
                         Array.isArray(leg.steps)
@@ -846,17 +937,9 @@ export class GeoService {
                     steps,
                 };
             }
-            throw new Error('Route unavailable');
-        } catch (error) {
-            // Fallback: calculate straight line distance
-            const distance = this.haversine(fromLat, fromLng, toLat, toLng);
-            return {
-                distance,
-                duration: Math.round(distance / 30 * 60), // Assume 30 km/h average
-                geometry: null,
-                steps: [],
-            };
+          } catch (_) { /* Try the independent road router. Never estimate a road fare by air distance. */ }
         }
+        throw new ServiceUnavailableException({code:'ROAD_ROUTE_UNAVAILABLE', message:'Не удалось построить маршрут по дорогам. Повторите попытку.'});
     }
 
     haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {
