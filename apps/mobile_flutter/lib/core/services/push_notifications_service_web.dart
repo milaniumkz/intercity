@@ -267,6 +267,7 @@ class PushNotificationsService {
     try {
       await web.Notification.requestPermission()
           .toDart
+          .then((_) => syncTokenIfAuthorized())
           .timeout(const Duration(seconds: 2));
     } catch (_) {
       // Ignore blocked/unsupported permission requests.
