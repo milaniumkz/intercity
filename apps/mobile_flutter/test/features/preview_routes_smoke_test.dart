@@ -9,6 +9,9 @@ import 'package:intercity_mobile/core/widgets/ic_premium.dart';
 import 'package:intercity_mobile/main.dart';
 
 void main() {
+  Finder routeMarker(String text) => text == 'Показатели водителя'
+      ? find.byTooltip(text)
+      : find.textContaining(text);
   Future<void> pumpProductionRoute(
     WidgetTester tester,
     String route,
@@ -43,6 +46,42 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
   }
+
+  testWidgets(
+      'driver metrics open in a compact top window without leaving the map',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await pumpProductionRoute(tester, '/driver/home/driver_home');
+    expect(find.text('Баланс'), findsNothing);
+    await tester
+        .tap(find.byKey(const ValueKey('driver-metrics-popover-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    final popup = find.byKey(const ValueKey('driver-metrics-popover'));
+    expect(popup, findsOneWidget);
+    for (final label in [
+      'Баланс',
+      'Сегодня',
+      'Активность',
+      'Рейтинг',
+      'Приоритет'
+    ]) {
+      expect(find.descendant(of: popup, matching: find.text(label)),
+          findsOneWidget);
+    }
+    expect(tester.getRect(popup).top, lessThan(150));
+    expect(tester.getRect(popup).height, lessThan(300));
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.byTooltip('Закрыть'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(popup, findsNothing);
+    expect(find.byKey(const ValueKey('driver-metrics-popover-button')),
+        findsOneWidget);
+    expect(find.text('Баланс'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   final cases = <(String, String)>[
     ('/onboarding', 'Поездки'),
@@ -81,12 +120,12 @@ void main() {
     ('/driver/verification/personal', 'Личные данные'),
     ('/driver/verification/car', 'Информация'),
     ('/driver/verification/docs', 'Документы'),
-    ('/driver/home/driver_home', 'Баланс'),
+    ('/driver/home/driver_home', 'Показатели водителя'),
     ('/driver/home/fixed', 'Фиксированный заказ'),
     ('/driver/home/auction', 'Аукционный заказ'),
     ('/driver/home/offer', 'Предложите свою цену'),
     ('/driver/home/chosen', 'Пассажир выбрал вас'),
-    ('/driver/home/active', 'Баланс'),
+    ('/driver/home/active', 'Показатели водителя'),
     ('/driver/trip-create', 'Доступные заказы'),
     ('/driver/trip-create/detail', 'Детали заявки'),
     ('/driver/trip-create/commission', 'Подтверждение'),
@@ -125,7 +164,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(
-      find.textContaining(expectedText),
+      routeMarker(expectedText),
       findsWidgets,
       reason: '$startRoute tap "$tapText" should show "$expectedText"',
     );
@@ -159,7 +198,7 @@ void main() {
     await tester.pumpAndSettle(const Duration(milliseconds: 300));
 
     expect(
-      find.textContaining(expectedText),
+      routeMarker(expectedText),
       findsWidgets,
       reason: '$startRoute tap "$label" should show "$expectedText"',
     );
@@ -172,7 +211,7 @@ void main() {
 
       await pumpProductionRoute(tester, item.$1);
       expect(
-        find.textContaining(item.$2),
+        routeMarker(item.$2),
         findsWidgets,
         reason: 'Route ${item.$1} should render "${item.$2}"',
       );
@@ -185,7 +224,7 @@ void main() {
       final route = withDark(item.$1);
       await pumpProductionRoute(tester, route);
       expect(
-        find.textContaining(item.$2),
+        routeMarker(item.$2),
         findsWidgets,
         reason: 'Route $route should render "${item.$2}"',
       );
@@ -562,7 +601,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.textContaining('Баланс'), findsWidgets);
+    expect(routeMarker('Показатели водителя'), findsWidgets);
   });
 
   testWidgets('driver profile quick actions are interactive', (tester) async {
@@ -641,7 +680,7 @@ void main() {
       await tester.tap(backButton.first);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 900));
-      expect(find.textContaining(expectedText), findsWidgets,
+      expect(routeMarker(expectedText), findsWidgets,
           reason: 'Back from $route should show $expectedText');
     }
 
@@ -650,10 +689,10 @@ void main() {
     await tapBackAndExpect('/forgot-password', 'Войдите');
     await tapBackAndExpect('/register', 'Войдите');
     await tapBackAndExpect('/intercity/request/active', 'Мои поездки');
-    await tapBackAndExpect('/driver/wallet', 'Баланс');
+    await tapBackAndExpect('/driver/wallet', 'Показатели водителя');
     await tapBackAndExpect('/driver/trip-create/detail', 'Доступные заказы');
-    await tapBackAndExpect('/driver/verification/docs', 'Баланс');
-    await tapBackAndExpect('/driver/profile', 'Баланс');
+    await tapBackAndExpect('/driver/verification/docs', 'Показатели водителя');
+    await tapBackAndExpect('/driver/profile', 'Показатели водителя');
   });
 }
 
