@@ -1,10 +1,10 @@
+import '../../../core/widgets/road_route_layer.dart';
 import 'package:flutter/material.dart';
 import 'package:intercity_shared/intercity_shared.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
@@ -823,9 +823,8 @@ class _DriverHomePageState extends State<DriverHomePage>
                                 child: Stack(
                                   children: [
                                     Positioned.fill(
-                                      child: CustomPaint(
-                                        painter: _DriverOfferRoutePainter(),
-                                      ),
+                                      child: _driverOrderRoutePreview(order,
+                                          dark: true),
                                     ),
                                     Positioned(
                                       left: 16,
@@ -4392,7 +4391,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       body: SafeArea(
         child: Stack(
           children: [
-            Positioned.fill(child: _boardDriverNightMap()),
+            Positioned.fill(child: _driverOrderRoutePreview(order, dark: true)),
             Positioned(
               top: 12,
               left: 16,
@@ -4521,7 +4520,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       body: SafeArea(
         child: Stack(
           children: [
-            Positioned.fill(child: _boardDriverNightMap()),
+            Positioned.fill(child: _driverOrderRoutePreview(order, dark: true)),
             Positioned(
               top: 12,
               left: 16,
@@ -5031,17 +5030,6 @@ class _DriverHomePageState extends State<DriverHomePage>
                         children: [
                           Positioned.fill(child: _boardDriverLightRouteMap()),
                           const Positioned(
-                            top: 18,
-                            right: 16,
-                            child: Text(
-                              'Алматы',
-                              style: TextStyle(
-                                color: Color(0xFF141326),
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                          const Positioned(
                             bottom: 34,
                             left: 22,
                             child: Text(
@@ -5281,21 +5269,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _boardDriverLightRouteMap() {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFFF5F1FF), Color(0xFFEDE7FF)],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
-      ),
-      child: CustomPaint(
-        painter: _BoardDriverLightRoutePainter(),
-        child: const SizedBox.expand(),
-      ),
-    );
-  }
+  Widget _boardDriverLightRouteMap() =>
+      _driverOrderRoutePreview(_activeOrder ?? _productionBoardOrder(),
+          dark: false, active: _activeOrder != null);
 
   Widget _boardMiniInfo(String label, String value) {
     return Container(
@@ -5421,19 +5397,55 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _boardDriverNightMap() {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF090814), Color(0xFF151026)],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
+  Widget _boardDriverNightMap() => _driverOrderRoutePreview(
+      _productionBoardOrder(requestType: requestTypeCityAuction),
+      dark: true);
+
+  Widget _driverOrderRoutePreview(Map<String, dynamic>? order,
+      {required bool dark, bool active = false}) {
+    if (order == null) return _boardDriverSoftMap(dark);
+    final pickup = _orderPoint(order['fromLat'], order['fromLng']);
+    final destination = _orderPoint(order['toLat'], order['toLng']);
+    final driver = _activeDriverPoint();
+    final approach =
+        active && driver != null && order['status'] != 'IN_PROGRESS';
+    final from = approach ? driver : pickup;
+    final to = approach ? pickup : destination;
+    if (from == null || to == null) {
+      return Center(
+          child: Text('Координаты маршрута уточняются',
+              style: TextStyle(color: dark ? Colors.white70 : Colors.black54)));
+    }
+    return FlutterMap(
+      key: ValueKey('driver-preview-${order['id']}-$from-$to'),
+      options: MapOptions(
+        initialCenter: from,
+        initialCameraFit: CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints([from, to]),
+            padding: const EdgeInsets.all(36),
+            maxZoom: 16),
       ),
-      child: CustomPaint(
-        painter: _BoardDriverRoutePainter(),
-        child: const SizedBox.expand(),
-      ),
+      children: [
+        TileLayer(
+            urlTemplate: AppConstants.osmTileUrl,
+            subdomains: AppConstants.mapTileSubdomains,
+            userAgentPackageName: 'com.milanium.intercity'),
+        RoadRouteLayer(from: from, to: to, color: AppTheme.primaryColor),
+        MarkerLayer(markers: [
+          Marker(
+              point: from,
+              width: 32,
+              height: 32,
+              child:
+                  const Icon(Icons.trip_origin, color: AppTheme.primaryColor)),
+          Marker(
+              point: to,
+              width: 32,
+              height: 32,
+              child: const Icon(Icons.location_on,
+                  color: AppTheme.secondaryColor)),
+        ]),
+      ],
     );
   }
 
@@ -6481,286 +6493,4 @@ class _DriverHomePageState extends State<DriverHomePage>
       ),
     );
   }
-}
-
-class _DriverOfferRoutePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final glow = Paint()
-      ..color = AppTheme.primaryColor.withValues(alpha: 0.20)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 16
-      ..strokeCap = StrokeCap.round;
-    final route = Paint()
-      ..shader = const LinearGradient(
-        colors: [AppTheme.secondaryColor, AppTheme.primaryColor],
-      ).createShader(Offset.zero & size)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 5
-      ..strokeCap = StrokeCap.round;
-
-    final path = ui.Path()
-      ..moveTo(size.width * 0.16, size.height * 0.74)
-      ..cubicTo(
-        size.width * 0.30,
-        size.height * 0.28,
-        size.width * 0.52,
-        size.height * 0.88,
-        size.width * 0.68,
-        size.height * 0.42,
-      )
-      ..cubicTo(
-        size.width * 0.75,
-        size.height * 0.24,
-        size.width * 0.84,
-        size.height * 0.38,
-        size.width * 0.91,
-        size.height * 0.26,
-      );
-    canvas.drawPath(path, glow);
-    canvas.drawPath(path, route);
-
-    final pin = Paint()..color = AppTheme.secondaryColor;
-    canvas.drawCircle(Offset(size.width * 0.16, size.height * 0.74), 7, pin);
-    canvas.drawCircle(Offset(size.width * 0.91, size.height * 0.26), 7, pin);
-    canvas.drawCircle(
-      Offset(size.width * 0.91, size.height * 0.26),
-      13,
-      Paint()
-        ..color = AppTheme.secondaryColor.withValues(alpha: 0.16)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 3,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class _BoardDriverRoutePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final gridPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.055)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    for (var x = -size.width; x < size.width * 1.6; x += 38) {
-      canvas.drawLine(
-        Offset(x.toDouble(), 0),
-        Offset(x + size.width * 0.45, size.height),
-        gridPaint,
-      );
-    }
-    for (var y = 20; y < size.height; y += 44) {
-      canvas.drawLine(
-        Offset(0, y.toDouble()),
-        Offset(size.width, y - 28),
-        gridPaint,
-      );
-    }
-
-    final glow = Paint()
-      ..color = AppTheme.primaryColor.withValues(alpha: 0.30)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 18
-      ..strokeCap = StrokeCap.round;
-    final route = Paint()
-      ..shader = const LinearGradient(
-        colors: [Color(0xFFB66CFF), AppTheme.primaryColor],
-      ).createShader(Offset.zero & size)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 5
-      ..strokeCap = StrokeCap.round;
-
-    final path = ui.Path()
-      ..moveTo(size.width * 0.58, size.height * 0.12)
-      ..cubicTo(
-        size.width * 0.48,
-        size.height * 0.22,
-        size.width * 0.66,
-        size.height * 0.34,
-        size.width * 0.42,
-        size.height * 0.43,
-      )
-      ..cubicTo(
-        size.width * 0.20,
-        size.height * 0.56,
-        size.width * 0.46,
-        size.height * 0.68,
-        size.width * 0.36,
-        size.height * 0.78,
-      );
-    canvas.drawPath(path, glow);
-    canvas.drawPath(path, route);
-
-    final pin = Paint()..color = AppTheme.primaryColor;
-    canvas.drawCircle(Offset(size.width * 0.58, size.height * 0.12), 8, pin);
-    canvas.drawCircle(
-      Offset(size.width * 0.58, size.height * 0.12),
-      18,
-      Paint()
-        ..color = AppTheme.primaryColor.withValues(alpha: 0.20)
-        ..style = PaintingStyle.fill,
-    );
-    final carCenter = Offset(size.width * 0.42, size.height * 0.43);
-    canvas.save();
-    canvas.translate(carCenter.dx, carCenter.dy);
-    canvas.rotate(-0.45);
-    final carPaint = Paint()..color = const Color(0xFF262139);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTWH(-10, -18, 20, 36),
-        const Radius.circular(7),
-      ),
-      carPaint,
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTWH(-7, -12, 14, 12),
-        const Radius.circular(4),
-      ),
-      Paint()..color = Colors.white.withValues(alpha: 0.20),
-    );
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class _BoardDriverLightRoutePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final gridPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.90)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    for (var x = -size.width; x < size.width * 1.5; x += 34) {
-      canvas.drawLine(
-        Offset(x.toDouble(), 0),
-        Offset(x + size.width * 0.42, size.height),
-        gridPaint,
-      );
-    }
-    for (var y = 12; y < size.height; y += 38) {
-      canvas.drawLine(
-        Offset(0, y.toDouble()),
-        Offset(size.width, y - 24),
-        gridPaint,
-      );
-    }
-
-    final glow = Paint()
-      ..color = AppTheme.primaryColor.withValues(alpha: 0.16)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 18
-      ..strokeCap = StrokeCap.round;
-    final route = Paint()
-      ..shader = const LinearGradient(
-        colors: [Color(0xFFB66CFF), AppTheme.primaryColor],
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-      ).createShader(Offset.zero & size)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 5
-      ..strokeCap = StrokeCap.round;
-
-    final path = ui.Path()
-      ..moveTo(size.width * 0.66, size.height * 0.05)
-      ..cubicTo(
-        size.width * 0.50,
-        size.height * 0.16,
-        size.width * 0.56,
-        size.height * 0.34,
-        size.width * 0.42,
-        size.height * 0.45,
-      )
-      ..cubicTo(
-        size.width * 0.30,
-        size.height * 0.58,
-        size.width * 0.40,
-        size.height * 0.72,
-        size.width * 0.24,
-        size.height * 0.88,
-      );
-    canvas.drawPath(path, glow);
-    canvas.drawPath(path, route);
-
-    final carCenter = Offset(size.width * 0.45, size.height * 0.40);
-    canvas.save();
-    canvas.translate(carCenter.dx, carCenter.dy);
-    canvas.rotate(-0.55);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTWH(-9, -18, 18, 36),
-        const Radius.circular(7),
-      ),
-      Paint()..color = const Color(0xFF262139),
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTWH(-6, -12, 12, 12),
-        const Radius.circular(4),
-      ),
-      Paint()..color = Colors.white.withValues(alpha: 0.24),
-    );
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-// ignore: unused_element
-class _DriverMapRoutePainter extends CustomPainter {
-  const _DriverMapRoutePainter({
-    required this.color,
-    required this.emphasized,
-  });
-
-  final Color color;
-  final bool emphasized;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final path = ui.Path()
-      ..moveTo(size.width * 0.18, size.height * 0.78)
-      ..cubicTo(
-        size.width * 0.34,
-        size.height * 0.58,
-        size.width * 0.55,
-        size.height * 0.64,
-        size.width * 0.56,
-        size.height * 0.43,
-      )
-      ..cubicTo(
-        size.width * 0.57,
-        size.height * 0.25,
-        size.width * 0.78,
-        size.height * 0.36,
-        size.width * 0.84,
-        size.height * 0.18,
-      );
-
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = color.withValues(alpha: 0.20)
-        ..strokeWidth = 16
-        ..strokeCap = StrokeCap.round
-        ..style = PaintingStyle.stroke,
-    );
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = color
-        ..strokeWidth = emphasized ? 5.5 : 4.5
-        ..strokeCap = StrokeCap.round
-        ..style = PaintingStyle.stroke,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _DriverMapRoutePainter oldDelegate) =>
-      oldDelegate.color != color || oldDelegate.emphasized != emphasized;
 }
