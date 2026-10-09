@@ -67,6 +67,14 @@ test('start schedules charge, ambiguous result reuses transaction, three confirm
  await intercity.cancelRequest(passenger.id,request.id);
  await payments.processPayment('INTERCITY:'+request.id);
  assert.equal((await p.tripCardPayment.findUnique({where:{id:'INTERCITY:'+request.id}})).status,'CANCELLED');
+ // A stale cancellation read must not overwrite a completion committed by another request.
+ await p.intercityRequest.update({where:{id:request.id},data:{status:'COMPLETED'}});
+ const owned=intercity.requireOwnedRequest.bind(intercity);
+ intercity.requireOwnedRequest=async()=>({...request,status:'IN_PROGRESS'});
+ await assert.rejects(intercity.cancelRequest(passenger.id,request.id),/нельзя отменить/);
+ assert.equal((await p.intercityRequest.findUnique({where:{id:request.id}})).status,'COMPLETED');
+ intercity.requireOwnedRequest=owned;
+
  // Cancellation after payment refunds once and never credits driver earnings.
  const cancelled=await make();await orders.updateOrderStatus(cancelled.id,'IN_PROGRESS',{userId:driver.id,role:'DRIVER'});
  const cancelledId='CITY:'+cancelled.id;

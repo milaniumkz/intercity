@@ -460,6 +460,11 @@ export class IntercityService {
     if (request.status === "COMPLETED") throw new BadRequestException('Завершённую поездку нельзя отменить');
 
     return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT id FROM "IntercityRequest" WHERE id=${requestId} FOR UPDATE`;
+      const current = await tx.intercityRequest.findUniqueOrThrow({where:{id:requestId}});
+      if (current.status === 'CANCELLED') return current;
+      if (current.status === 'COMPLETED') throw new BadRequestException('Завершённую поездку нельзя отменить');
+      await tx.tripVerification.updateMany({where:{id:`INTERCITY:${requestId}`,status:'PENDING'},data:{status:'CANCELLED'}});
       await this.refundPassengerBonusForCancelledRequest(
         tx,
         passengerId,
