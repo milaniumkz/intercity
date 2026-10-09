@@ -12,6 +12,13 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "inspect-city-country" ]]; then
+      docker exec -i intercity-backend node <<'JS'
+const {PrismaClient}=require('@prisma/client');const p=new PrismaClient();
+p.city.findMany({where:{name:'Кировск',lat:{gt:60}},select:{id:true,name:true,region:true,countryCode:true,lat:true,lng:true,tariffs:{select:{id:true,name:true,basePrice:true,minPrice:true,isActive:true}},_count:{select:{tariffs:true,orders:true,users:true,drivers:true,promos:true,notificationCampaigns:true}}}}).then(rows=>console.log(JSON.stringify(rows))).finally(()=>p.$disconnect());
+JS
+      exit 0
+    fi
     if [[ "$TARGET" == "audit-geo-catalog" ]]; then
       docker exec -i -e BASE_URL=http://127.0.0.1:3000/api -e CATALOG_DIR=/app/dist/src/geo/data intercity-backend node < /tmp/intercity-audit-geo-catalog.js
       exit 0
