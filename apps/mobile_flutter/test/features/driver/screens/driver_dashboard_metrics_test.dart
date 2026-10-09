@@ -85,11 +85,20 @@ void main() {
                           balance: '500 ₽',
                           today: 3,
                           performance: _performance('green')))))));
+      final tops = ['Баланс', 'Сегодня', 'Активность', 'Рейтинг', 'Приоритет']
+          .map((label) => tester
+              .getTopLeft(find.byKey(ValueKey('driver-metric-$label')))
+              .dy)
+          .toSet();
+      expect(tops, hasLength(1));
       expect(tester.takeException(), isNull);
       expect(tester.getSize(find.byType(DriverDashboardMetrics)).height,
           lessThan(230));
       for (final section in ['Активность', 'Рейтинг', 'Приоритет']) {
-        await tester.tap(find.byKey(ValueKey('driver-metric-$section')));
+        final tile = find.byKey(ValueKey('driver-metric-$section'));
+        await tester.ensureVisible(tile);
+        await tester.pumpAndSettle();
+        await tester.tap(tile);
         await tester.pumpAndSettle();
         final sheet = find.byType(BottomSheet);
         expect(sheet, findsOneWidget);
@@ -99,6 +108,15 @@ void main() {
           expect(find.text('Подтверждённая шашка: +5 баллов.'), findsOneWidget);
           expect(find.text('+10'), findsOneWidget);
         }
+        final scroll = find.byKey(const ValueKey('driver-metric-help-scroll'));
+        final scrollWidget = tester.widget<SingleChildScrollView>(scroll);
+        expect(
+            scrollWidget.controller!.position.maxScrollExtent, greaterThan(0));
+        final closeTop = tester.getTopLeft(find.byTooltip('Закрыть'));
+        await tester.drag(scroll, const Offset(0, -180));
+        await tester.pumpAndSettle();
+        expect(scrollWidget.controller!.offset, greaterThan(0));
+        expect(tester.getTopLeft(find.byTooltip('Закрыть')), closeTop);
         expect(tester.takeException(), isNull);
         await tester.tap(find.byTooltip('Закрыть'));
         await tester.pumpAndSettle();
