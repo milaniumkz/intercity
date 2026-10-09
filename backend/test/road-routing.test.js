@@ -1,7 +1,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {GeoService}=require('../dist/src/geo/geo.service');
-const makeGeo=()=>new GeoService({city:{findMany:async()=>[],findFirst:async()=>null}}, {get:()=>undefined});
+const makeGeo=()=>new GeoService({city:{findMany:async()=>require('../dist/src/geo/combined-city-catalog').cityCatalog.map((c,i)=>({...c,id:'fixture-'+i})),findFirst:async()=>null}}, {get:()=>undefined});
 const road={code:'Ok',routes:[{distance:8300,duration:900,geometry:{type:'LineString',coordinates:[[82.61,49.95],[82.62,49.94],[82.609,49.90]]},legs:[]}]};
 test('router failure uses independent road provider and coalesces/cache successful geometry',async()=>{
  const geo=makeGeo();let calls=0;const urls=[];

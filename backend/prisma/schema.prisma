@@ -93,7 +93,8 @@ model User {
 
 model City {
   id        String         @id @default(uuid())
-  name      String         @unique
+  name      String
+  aliases   String[]       @default([])
   region    String?
   countryCode String       @default("KZ")
   lat       Float
@@ -107,6 +108,8 @@ model City {
   notificationCampaigns NotificationCampaign[]
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
+
+  @@index([countryCode, name])
 }
 
 model Wallet {

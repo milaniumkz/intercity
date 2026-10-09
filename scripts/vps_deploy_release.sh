@@ -4,7 +4,10 @@ set -euo pipefail
 APP_ROOT="${APP_ROOT:-/opt/intercity}"
 BUNDLE_PATH="${1:?Usage: vps_deploy_release.sh bundle.tar.gz commit_sha}"
 COMMIT_SHA="${2:?commit sha is required}"
+GEOCODER_CONFIG="${3:-}"
 [[ "$COMMIT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo 'Invalid release commit' >&2; exit 1; }
+[[ -z "$GEOCODER_CONFIG" || "$GEOCODER_CONFIG" == "/tmp/intercity-yandex-$COMMIT_SHA.json" ]] || { echo 'Invalid geocoder configuration path' >&2; exit 1; }
+trap 'if [[ -n "$GEOCODER_CONFIG" ]]; then rm -f "$GEOCODER_CONFIG"; fi' EXIT
 RELEASE_DIR="$APP_ROOT/releases/$COMMIT_SHA"
 SHARED_DIR="$APP_ROOT/shared"
 BACKUP_DIR="$APP_ROOT/backups/$(date +%Y%m%d-%H%M%S)-$COMMIT_SHA"
@@ -42,11 +45,14 @@ compose() {
   docker compose -p "$PROJECT_NAME" -f docker-compose.prod.yml "$@"
 }
 
+env_changed=0
 switch_started=0
 response_file=""
 rollback_on_failure() {
   status=$?
   trap - EXIT
+  if [[ -n "$GEOCODER_CONFIG" ]]; then rm -f "$GEOCODER_CONFIG"; fi
+  if [[ "$status" -ne 0 && "$env_changed" -eq 1 ]]; then cp "$BACKUP_DIR/env.backup" "$SHARED_DIR/.env"; fi
   if [[ -n "$response_file" ]]; then rm -f "$response_file"; fi
   if [[ "$status" -ne 0 && "$switch_started" -eq 1 ]]; then
     echo 'Release health check failed; restoring the previous application release' >&2
@@ -59,11 +65,35 @@ rollback_on_failure() {
 }
 trap rollback_on_failure EXIT
 
+# Optional credential is transported separately, never bundled or printed.
+if [[ -n "$GEOCODER_CONFIG" && -f "$GEOCODER_CONFIG" ]]; then
+  env_changed=1
+  python3 - "$GEOCODER_CONFIG" "$SHARED_DIR/.env" <<'PYKEY'
+import json, os, re, sys
+from pathlib import Path
+key = json.loads(Path(sys.argv[1]).read_text()).get('key', '').strip()
+if not re.fullmatch(r'[a-zA-Z0-9._-]{10,250}', key):
+    raise SystemExit('Invalid geocoder credential format')
+path = Path(sys.argv[2]); lines = path.read_text().splitlines()
+lines = [line for line in lines if not re.match(r'^\s*YANDEX_GEOCODER_API_KEY\s*=', line)]
+temporary = path.with_suffix('.geocoder.tmp')
+fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, 'w') as file:
+    file.write('\n'.join(lines) + '\nYANDEX_GEOCODER_API_KEY=' + key + '\n')
+os.replace(temporary, path)
+PYKEY
+  cp "$SHARED_DIR/.env" "$RELEASE_DIR/infra/vps/.env"
+  chmod 600 "$RELEASE_DIR/infra/vps/.env"
+  rm -f "$GEOCODER_CONFIG"
+  echo 'Geocoder credential configured'
+fi
+
 cd "$RELEASE_DIR/infra/vps"
 # Build while the previous backend continues running. Additive migrations run
 # before the new application starts; never fall back to an unrestricted db push.
 compose build backend
 compose run --rm --no-deps backend npx prisma migrate deploy
+compose run --rm --no-deps backend node dist/src/geo/import-city-catalog.js
 switch_started=1
 compose up -d --no-build backend caddy
 

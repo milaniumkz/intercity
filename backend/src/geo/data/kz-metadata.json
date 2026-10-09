@@ -1,0 +1,11 @@
+{
+  "snapshot": "2026-10-08T20:21:06Z",
+  "source": "https://download.geofabrik.de/asia/kazakhstan.html",
+  "license": "ODbL 1.0",
+  "attribution": "© OpenStreetMap contributors",
+  "addresses": 1234527,
+  "excluded_outside_kz": 9810,
+  "cities": 380,
+  "compressed_sha256": "a3eeed22767251b7998183eebb8447e22c664a5fec74b521a79aaf30dade81cb",
+  "source_pbf_md5": "b9a874c9488f96187f218d3ca3fea87b"
+}

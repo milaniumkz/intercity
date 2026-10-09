@@ -646,17 +646,20 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
         final merged = <Map<String, dynamic>>[];
         final seen = <String>{};
         for (final item in [...parsed, ...localFallback]) {
-          final key = [
-            (item['name'] ?? '').toString().trim().toLowerCase(),
-            (item['region'] ?? '').toString().trim().toLowerCase(),
-            (item['displayName'] ?? '').toString().trim().toLowerCase(),
-          ].where((part) => part.isNotEmpty).join('|');
+          final key = (item['id'] ?? '').toString().isNotEmpty
+              ? item['id'].toString()
+              : [
+                  (item['name'] ?? '').toString().trim().toLowerCase(),
+                  (item['region'] ?? '').toString().trim().toLowerCase(),
+                  (item['lat'] ?? '').toString(),
+                  (item['lng'] ?? '').toString(),
+                ].where((part) => part.isNotEmpty).join('|');
           if (key.isEmpty || seen.contains(key)) continue;
           seen.add(key);
           merged.add(item);
         }
         setSheetState(() {
-          results = merged.take(12).toList();
+          results = merged;
           loading = false;
           localMessage = results.isEmpty ? 'Город не найден' : '';
         });

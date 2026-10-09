@@ -213,21 +213,10 @@ async function main() {
     ];
 
     for (const city of cities) {
-        await prisma.city.upsert({
-            where: { name: city.name },
-            update: {
-                region: city.region,
-                lat: city.lat,
-                lng: city.lng,
-                isActive: true,
-            },
-            create: {
-                name: city.name,
-                region: city.region,
-                lat: city.lat,
-                lng: city.lng,
-            },
-        });
+        const existing = await prisma.city.findFirst({ where: { name: city.name, countryCode: 'KZ' } });
+        const data = { ...city, isActive: true, countryCode: 'KZ' };
+        if (existing) await prisma.city.update({ where: { id: existing.id }, data });
+        else await prisma.city.create({ data });
     }
 
     console.log('Cities created');
@@ -257,7 +246,7 @@ async function main() {
     console.log('Settings created');
 
     // Create default tariffs for Алматы
-    const almaty = await prisma.city.findUnique({ where: { name: 'Алматы' } });
+    const almaty = await prisma.city.findFirst({ where: { name: 'Алматы', countryCode: 'KZ' } });
     if (almaty) {
         await prisma.tariffCity.upsert({
             where: { id: 'tariff-city-econom-default' },

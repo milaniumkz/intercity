@@ -2521,6 +2521,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     userAgentPackageName: 'com.milanium.intercity',
                     retinaMode: true,
                   ),
+                  const MapDataAttribution(),
                   if (routePoints.length >= 2)
                     PolylineLayer(
                       polylines: [
@@ -4274,6 +4275,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 userAgentPackageName: 'com.milanium.intercity',
                 retinaMode: true,
               ),
+              const MapDataAttribution(),
               MarkerLayer(
                 markers: [
                   Marker(

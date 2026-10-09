@@ -1,11 +1,22 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, StreamableFile } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { KazakhstanAddressIndex } from './kz-address-index';
 import { GeoService } from './geo.service';
 
 @ApiTags('geo')
 @Controller('geo')
 export class GeoController {
-    constructor(private geoService: GeoService) { }
+    constructor(private geoService: GeoService, private kzAddresses: KazakhstanAddressIndex) { }
+
+    @Get('data/kz/info')
+    dataInfo() { return this.kzAddresses.info(); }
+
+    @Get('data/kz/download')
+    dataDownload() {
+        return new StreamableFile(this.kzAddresses.download(), {
+            type:'application/gzip', disposition:'attachment; filename="kazakhstan-addresses.sqlite.gz"',
+        });
+    }
 
     @Get('reverse')
     @ApiOperation({ summary: 'Reverse geocode coordinates to address' })

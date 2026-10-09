@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api/api_client.dart';
 
@@ -154,4 +155,25 @@ class _RoadRouteLayerState extends State<RoadRouteLayer> {
           )),
         ));
   }
+}
+
+class MapDataAttribution extends StatelessWidget {
+  const MapDataAttribution({super.key});
+  @override
+  Widget build(BuildContext context) => Align(
+        alignment: Alignment.bottomLeft,
+        child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: Material(
+              color: Colors.white.withValues(alpha: .85),
+              child: InkWell(
+                onTap: () => launchUrl(
+                    Uri.parse('https://www.openstreetmap.org/copyright')),
+                child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Text('© OpenStreetMap contributors',
+                        style: TextStyle(color: Colors.black87, fontSize: 9))),
+              ),
+            )),
+      );
 }

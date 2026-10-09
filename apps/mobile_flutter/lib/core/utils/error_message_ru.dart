@@ -134,6 +134,11 @@ String? _translateServerMessage(String? message) {
     return LocalizationService.translate(russianText, kazakhText);
   }
 
+  if (lower.contains('city tariff is not configured')) {
+    return t(
+        'В этом городе ещё не настроен тариф. Выберите другой город или обратитесь в поддержку.',
+        'Бұл қалада тариф әлі бапталмаған. Басқа қаланы таңдаңыз немесе қолдау қызметіне хабарласыңыз.');
+  }
   if (lower.contains('не удалось построить маршрут по дорогам')) {
     return t('Не удалось построить маршрут по дорогам. Повторите попытку.',
         'Жол бойымен бағыт құру мүмкін болмады. Қайта көріңіз.');

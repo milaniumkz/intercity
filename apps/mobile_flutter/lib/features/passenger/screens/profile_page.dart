@@ -264,6 +264,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
       }
     }
     if (!mounted) return;
+    var cityQuery = '';
     final selectedCityId = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
@@ -272,7 +273,18 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (context) {
+      builder: (context) => StatefulBuilder(builder: (context, updatePicker) {
+        final filtered = _cities
+            .where((city) => [
+                  city['name'],
+                  city['region'],
+                  ...(city['aliases'] as List? ?? [])
+                ].any((name) => (name ?? '')
+                    .toString()
+                    .toLowerCase()
+                    .replaceAll('-', ' ')
+                    .contains(cityQuery)))
+            .toList();
         final theme = Theme.of(context);
         final isDark = theme.brightness == Brightness.dark;
         final currentCityId = (_user?['cityId'] ?? '').toString();
@@ -393,13 +405,20 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
                   ),
                 ),
                 const SizedBox(height: 12),
+                TextField(
+                    decoration: const InputDecoration(
+                        labelText: 'Название города или посёлка',
+                        prefixIcon: Icon(Icons.search)),
+                    onChanged: (value) => updatePicker(() => cityQuery =
+                        value.trim().toLowerCase().replaceAll('-', ' '))),
+                const SizedBox(height: 12),
                 Flexible(
                   child: ListView.separated(
                     shrinkWrap: true,
-                    itemCount: _cities.length,
+                    itemCount: filtered.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (context, index) {
-                      final city = _cities[index];
+                      final city = filtered[index];
                       final cityId = (city['id'] ?? '').toString();
                       final selected = currentCityId == cityId;
                       final region = (city['region'] ?? '').toString().trim();
@@ -503,7 +522,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
             ),
           ),
         );
-      },
+      }),
     );
     if (selectedCityId == null || selectedCityId.isEmpty) return;
     await _saveCurrentCity(selectedCityId);
