@@ -105,6 +105,24 @@ rsync -a --delete \
   --exclude='infra/vps/.env.tmp' \
   "$ROOT_DIR/" "$STAGE_DIR/intercity/"
 
+# Package committed source, not lockfiles/registrants rewritten by build tools.
+# Compiled outputs remain alongside the exact source snapshot.
+python3 - "$ROOT_DIR" "$STAGE_DIR/intercity" <<'PYSOURCE'
+from pathlib import Path
+import subprocess, sys
+root, stage = map(Path, sys.argv[1:])
+changed = subprocess.check_output(['git', '-C', str(root), 'diff', '--name-only', '-z', 'HEAD']).split(b'\0')
+for raw in changed:
+    if not raw:
+        continue
+    name = raw.decode()
+    target = stage / name
+    if target.is_file() and not name.startswith('.github/'):
+        original = subprocess.run(['git', '-C', str(root), 'show', 'HEAD:' + name], capture_output=True)
+        if original.returncode == 0:
+            target.write_bytes(original.stdout)
+PYSOURCE
+
 python3 "$ROOT_DIR/scripts/vps_release_manifest.py" create \
   "$BASE_COMMIT_SHA" "$STAGE_DIR/intercity/.release-manifest.json"
 

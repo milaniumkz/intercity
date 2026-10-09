@@ -128,5 +128,8 @@ done
 ln -sfn "$RELEASE_DIR" "$APP_ROOT/current"
 printf '%s\n' "$COMMIT_SHA" > "$APP_ROOT/current_commit"
 docker exec intercity-backend node -e 'console.log("Firebase server credentials configured: " + Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_APPLICATION_CREDENTIALS))'
+if ! docker exec -i intercity-backend node - --run < "$RELEASE_DIR/scripts/verify_firebase_configuration.js"; then
+  echo 'Optional Firebase validation unavailable; web release remains published'
+fi
 compose ps
 printf 'Published and verified release: %s\n' "$COMMIT_SHA"

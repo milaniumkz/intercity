@@ -14,12 +14,16 @@ def git(*args):
 def create(base, destination):
     release = git('rev-parse', 'HEAD').decode().strip()
     paths = git('diff', '--name-only', '--no-renames', base, release).decode().splitlines()
+    # Older releases copied a build-mutated lockfile. These audited overrides
+    # still require an exact hash for one specific published commit and path.
+    baseline_path = Path(__file__).with_name('production_source_baselines.json')
+    overrides = json.loads(baseline_path.read_text()).get(base, {}) if baseline_path.exists() else {}
     files = {}
     for path in paths:
         if path.startswith(('.github/', 'output/', 'infra/vps/web/')):
             continue
         old = subprocess.run(['git', 'show', f'{base}:{path}'], capture_output=True)
-        files[path] = hashlib.sha256(old.stdout).hexdigest() if old.returncode == 0 else None
+        files[path] = overrides.get(path, hashlib.sha256(old.stdout).hexdigest() if old.returncode == 0 else None)
     Path(destination).write_text(json.dumps({'baseCommit': base, 'releaseCommit': release, 'files': files}, indent=2))
 
 
