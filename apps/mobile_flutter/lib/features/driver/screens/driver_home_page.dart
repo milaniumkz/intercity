@@ -641,7 +641,11 @@ class _DriverHomePageState extends State<DriverHomePage>
         )
         .catchError((Object _) {});
     if (_appLifecycleState == AppLifecycleState.resumed) {
-      unawaited(_showOfferAcceptDialog(first));
+      if (_offerDialogOpen) {
+        _pendingOfferOrderId = firstId;
+      } else {
+        unawaited(_showOfferAcceptDialog(first));
+      }
       return;
     }
     _pendingOfferOrderId = firstId;
@@ -1371,6 +1375,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     auctionPriceController.dispose();
     _offerDialogOpen = false;
     _stopOfferAlarmIfMatches(orderId);
+    if (mounted) unawaited(_showPendingOfferDialogIfNeeded());
   }
 
   Widget _offerBadge({required IconData icon, required String label}) {

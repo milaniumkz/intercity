@@ -1107,8 +1107,14 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     final average = rawRating is Map
         ? rawRating['ratingAvg'] ?? rawRating['average']
         : rawRating;
-    final ratingNumber =
-        average is num ? average.toDouble() : double.tryParse('$average');
+    final hasRatings = rawRating is! Map ||
+        !rawRating.containsKey('ratingCount') ||
+        (rawRating['ratingCount'] is num && rawRating['ratingCount'] > 0);
+    final ratingNumber = !hasRatings
+        ? null
+        : average is num
+            ? average.toDouble()
+            : double.tryParse('$average');
     final rating = ratingNumber != null && ratingNumber.isFinite
         ? ratingNumber.clamp(0, 5).toStringAsFixed(2)
         : '—';
