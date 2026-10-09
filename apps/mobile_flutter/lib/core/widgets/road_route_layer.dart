@@ -113,7 +113,17 @@ class _RoadRouteLayerState extends State<RoadRouteLayer> {
     try {
       final points = await (widget.repository ?? RoadRouteRepository.shared)
           .route(widget.from, widget.to);
-      if (mounted && request == _request) setState(() => _points = points);
+      if (mounted && request == _request) {
+        setState(() => _points = points);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || request != _request) return;
+          MapController.maybeOf(context)?.fitCamera(CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(points),
+            padding: const EdgeInsets.all(36),
+            maxZoom: 16.5,
+          ));
+        });
+      }
     } catch (_) {
       if (mounted && request == _request) setState(() => _failed = true);
     }

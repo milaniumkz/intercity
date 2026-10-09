@@ -2498,6 +2498,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                 options: MapOptions(
                   initialCenter: center,
                   initialZoom: _activeMapZoom(routePoints),
+                  initialCameraFit: routePoints.length < 2
+                      ? null
+                      : CameraFit.bounds(
+                          bounds: LatLngBounds.fromPoints(routePoints),
+                          padding: const EdgeInsets.all(36),
+                          maxZoom: 16.5,
+                        ),
                   minZoom: 3,
                   maxZoom: 19,
                   interactionOptions: const InteractionOptions(
