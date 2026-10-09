@@ -14,15 +14,16 @@ class _OffersApi extends ApiClient {
       {Map<String, dynamic>? queryParameters, Options? options}) async {
     paths.add(path);
     dynamic data = <String, dynamic>{};
-    if (path == '/driver/profile')
+    if (path == '/driver/profile') {
       data = {
         'id': 'driver',
         'status': 'ACTIVE',
         'acceptIntercity': false,
         'online': {'isOnline': true}
       };
+    }
     if (path == '/orders/my' || path == '/driver/intercity/active') data = [];
-    if (path == '/driver/orders/nearby')
+    if (path == '/driver/orders/nearby') {
       data = [
         {
           'id': 'offer',
@@ -38,6 +39,7 @@ class _OffersApi extends ApiClient {
           'offerExpiresInSec': 30,
         }
       ];
+    }
     return Response(requestOptions: RequestOptions(path: path), data: data);
   }
 }

@@ -446,11 +446,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       await _showTopupRequiredDialogIfNeeded(message);
       await _loadDriverProfileState();
     } finally {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _switchBusy = false;
           _pendingOnlineValue = null;
         });
+      }
     }
   }
 

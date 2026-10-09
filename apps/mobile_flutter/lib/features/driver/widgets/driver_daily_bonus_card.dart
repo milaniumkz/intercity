@@ -7,8 +7,9 @@ class DriverDailyBonusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final data = bonus;
-    if (data == null || data['enabled'] != true || data['credited'] == true)
+    if (data == null || data['enabled'] != true || data['credited'] == true) {
       return const SizedBox.shrink();
+    }
     final target = (data['targetOrders'] as num?)?.toInt() ?? 1;
     final completed = (data['completed'] as num?)?.toInt() ?? 0;
     final credited = data['credited'] == true;
