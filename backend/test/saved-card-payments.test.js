@@ -3,6 +3,7 @@ const {PrismaClient}=require('@prisma/client');
 const {Kassa24Gateway,confirmedPayment}=require('../dist/src/payments/kassa24-gateway');
 const {CardPaymentsService}=require('../dist/src/payments/card-payments.service');
 const {OrdersService}=require('../dist/src/orders/orders.service');
+const {IntercityService}=require('../dist/src/intercity/intercity.service');
 test('official Kassa24 contract uses unique orderId, minor units, token and acquiringId with TLS and basic auth',async()=>{
  let captured;
  const gateway=new Kassa24Gateway({baseUrl:'https://example.test',login:'test',password:'not-a-real-password',demo:false},async(url,options)=>{captured={url:String(url),options};return {ok:true,json:async()=>({id:'provider'})}});
@@ -56,6 +57,16 @@ test('start schedules charge, ambiguous result reuses transaction, three confirm
  for(let i=0;i<3;i++)await payments.processPayment(failedId);
  assert.equal(failedCreates,3);assert.equal((await p.order.findUnique({where:{id:declined.id}})).paymentMethod,'CASH');assert.equal((await p.tripCardPayment.findUnique({where:{id:failedId}})).status,'CASH');
  await payments.processPayment(failedId);assert.equal(failedCreates,3);assert.equal(pushes.length,2);assert.ok(events.some(e=>e.type==='driver.payment.changed'&&e.payload.paymentStatus==='CASH'));
+ // Intercity charge uses the accepted offer, not the passenger's initial proposed fare.
+ const intercity=new IntercityService(p,{},payments);
+ const request=await p.intercityRequest.create({data:{passengerId:passenger.id,fromCity:'A',toCity:'B',date:new Date(),price:500,currency:'KZT',status:'DRIVER_ARRIVED',selectedDriverId:driver.id,paymentMethod:'CARD',paymentCardId:card.id}});
+ const offer=await p.intercityOffer.create({data:{requestId:request.id,driverId:driver.id,price:1200,seats:1,status:'ACCEPTED'}});
+ await p.intercityRequest.update({where:{id:request.id},data:{selectedOfferId:offer.id}});
+ await intercity.updateDriverRequestStatus(driver.id,request.id,'IN_PROGRESS');
+ assert.equal((await p.tripCardPayment.findUnique({where:{id:'INTERCITY:'+request.id}})).amount,1200);
+ await intercity.cancelRequest(passenger.id,request.id);
+ await payments.processPayment('INTERCITY:'+request.id);
+ assert.equal((await p.tripCardPayment.findUnique({where:{id:'INTERCITY:'+request.id}})).status,'CANCELLED');
  // Cancellation after payment refunds once and never credits driver earnings.
  const cancelled=await make();await orders.updateOrderStatus(cancelled.id,'IN_PROGRESS',{userId:driver.id,role:'DRIVER'});
  const cancelledId='CITY:'+cancelled.id;
@@ -71,12 +82,12 @@ test('start schedules charge, ambiguous result reuses transaction, three confirm
  // Hosted binding, authenticated token sync, and storing only last four digits of the PAN.
  payments.gateway.create=async body=>{assert.equal(body.tokenization,true);assert.equal(body.amount,undefined);assert.equal(body.customerData.phone,passenger.phone);return{id:'binding-test',url:'https://ecommerce.pult24.kz/hosted'}};
  const binding=await payments.bind(passenger.id);assert.match(binding.url,/^https:/);
- payments.gateway.tokens=async phone=>{assert.equal(phone,passenger.phone);return[{ID:'new-fake-token',Pan:'4111111111111111'}]};
+ payments.gateway.tokens=async phone=>{assert.equal(phone,passenger.phone);return[{ID:'new-fake-token-'+suffix,Pan:'4111111111111111'}]};
  await payments.callback('bind:'+binding.bindingId);
  const synced=await payments.listCards(passenger.id);assert.equal(synced.cards.length,1);assert.equal(synced.cards[0].last4,'1111');
  const stored=await p.savedPaymentCard.findUnique({where:{id:synced.cards[0].id}});assert.equal(stored.phone,passenger.phone);assert.equal(JSON.stringify(stored).includes('4111111111111111'),false);
- assert.equal(payments.decrypt(stored.tokenEncrypted),'new-fake-token');
- payments.gateway.remove=async token=>{assert.equal(token,'new-fake-token');return{removed:true}};
+ assert.equal(payments.decrypt(stored.tokenEncrypted),'new-fake-token-'+suffix);
+ payments.gateway.remove=async token=>{assert.equal(token,'new-fake-token-'+suffix);return{removed:true}};
  await payments.removeCard(passenger.id,stored.id);assert.equal((await payments.listCards(passenger.id)).cards.length,0);
 
  }finally{await p.$disconnect();for(const [key,value]of Object.entries(saved)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}

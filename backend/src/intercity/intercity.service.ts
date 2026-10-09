@@ -457,6 +457,7 @@ export class IntercityService {
     if (request.status === "CANCELLED") {
       return request;
     }
+    if (request.status === "COMPLETED") throw new BadRequestException('Завершённую поездку нельзя отменить');
 
     return this.prisma.$transaction(async (tx) => {
       await this.refundPassengerBonusForCancelledRequest(
@@ -553,7 +554,11 @@ export class IntercityService {
       if (target === 'IN_PROGRESS') {
         const profile = await tx.driverProfile.findUnique({where:{userId:driverUserId}});
         if (profile) await startTripVerification(tx,'INTERCITY',request,profile.id,driverUserId);
-        if (request.paymentMethod === 'CARD') await this.cardPayments.schedule(tx,'INTERCITY',request,driverUserId);
+        if (request.paymentMethod === 'CARD') {
+          const offer=request.selectedOfferId ? await tx.intercityOffer.findUnique({where:{id:request.selectedOfferId}}) : null;
+          if (!offer || offer.requestId!==request.id || offer.driverId!==driverUserId || offer.status!=='ACCEPTED') throw new BadRequestException('Не удалось подтвердить согласованную стоимость поездки');
+          await this.cardPayments.schedule(tx,'INTERCITY',{...request,price:offer.price},driverUserId);
+        }
       }
       if (target === 'CANCELLED') await tx.tripVerification.updateMany({where:{id:`INTERCITY:${requestId}`,status:'PENDING'},data:{status:'CANCELLED'}});
       return tx.intercityRequest.findUniqueOrThrow({where:{id:requestId}});
