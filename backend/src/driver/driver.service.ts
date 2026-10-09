@@ -1,3 +1,4 @@
+import { appendTripPoint } from '../common/trip-verification';
 import { driverDailyBonusProgress, serviceDay } from '../common/driver-daily-bonus';
 import { applyDriverActivity, driverOfferActivityKey } from '../common/driver-activity';
 import { driverPerformance, DRIVER_ACTIVITY_RULES } from '../common/driver-performance';
@@ -176,15 +177,21 @@ export class DriverService {
         if (profile.online?.isOnline) {
             await this.ensureDriverCanStayOnline(driverUserId, profile.id, cityId ?? undefined);
         }
+        const freshGps = dto.accuracy != null && dto.accuracy <= 100 && !!dto.sampledAt && Math.abs(Date.now()-Date.parse(dto.sampledAt)) <= 30000;
         const updated = await this.prisma.driverOnline.update({
             where: { driverId: profile.id },
             data: {
+                lastAccuracy: freshGps ? dto.accuracy : null,
                 lastLat: dto.lat,
                 lastLng: dto.lng,
                 lastLocationAt: new Date(),
                 cityId,
             },
         });
+        const now = new Date();
+        if (freshGps) {
+            await this.prisma.$transaction(tx => appendTripPoint(tx, profile.id, {lat:dto.lat,lng:dto.lng,accuracy:dto.accuracy!,at:now.toISOString()}));
+        }
         this.realtimeService.publish({
             type: 'driver.location.updated',
             entity: 'driver',

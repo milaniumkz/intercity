@@ -681,7 +681,8 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
           _sectionTitle(
             icon: Icons.outbox_rounded,
             title: 'Вывод средств',
-            subtitle: 'Заявка на выплату на карту',
+            subtitle:
+                'Доступно: ${_moneyText(_wallet?["withdrawable"])} $_currencySymbol. Бонусы не выводятся.',
           ),
           SizedBox(height: compact ? 10 : 12),
           TextField(
@@ -985,7 +986,8 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
                     _sectionTitle(
                       icon: Icons.outbox_rounded,
                       title: 'Вывод средств',
-                      subtitle: 'Заявка на выплату на карту',
+                      subtitle:
+                          'Доступно: ${_moneyText(_wallet?["withdrawable"])} $_currencySymbol. Бонусы не выводятся.',
                     ),
                     const SizedBox(height: 12),
                     TextField(

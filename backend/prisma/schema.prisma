@@ -112,6 +112,48 @@ model City {
   @@index([countryCode, name])
 }
 
+model DriverDailyParticipation {
+  id String @id @default(uuid())
+  driverId String
+  day String
+  currency String
+  targetOrders Int
+  rewardAmount Float
+  createdAt DateTime @default(now())
+  @@unique([driverId, day, currency])
+}
+
+model TripVerification {
+  id String @id
+  kind String
+  tripId String
+  driverId String
+  driverUserId String
+  passengerId String
+  currency String
+  status String @default("PENDING")
+  fromAddress String
+  toAddress String
+  expectedDistanceKm Float
+  fromLat Float?
+  fromLng Float?
+  toLat Float?
+  toLng Float?
+  startedAt DateTime?
+  completedAt DateTime?
+  points Json @default("[]")
+  reasons Json @default("[]")
+  summary Json?
+  resolutionNote String?
+  reviewedBy String?
+  reviewedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([kind, tripId])
+  @@index([driverId, completedAt, status])
+  @@index([status, completedAt])
+}
+
 model Wallet {
   id        String          @id @default(uuid())
   userId    String          @unique
@@ -120,6 +162,8 @@ model Wallet {
   bonus     Float           @default(0)
   moneyRub  Float           @default(0)
   bonusRub  Float           @default(0)
+  lockedBonus Float @default(0)
+  lockedBonusRub Float @default(0)
   topups    TopupRequest[]
   payouts   PayoutRequest[]
   transactions WalletTransaction[]
@@ -215,6 +259,7 @@ model DriverOnline {
   city           City?         @relation(fields: [cityId], references: [id])
   lastLat        Float?
   lastLng        Float?
+  lastAccuracy Float?
   lastLocationAt DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt

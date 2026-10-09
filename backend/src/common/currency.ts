@@ -16,3 +16,12 @@ export function walletCurrency(value?: string): RideCurrency {
 }
 export function moneyField(currency?: string): 'money' | 'moneyRub' { return currency === 'RUB' ? 'moneyRub' : 'money'; }
 export function bonusField(currency?: string): 'bonus' | 'bonusRub' { return currency === 'RUB' ? 'bonusRub' : 'bonus'; }
+
+export function lockedBonusField(currency?: string): 'lockedBonus' | 'lockedBonusRub' { return currency === 'RUB' ? 'lockedBonusRub' : 'lockedBonus'; }
+export function withdrawableMoney(wallet: any, currency?: string) { return Math.max(0, wallet[moneyField(currency)] - wallet[lockedBonusField(currency)]); }
+// Caller holds the wallet row lock: commissions consume promotional funds first.
+export async function consumeLockedBonus(tx: any, walletId: string, currency: string, amount: number) {
+    const wallet = await tx.wallet.findUnique({ where: { id: walletId } });
+    const used = Math.min(Math.max(0, wallet?.[lockedBonusField(currency)] ?? 0), amount);
+    if (used > 0) await tx.wallet.update({ where: { id: walletId }, data: { [lockedBonusField(currency)]: { decrement: used } } });
+}

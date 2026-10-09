@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, IsBoolean, IsInt, Min } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsBoolean, IsInt, Min, Max, IsISO8601 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateDriverProfileDto {
@@ -39,16 +39,31 @@ export class CreateDriverProfileDto {
 export class UpdateLocationDto {
     @ApiProperty()
     @IsNumber()
+    @Min(-90)
+    @Max(90)
     lat: number;
 
     @ApiProperty()
     @IsNumber()
+    @Min(-180)
+    @Max(180)
     lng: number;
 
     @ApiPropertyOptional()
     @IsOptional()
     @IsString()
     cityId?: string;
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsNumber()
+    @Min(0)
+    @Max(10000)
+    accuracy?: number;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsISO8601()
+    sampledAt?: string;
 }
 
 export class SetOnlineDto {

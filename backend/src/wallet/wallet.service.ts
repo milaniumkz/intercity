@@ -1,3 +1,4 @@
+import { lockedBonusField, withdrawableMoney } from '../common/currency';
 import { walletCurrency, moneyField, bonusField } from '../common/currency';
 import {
     Injectable,
@@ -34,6 +35,8 @@ export class WalletService {
                 money: true,
                 bonus: true,
                 moneyRub: true,
+                lockedBonus: true,
+                lockedBonusRub: true,
                 bonusRub: true,
                 createdAt: true,
                 updatedAt: true,
@@ -69,8 +72,10 @@ export class WalletService {
         ]);
 
         return {
+            withdrawable: withdrawableMoney(wallet, currency),
             transactions,
             ...wallet,
+            lockedBonus: wallet[lockedBonusField(currency)],
             currency,
             balances: { KZT: { money: wallet.money, bonus: wallet.bonus }, RUB: { money: wallet.moneyRub, bonus: wallet.bonusRub } },
             money: wallet[moneyField(currency)],
@@ -267,47 +272,30 @@ export class WalletService {
             throw new NotFoundException('Кошелёк не найден');
         }
 
-        const isPassenger = (userRole ?? '').toUpperCase() === 'PASSENGER';
-        const passengerBonusPayoutMin = 5000;
-
-        if (isPassenger) {
-            if (wallet[bonusField(currency)] < passengerBonusPayoutMin) {
-                throw new BadRequestException(
-                    `Вывод бонусов доступен после накопления ${passengerBonusPayoutMin} бонусов`,
-                );
-            }
-            if (dto.amount < passengerBonusPayoutMin) {
-                throw new BadRequestException(
-                    `Минимальная сумма вывода — ${passengerBonusPayoutMin} бонусов`,
-                );
-            }
-            if (wallet[bonusField(currency)] < dto.amount) {
-                throw new BadRequestException('Недостаточно бонусов');
-            }
-        }
-
         // Check minimum payout amount
         const settings = await this.prisma.appSettings.findMany();
         const minPayout = parseFloat(settings.find(s => s.key === (currency === 'RUB' ? 'minPayoutAmountRub' : 'minPayoutAmount'))?.value || '1000');
 
-        if (!isPassenger && dto.amount < minPayout) {
+        if (dto.amount < minPayout) {
             throw new BadRequestException(`Минимальная сумма вывода — ${minPayout}`);
         }
 
-        const payoutFromBonus = isPassenger || (wallet[moneyField(currency)] < dto.amount && wallet[bonusField(currency)] >= dto.amount);
-        if (wallet[moneyField(currency)] < dto.amount && !payoutFromBonus) {
-            throw new BadRequestException('Недостаточно средств');
+        if (withdrawableMoney(wallet, currency) < dto.amount) {
+            throw new BadRequestException('Недостаточно средств для вывода. Бонусы не выводятся.');
         }
 
         if (!dto.cardNumber || dto.cardNumber.trim().length < 12) {
             throw new BadRequestException('Введите корректный номер карты для вывода');
         }
 
-        const payoutSource = payoutFromBonus ? 'BONUS' : 'MONEY';
+        const payoutSource = 'MONEY' as const;
         let localPayout: { id: string; walletId: string; amount: number; status: string };
         try {
             localPayout = await this.prisma.$transaction(async (tx) => {
-                const field = payoutFromBonus ? bonusField(currency) : moneyField(currency);
+                const field = moneyField(currency);
+                await tx.$executeRaw`SELECT id FROM "Wallet" WHERE id = ${wallet.id} FOR UPDATE`;
+                const current = await tx.wallet.findUnique({ where: { id: wallet.id } });
+                if (!current || withdrawableMoney(current, currency) < dto.amount) throw new BadRequestException('Бонусы не выводятся. Недостаточно собственных средств.');
                 const debit = await tx.wallet.updateMany({
                     where: { userId, [field]: { gte: dto.amount } },
                     data: { [field]: { decrement: dto.amount } },

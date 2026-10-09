@@ -344,6 +344,17 @@ export class AdminController {
         return this.adminService.deletePromo(id);
     }
 
+    @Get('trip-reviews')
+    async getTripReviews(@Request() req, @Query('status') status?: string) {
+        await this.ensurePermission(req, 'support.view');
+        return this.adminService.getTripReviews(status);
+    }
+    @Patch('trip-reviews/:id')
+    async decideTripReview(@Request() req, @Param('id') id: string, @Body() body: any) {
+        await this.ensurePermission(req, 'support.manage');
+        return this.runTracked(req, 'trip.review', id, {decision:body.decision,note:body.note}, () => this.adminService.decideTripReview(id,body.decision,body.note,req.user.sub));
+    }
+
     @Get('complaints')
     @ApiOperation({ summary: 'Get complaints' })
     async getComplaints(@Request() req, @Query('status') status?: string) {

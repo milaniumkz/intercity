@@ -549,6 +549,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       await _api.post(
         '/driver/location',
         data: {
+          'accuracy': _lastGpsAccuracy,
+          'sampledAt': _lastGpsAt?.toUtc().toIso8601String(),
           'lat': double.parse(_latCtrl.text),
           'lng': double.parse(_lngCtrl.text),
           'cityId': _cityIdCtrl.text.isEmpty ? null : _cityIdCtrl.text,
@@ -2211,7 +2213,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       final type = (data['type'] ?? '').toString().toLowerCase();
       if (type == 'driver.rating.updated' ||
           type == 'driver.activity.updated' ||
-          type == 'driver.bonus.updated') {
+          type == 'driver.bonus.updated' ||
+          type == 'promotion.settings.changed') {
         await _loadDriverProfileState(metricsOnly: true);
         if (type == 'driver.bonus.updated') await _loadDriverWallet();
         return;

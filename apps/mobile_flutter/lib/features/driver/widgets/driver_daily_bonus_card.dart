@@ -42,6 +42,10 @@ class DriverDailyBonusCard extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text('Выполнено $completed из $target заказов · сутки UTC+5',
                     style: Theme.of(context).textTheme.labelSmall),
+                if ((data['heldOrders'] as num? ?? 0) > 0)
+                  Text(
+                      'На проверке: ${data['heldOrders']} · бонусы ожидают решения',
+                      style: Theme.of(context).textTheme.labelSmall),
                 const SizedBox(height: 6),
                 LinearProgressIndicator(
                     value: target > 0 ? (completed / target).clamp(0, 1) : 0,

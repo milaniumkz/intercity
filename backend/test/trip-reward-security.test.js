@@ -1,0 +1,50 @@
+const {test}=require('node:test');const assert=require('node:assert/strict');
+const {PrismaClient}=require('@prisma/client');
+const {evaluateTrip}=require('../dist/src/common/trip-verification');
+const {driverDailyBonusProgress,creditDriverDailyBonus}=require('../dist/src/common/driver-daily-bonus');
+const {consumeLockedBonus}=require('../dist/src/common/currency');
+const {AdminService}=require('../dist/src/admin/admin.service');
+const {WalletService}=require('../dist/src/wallet/wallet.service');
+test('GPS evidence confirms a real trajectory; short, missing and implausible trajectories require review',()=>{
+ const start=new Date('2026-10-09T10:00:00Z');
+ const base={startedAt:start,expectedDistanceKm:1.1,fromLat:50,fromLng:80,toLat:50.01,toLng:80,driverUserId:'d',passengerId:'p',points:Array.from({length:7},(_,i)=>({lat:50+i/600,lng:80,accuracy:5,at:new Date(start.getTime()+i*30000).toISOString()}))};
+ assert.equal(evaluateTrip(base,new Date(start.getTime()+180000)).status,'VERIFIED');
+ assert.equal(evaluateTrip({...base,points:[]},new Date(start.getTime()+180000)).status,'REVIEW');
+ assert.equal(evaluateTrip({...base,passengerId:'d'},new Date(start.getTime()+180000)).status,'REVIEW');
+ assert.equal(evaluateTrip({...base,points:[base.points[0],{...base.points[6],at:new Date(start.getTime()+1000).toISOString()}]},new Date(start.getTime()+1000)).status,'REVIEW');
+});
+const database=process.env.DAILY_BONUS_TEST_DATABASE_URL;
+test('started campaign survives disabling until midnight; review holds bonus; money payouts exclude promotional funds under concurrency',{skip:!database},async()=>{
+ const url=new URL(database);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.pathname,'/intercity_activity');
+ const p=new PrismaClient({datasources:{db:{url:database}}});const prefix='reward-'+Date.now();const now=new Date();
+ try {
+ const user=await p.user.create({data:{phone:prefix,password:'test',name:'Test',refCode:prefix,refLink:'test',wallet:{create:{moneyRub:1000,bonusRub:10000}}}});
+ const driver=await p.driverProfile.create({data:{userId:user.id,status:'APPROVED'}});
+ const fresh=await p.user.create({data:{phone:prefix+'n',password:'test',name:'Test',refCode:prefix+'n',refLink:'test'}});
+ const other=await p.driverProfile.create({data:{userId:fresh.id,status:'APPROVED'}});
+ const config={enabled:true,targetOrders:2,rewardAmount:2000};
+ await p.appSettings.upsert({where:{key:'driverDailyBonusRUB'},create:{key:'driverDailyBonusRUB',value:JSON.stringify(config)},update:{value:JSON.stringify(config)}});
+ const complete=()=>p.order.create({data:{passengerId:fresh.id,driverId:driver.id,status:'COMPLETED',completedAt:now,currency:'RUB',fromLat:50,fromLng:80,toLat:50.01,toLng:80,fromAddress:'A',toAddress:'B'}});
+ await complete();await p.$transaction(tx=>creditDriverDailyBonus(tx,driver.id,user.id,'RUB',now));
+ await p.appSettings.update({where:{key:'driverDailyBonusRUB'},data:{value:JSON.stringify({...config,enabled:false,targetOrders:10,rewardAmount:9999})}});
+ const kept=await driverDailyBonusProgress(p,driver.id,user.id,'RUB',now);assert.equal(kept.targetOrders,2);assert.equal(kept.rewardAmount,2000);
+ assert.equal(await driverDailyBonusProgress(p,other.id,fresh.id,'RUB',now),null);
+ assert.equal(await driverDailyBonusProgress(p,driver.id,user.id,'RUB',new Date(now.getTime()+86400000)),null);
+ const held=await complete();await p.tripVerification.create({data:{id:'CITY:'+held.id,kind:'CITY',tripId:held.id,driverId:driver.id,driverUserId:user.id,passengerId:fresh.id,currency:'RUB',status:'REVIEW',fromAddress:'A',toAddress:'B',expectedDistanceKm:1,completedAt:now}});
+ assert.equal(await p.$transaction(tx=>creditDriverDailyBonus(tx,driver.id,user.id,'RUB',now)),null);
+ assert.equal((await driverDailyBonusProgress(p,driver.id,user.id,'RUB',now)).heldOrders,1);
+ const admin=new AdminService(p,{publish(){}},{});
+ await assert.rejects(admin.decideTripReview('CITY:'+held.id,'APPROVE','bad','admin'),/обоснование/);
+ await admin.decideTripReview('CITY:'+held.id,'APPROVE','Подтверждено по фактам','admin');
+ await assert.rejects(admin.decideTripReview('CITY:'+held.id,'APPROVE','Повторное решение','admin'),/уже принято/);
+ await Promise.all(Array.from({length:4},()=>p.$transaction(tx=>creditDriverDailyBonus(tx,driver.id,user.id,'RUB',now))));
+ let wallet=await p.wallet.findUnique({where:{userId:user.id}});assert.equal(wallet.moneyRub,3000);assert.equal(wallet.lockedBonusRub,2000);
+ const service=new WalletService(p);await assert.rejects(service.createPayoutRequest(user.id,{currency:'RUB',amount:2000,cardNumber:'0000000000000000'},'DRIVER'),/Бонусы/);
+ const results=await Promise.allSettled([1,2].map(()=>service.createPayoutRequest(user.id,{currency:'RUB',amount:1000,cardNumber:'0000000000000000'},'DRIVER')));
+ assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+ wallet=await p.wallet.findUnique({where:{userId:user.id}});assert.equal(wallet.moneyRub,2000);assert.equal(wallet.lockedBonusRub,2000);
+ await p.$transaction(async tx=>{await tx.$executeRaw`SELECT id FROM "Wallet" WHERE id=${wallet.id} FOR UPDATE`;await tx.wallet.update({where:{id:wallet.id},data:{moneyRub:{decrement:500}}});await consumeLockedBonus(tx,wallet.id,'RUB',500);});
+ wallet=await p.wallet.findUnique({where:{userId:user.id}});assert.equal(wallet.lockedBonusRub,1500);assert.equal(wallet.moneyRub,1500);
+ await assert.rejects(service.createPayoutRequest(user.id,{currency:'RUB',amount:1000,cardNumber:'0000000000000000'},'PASSENGER'),/Бонусы/);
+ } finally {await p.$disconnect();}
+});
