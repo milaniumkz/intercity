@@ -49,6 +49,17 @@ SQL
     echo "Country corrected; original city ID, tariff values and order history retained. Backup: $backup_dir"
     ;;
   status)
+    if [[ "$TARGET" == "inspect-admin-access" ]]; then
+      docker exec -i intercity-backend node <<'JS'
+const {PrismaClient}=require('@prisma/client');const bcrypt=require('bcrypt');const p=new PrismaClient();
+(async()=>{
+ const rows=await p.user.findMany({where:{role:'ADMIN'},select:{phone:true,name:true,password:true}});
+ for(const u of rows)console.log(JSON.stringify({phone:u.phone,name:u.name,defaultPasswordMatches:await bcrypt.compare('123456',u.password),configuredSeedPasswordMatches:process.env.SEED_ADMIN_PASSWORD?await bcrypt.compare(process.env.SEED_ADMIN_PASSWORD,u.password):null}));
+ console.log('adminCount',rows.length);
+})().catch(()=>{console.error('Admin inspection failed');process.exitCode=1}).finally(()=>p.$disconnect());
+JS
+      exit 0
+    fi
     if [[ "$TARGET" == "inspect-city-country" ]]; then
       docker exec -i intercity-backend node <<'JS'
 const {PrismaClient}=require('@prisma/client');const p=new PrismaClient();
