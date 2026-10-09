@@ -34,25 +34,29 @@ class OrderChatSheet extends StatefulWidget {
     required this.orderStatus,
     required this.title,
     required this.currentRole,
+    this.apiClient,
   });
 
   final String orderId;
   final String orderStatus;
   final String title;
   final String currentRole;
+  final ApiClient? apiClient;
 
   @override
   State<OrderChatSheet> createState() => _OrderChatSheetState();
 }
 
 class _OrderChatSheetState extends State<OrderChatSheet> {
-  final _api = ApiClient();
+  late final _api = widget.apiClient ?? ApiClient();
   final _messageCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   List<dynamic> _messages = const [];
   String _error = '';
   bool _loading = true;
   bool _sending = false;
+  bool _loadingMessages = false;
+  bool _reloadAfterSend = false;
   Timer? _pollTimer;
 
   bool get _canWrite => const {
@@ -77,7 +81,18 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool forceScroll = false}) async {
+    if (_loadingMessages) {
+      if (forceScroll) _reloadAfterSend = true;
+      return;
+    }
+    _loadingMessages = true;
+    final follow = forceScroll ||
+        _loading ||
+        !_scrollCtrl.hasClients ||
+        _scrollCtrl.position.extentAfter < 80;
+    final previousLast =
+        _messages.isEmpty ? null : (_messages.last as Map)['id'];
     try {
       final res = await _api.get('/orders/${widget.orderId}/chat');
       if (!mounted) return;
@@ -87,13 +102,20 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
         _loading = false;
         _error = '';
       });
-      _scrollToBottom();
+      final last = _messages.isEmpty ? null : (_messages.last as Map)['id'];
+      if (follow && (forceScroll || previousLast != last)) _scrollToBottom();
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
         _error = errorMessageRu(e);
       });
+    } finally {
+      _loadingMessages = false;
+      if (mounted && _reloadAfterSend) {
+        _reloadAfterSend = false;
+        unawaited(_load(forceScroll: true));
+      }
     }
   }
 
@@ -104,7 +126,7 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
     try {
       await _api.post('/orders/${widget.orderId}/chat', data: {'text': text});
       _messageCtrl.clear();
-      await _load();
+      await _load(forceScroll: true);
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = errorMessageRu(e));
@@ -194,15 +216,38 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
                                 ? Map<String, dynamic>.from(
                                     item['sender'] as Map)
                                 : <String, dynamic>{};
-                            final role =
-                                (sender['role'] ?? '').toString().toUpperCase();
-                            final isMine =
-                                role == widget.currentRole.toUpperCase();
+                            final role = (item['participantRole'] ??
+                                    sender['role'] ??
+                                    '')
+                                .toString()
+                                .toUpperCase();
+                            final isMine = item['isMine'] is bool
+                                ? item['isMine'] == true
+                                : role == widget.currentRole.toUpperCase();
+                            final senderName =
+                                (sender['name'] ?? '').toString().trim();
+                            final author = isMine
+                                ? 'Вы'
+                                : role == 'DRIVER'
+                                    ? 'Водитель'
+                                    : role == 'PASSENGER'
+                                        ? 'Пассажир'
+                                        : 'Поддержка';
+                            final created =
+                                DateTime.tryParse('${item['createdAt']}')
+                                    ?.toLocal();
+                            final time = created == null
+                                ? ''
+                                : '${created.hour.toString().padLeft(2, '0')}:${created.minute.toString().padLeft(2, '0')}';
+                            final foreground = isMine
+                                ? Colors.white
+                                : theme.colorScheme.onSurface;
                             return Align(
                               alignment: isMine
                                   ? Alignment.centerRight
                                   : Alignment.centerLeft,
                               child: Container(
+                                key: ValueKey('chat-message-${item['id']}'),
                                 constraints: BoxConstraints(
                                   maxWidth:
                                       MediaQuery.sizeOf(context).width * 0.76,
@@ -212,18 +257,46 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
                                 decoration: BoxDecoration(
                                   color: isMine
                                       ? AppTheme.primaryColor
-                                      : theme
-                                          .colorScheme.surfaceContainerHighest,
+                                      : Color.alphaBlend(
+                                          AppTheme.primaryColor
+                                              .withValues(alpha: 0.08),
+                                          theme.colorScheme.surface),
+                                  border: isMine
+                                      ? null
+                                      : Border.all(
+                                          color: AppTheme.primaryColor
+                                              .withValues(alpha: 0.16)),
                                   borderRadius: BorderRadius.circular(18),
                                 ),
-                                child: Text(
-                                  (item['text'] ?? '').toString(),
-                                  style: TextStyle(
-                                    color: isMine
-                                        ? Colors.white
-                                        : theme.colorScheme.onSurface,
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                        isMine || senderName.isEmpty
+                                            ? author
+                                            : '$author · $senderName',
+                                        style: TextStyle(
+                                            color: foreground.withValues(
+                                                alpha: 0.8),
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700)),
+                                    const SizedBox(height: 4),
+                                    Text((item['text'] ?? '').toString(),
+                                        style: TextStyle(
+                                            color: foreground,
+                                            fontWeight: FontWeight.w500)),
+                                    if (time.isNotEmpty) ...[
+                                      const SizedBox(height: 4),
+                                      Align(
+                                          alignment: Alignment.centerRight,
+                                          child: Text(time,
+                                              style: TextStyle(
+                                                  color: foreground.withValues(
+                                                      alpha: 0.7),
+                                                  fontSize: 10))),
+                                    ],
+                                  ],
                                 ),
                               ),
                             );

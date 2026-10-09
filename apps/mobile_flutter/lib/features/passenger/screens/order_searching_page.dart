@@ -35,6 +35,7 @@ class OrderSearchingPage extends StatefulWidget {
     this.realtimeConnector = SseService.connect,
     this.pollingInterval = const Duration(seconds: 3),
     this.enableLiveMap = true,
+    this.mapTileProvider,
   });
 
   final String orderId;
@@ -42,6 +43,7 @@ class OrderSearchingPage extends StatefulWidget {
   final OrderRealtimeConnector realtimeConnector;
   final Duration pollingInterval;
   final bool enableLiveMap;
+  final TileProvider? mapTileProvider;
 
   @override
   State<OrderSearchingPage> createState() => _OrderSearchingPageState();
@@ -68,6 +70,8 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
   bool _completionRedirecting = false;
   String? _lastNotifiedStatus;
   bool _offerActionBusy = false;
+  double? _pickupEtaMinutes;
+  late final _roadRoutes = RoadRouteRepository(_api);
 
   bool get _isScreenBoardPreview => (widget.orderId == 'board' ||
       widget.orderId.startsWith('board') ||
@@ -287,7 +291,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
 
       _notifyPassengerStatusIfNeeded(order, status, previousStatus);
 
-      _fitMap();
+      if (_statusStep(status) < 1 || _statusStep(status) > 4) _fitMap();
 
       if (_isFinal(status)) {
         _stopPollingFallback();
@@ -584,24 +588,25 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
 
   void _fitMap() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final step = _statusStep((_order?['status'] ?? '').toString());
       final points = <LatLng>[
-        if (_fromPoint != null) _fromPoint!,
-        if (_toPoint != null) _toPoint!,
-        if (_driverPoint != null) _driverPoint!,
+        if (step >= 4 && _driverPoint != null)
+          _driverPoint!
+        else if (_fromPoint != null)
+          _fromPoint!,
+        if (step >= 1 && step <= 3 && _driverPoint != null)
+          _driverPoint!
+        else if (_toPoint != null)
+          _toPoint!,
       ];
       if (points.isEmpty) return;
       try {
-        if (points.length == 1) {
-          _mapController.move(points.first, 15);
-          return;
-        }
-        final lats = points.map((p) => p.latitude).toList();
-        final lngs = points.map((p) => p.longitude).toList();
-        final center = LatLng(
-          (lats.reduce((a, b) => a + b) / lats.length),
-          (lngs.reduce((a, b) => a + b) / lngs.length),
-        );
-        _mapController.move(center, 13);
+        _mapController.fitCamera(CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(points),
+          padding: const EdgeInsets.fromLTRB(36, 76, 36, 36),
+          maxZoom: 16,
+        ));
       } catch (_) {}
     });
   }
@@ -1123,95 +1128,83 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
       bottomNavigationBar: const PassengerBottomNav(currentIndex: 0),
       backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
       body: SafeArea(
-        child: Stack(
+        child: Column(
           children: [
-            Positioned.fill(child: _mapLayer(step)),
-            Positioned(
-              top: 12,
-              left: 16,
-              right: 16,
-              child: Row(
-                children: [
-                  _roundActionButton(
-                    icon: Icons.arrow_back_rounded,
-                    onTap: () => goBackOr(context, fallback: '/order'),
-                  ),
-                  Expanded(
-                    child: Text(
-                      _statusShort(status),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16,
-                        height: 1.05,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 46),
-                ],
-              ),
-            ),
-            Positioned(
-              right: 16,
-              top: 92,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF11101D) : Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x242C174C),
-                      blurRadius: 20,
-                      offset: Offset(0, 10),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+            Expanded(
+                child: Stack(children: [
+              Positioned.fill(child: _mapLayer(step)),
+              Positioned(
+                top: 12,
+                left: 16,
+                right: 16,
+                child: Row(
                   children: [
-                    const Text(
-                      'Прибытие',
-                      style: TextStyle(fontSize: 11, color: Color(0xFF7C7590)),
+                    _roundActionButton(
+                      icon: Icons.arrow_back_rounded,
+                      onTap: () => goBackOr(context, fallback: '/order'),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      eta,
-                      style: const TextStyle(
-                        color: AppTheme.primaryColor,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
+                    Expanded(
+                      child: Text(
+                        _statusShort(status),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 16,
+                          height: 1.05,
+                        ),
                       ),
                     ),
+                    const SizedBox(width: 46),
                   ],
                 ),
               ),
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 374,
-              child: IgnorePointer(
-                child: Center(
+              if (step == 1 || step == 2)
+                Positioned(
+                  right: 16,
+                  top: 76,
                   child: Container(
-                    width: 5,
-                    height: 5,
-                    decoration: const BoxDecoration(
-                      color: AppTheme.primaryColor,
-                      shape: BoxShape.circle,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF11101D) : Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x242C174C),
+                          blurRadius: 20,
+                          offset: Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Прибытие',
+                          style:
+                              TextStyle(fontSize: 11, color: Color(0xFF7C7590)),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          eta,
+                          key: const ValueKey('passenger-arrival-estimate'),
+                          style: const TextStyle(
+                            color: AppTheme.primaryColor,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-              ),
-            ),
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 108,
+            ])),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
               child: Container(
+                key: const ValueKey('passenger-active-driver-card'),
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
                   color: isDark ? const Color(0xFF11101D) : Colors.white,
@@ -1314,17 +1307,15 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                             onTap: () => _openOrderChat('Чат с водителем'),
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                            child: _driverAction(
+                          icon: Icons.ios_share_rounded,
+                          label: 'Поделиться',
+                          filled: true,
+                          onTap: _copyTripShareLink,
+                        )),
                       ],
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: _premiumActionButton(
-                        label: 'Поделиться поездкой',
-                        icon: Icons.ios_share_rounded,
-                        filled: true,
-                        onPressed: _copyTripShareLink,
-                      ),
                     ),
                     if (order != null &&
                         !_isFinal((order['status'] ?? '').toString())) ...[
@@ -1368,9 +1359,11 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
           options: MapOptions(
             initialCenter: _fromPoint ?? const LatLng(43.2220, 76.8512),
             initialZoom: 14,
+            onMapReady: _fitMap,
           ),
           children: [
             TileLayer(
+              tileProvider: widget.mapTileProvider,
               urlTemplate: AppConstants.osmTileUrl,
               subdomains: AppConstants.mapTileSubdomains,
               userAgentPackageName: 'com.milanium.intercity',
@@ -1431,15 +1424,23 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                   from: _driverPoint!,
                   to: _fromPoint!,
                   strokeWidth: 4,
-                  color: Colors.orange),
+                  color: Colors.orange,
+                  repository: _roadRoutes,
+                  fitPadding: const EdgeInsets.fromLTRB(36, 76, 36, 36),
+                  onDurationResolved: (minutes) {
+                    if (!mounted) return;
+                    setState(() => _pickupEtaMinutes = minutes);
+                  }),
             if (_fromPoint != null &&
                 _toPoint != null &&
                 (step >= 4 || _driverPoint == null))
               RoadRouteLayer(
-                  from: _fromPoint!,
+                  from: step >= 4 ? (_driverPoint ?? _fromPoint!) : _fromPoint!,
                   to: _toPoint!,
                   strokeWidth: 4,
-                  color: AppTheme.primaryColor),
+                  color: AppTheme.primaryColor,
+                  repository: _roadRoutes,
+                  fitPadding: const EdgeInsets.fromLTRB(36, 76, 36, 36)),
           ],
         ),
       ],
@@ -2673,27 +2674,15 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
   }
 
   String _arrivalText(Map<String, dynamic> order) {
-    final raw = order['estimatedArrivalAt'] ??
-        order['arrivalTime'] ??
-        order['etaAt'] ??
-        order['completedAt'];
-    if (raw != null) {
-      final parsed = DateTime.tryParse(raw.toString());
-      if (parsed != null) {
-        final local = parsed.toLocal();
-        return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    final step = _statusStep((order['status'] ?? '').toString());
+    if (step == 3) return 'На месте';
+    if (step == 1 || step == 2) {
+      if (_pickupEtaMinutes != null) {
+        return '~ ${math.max(1, _pickupEtaMinutes!.ceil())} мин';
       }
+      return _driverPoint == null ? 'Уточняем позицию' : 'Рассчитываем…';
     }
-
-    final minutes = _numValue(order, const [
-      'durationMinutes',
-      'estimatedMinutes',
-      'etaMinutes',
-    ]);
-    if (minutes != null && minutes > 0) {
-      return '~ ${minutes.round()} мин';
-    }
-    return 'Скоро';
+    return '—';
   }
 
   String _distanceText(Map<String, dynamic> order) {

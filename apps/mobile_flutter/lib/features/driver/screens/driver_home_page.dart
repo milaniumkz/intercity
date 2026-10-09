@@ -82,6 +82,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   List<LatLng> _activeRoutePolyline = [];
   int _activeRouteRequest = 0;
   String? _activeRouteCacheKey;
+  String? _activeRoutePendingKey;
+  String? _activeRoutePhase;
+  DateTime? _activeRouteStartedAt;
   final Set<String> _notifiedOfferIds = <String>{};
   String? _pendingOfferOrderId;
   StreamSubscription<Map<String, dynamic>>? _notificationTapSub;
@@ -127,15 +130,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     AppModeManager.rememberDriverMode();
     WidgetsBinding.instance.addObserver(this);
     _boardOfferPriceCtrl.addListener(_refreshBoardOfferPriceSelection);
-    _dashboardMetricsTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+    _dashboardMetricsTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (!mounted ||
-          _activeOrder != null ||
           _appLifecycleState != AppLifecycleState.resumed ||
           ModalRoute.of(context)?.isCurrent == false) {
         return;
       }
       unawaited(_loadDriverProfileState(metricsOnly: true));
       unawaited(_loadDriverWallet());
+      if (_driverSse == null) unawaited(_connectDriverRealtime());
     });
     _notificationTapSub = PushNotificationsService
         .instance.onNotificationPayload
@@ -290,11 +293,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       });
       if (_isOnline) {
         _startLocationUpdates();
-        unawaited(_connectDriverRealtime());
         if (_activeOrder == null) _startNearbyPolling();
       } else {
         unawaited(_disableDriverFeeds());
       }
+      unawaited(_connectDriverRealtime());
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -453,7 +456,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     await _positionStream?.cancel();
     _positionStream = null;
     _clearNearbyDiscoveryState();
-    await _disconnectDriverRealtime();
+    // Keep the statistics stream alive when the driver goes offline.
   }
 
   Future<void> _enableDriverFeeds() async {
@@ -1848,7 +1851,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     double? toLng;
 
     if (status == 'IN_PROGRESS') {
-      final from = _orderPoint(order['fromLat'], order['fromLng']);
+      final from = _activeDriverPoint();
       final to = _orderPoint(order['toLat'], order['toLng']);
       if (from == null || to == null) return;
       fromLat = from.latitude;
@@ -1866,6 +1869,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     final cacheKey = [
+      order['id'],
       status,
       fromLat.toStringAsFixed(4),
       fromLng.toStringAsFixed(4),
@@ -1873,6 +1877,17 @@ class _DriverHomePageState extends State<DriverHomePage>
       toLng.toStringAsFixed(4),
     ].join('|');
     if (_activeRouteCacheKey == cacheKey) return;
+    if (_activeRoutePendingKey == cacheKey) return;
+    final phase = '${order['id']}|$status|$toLat|$toLng';
+    final now = DateTime.now();
+    if (_activeRoutePhase == phase &&
+        _activeRouteStartedAt != null &&
+        now.difference(_activeRouteStartedAt!) < const Duration(seconds: 5)) {
+      return;
+    }
+    _activeRoutePhase = phase;
+    _activeRouteStartedAt = now;
+    _activeRoutePendingKey = cacheKey;
     final request = ++_activeRouteRequest;
 
     try {
@@ -1909,8 +1924,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         _activeRoutePolyline = points;
         _activeRouteCacheKey = cacheKey;
         _navSteps = steps;
-        _navStepIndex =
-            steps.isEmpty ? 0 : math.min(_navStepIndex, steps.length - 1);
+        _navStepIndex = 0;
       });
       _updateNavigationProgress(announce: !hadSteps && steps.isNotEmpty);
     } catch (_) {
@@ -1922,6 +1936,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           _navStepIndex = 0;
         });
       }
+    } finally {
+      if (request == _activeRouteRequest) _activeRoutePendingKey = null;
     }
   }
 
@@ -2043,6 +2059,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       _driverHeading = heading;
     });
     _updateNavigationProgress();
+    if (_activeOrder case final order?) {
+      unawaited(_syncActiveRoutePolyline(order));
+    }
   }
 
   Future<void> _startPositionStream() async {
@@ -2086,11 +2105,13 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _connectDriverRealtime() async {
-    if (!_isOnline) return;
-    _driverSseSub?.cancel();
-    await _driverSse?.close();
+    await _disconnectDriverRealtime();
     final conn = await SseService.connect('/realtime/driver/me/stream');
-    if (!mounted || conn == null) return;
+    if (!mounted) {
+      await conn?.close();
+      return;
+    }
+    if (conn == null) return;
     _driverSse = conn;
     _driverSseSub = conn.stream.listen((event) async {
       final eventType = (event['event'] ?? '').toString();
@@ -2099,6 +2120,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (raw is! Map) return;
       final data = Map<String, dynamic>.from(raw);
       final type = (data['type'] ?? '').toString().toLowerCase();
+      if (type == 'driver.rating.updated') {
+        await _loadDriverProfileState(metricsOnly: true);
+        return;
+      }
       if (type == 'driver.location.updated') return;
       if (type == 'driver.online.changed') {
         final payload = data['payload'] is Map
@@ -2127,6 +2152,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final last = _lastRealtimeRefreshAt;
       if (last != null && now.difference(last).inMilliseconds < 800) return;
       _lastRealtimeRefreshAt = now;
+      if (!_isOnline) return;
       if (_activeOrder != null) {
         final activeId = (_activeOrder?['id'] ?? '').toString();
         if (activeId.isNotEmpty) {
@@ -2140,6 +2166,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         await _restoreActiveOrderIfAny();
         await _loadNearby(silent: true);
       }
+    }, onDone: () {
+      _driverSse = null;
+    }, onError: (Object _) {
+      unawaited(_disconnectDriverRealtime());
     });
   }
 
@@ -3735,7 +3765,6 @@ class _DriverHomePageState extends State<DriverHomePage>
                 onBalance: () => context.push('/driver/wallet'),
               ),
               const SizedBox(height: 12),
-              if (_message.isNotEmpty) _boardMessageBanner(),
               Expanded(
                   child: ClipRRect(
                 borderRadius: BorderRadius.circular(18),
@@ -3813,9 +3842,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         return;
       case 2:
         if (_activeOrder == null) {
-          setState(
-            () => _message = 'Сообщения доступны после принятия заказа.',
-          );
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Сообщения доступны после принятия заказа.'),
+          ));
           return;
         }
         _openActiveOrderChat(_activeOrder!);
@@ -4997,7 +5026,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final driver = _activeDriverPoint();
     final approach =
         active && driver != null && order['status'] != 'IN_PROGRESS';
-    final from = approach ? driver : pickup;
+    final from = active ? driver : pickup;
     final to = approach ? pickup : destination;
     if (from == null || to == null) {
       return Center(
