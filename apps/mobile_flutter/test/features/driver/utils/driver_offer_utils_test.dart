@@ -10,6 +10,32 @@ void main() {
           isNot(driverOfferIdentity(
               {'id': 'one', 'offerExpiresAt': '2026-10-09T12:01:00Z'})));
     });
+    test('server remaining time prevents device clock skew from hiding offers',
+        () {
+      final deviceNow = DateTime.utc(2026, 10, 9, 15);
+      final order = {
+        'id': 'ride',
+        'offerExpiresAt': '2026-10-09T14:00:18Z',
+        'offerExpiresInSec': 18
+      };
+      final normalized = normalizeDriverOffer(order, now: deviceNow);
+      expect(offerSecondsLeft(normalized, now: deviceNow), 18);
+      expect(
+          offerSecondsLeft(normalized,
+              now: deviceNow.add(const Duration(seconds: 6))),
+          12);
+      expect(driverOfferIdentity(normalized), driverOfferIdentity(order));
+      expect(
+          normalizeDriverOffer(normalized,
+              now: deviceNow.add(const Duration(seconds: 6))),
+          normalized);
+      final expired = normalizeDriverOffer({...order, 'offerExpiresInSec': 0},
+          now: deviceNow.subtract(const Duration(hours: 2)));
+      expect(
+          offerSecondsLeft(expired,
+              now: deviceNow.subtract(const Duration(hours: 2))),
+          0);
+    });
     test('counts down from absolute expiry time instead of static seconds', () {
       final now = DateTime.utc(2026, 5, 4, 10, 0, 0);
       final order = <String, dynamic>{

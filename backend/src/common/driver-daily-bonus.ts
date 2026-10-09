@@ -28,7 +28,7 @@ export async function driverDailyBonusProgress(db: any, driverId: string, userId
         db.intercityRequest.count({ where: { selectedDriverId: userId, currency, status: 'COMPLETED', completedAt: { gte: start, lt: end } } }),
         db.walletTransaction.findFirst({ where: { idempotencyKey: `daily-driver:${driverId}:${day}:${currency}` } }),
     ]);
-    return { ...config, currency, day, completed: city + intercity, credited: !!credit, timeZone: 'UTC+5' };
+    return { ...config, currency, day, completed: city + intercity, credited: !!credit, creditedAmount: credit?.amount ?? null, timeZone: 'UTC+5' };
 }
 export async function creditDriverDailyBonus(tx: any, driverId: string, userId: string, currency: string, now = new Date()) {
     await tx.$executeRaw`SELECT id FROM "DriverProfile" WHERE id = ${driverId} FOR UPDATE`;

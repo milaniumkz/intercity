@@ -7,6 +7,7 @@ import '../widgets/driver_daily_bonus_card.dart';
 import '../widgets/driver_offer_expiry_watcher.dart';
 import '../widgets/driver_navigation_map.dart';
 import '../../../core/services/driver_offer_sound.dart';
+import '../../../core/services/app_preferences.dart';
 import '../../../core/widgets/road_route_layer.dart';
 import 'package:flutter/material.dart';
 import 'package:intercity_shared/intercity_shared.dart';
@@ -43,9 +44,10 @@ const bool kIntercityScreenBoard = bool.fromEnvironment(
 );
 
 class DriverHomePage extends StatefulWidget {
-  const DriverHomePage({super.key, this.routeStage});
+  const DriverHomePage({super.key, this.routeStage, this.apiClient});
 
   final String? routeStage;
+  final ApiClient? apiClient;
 
   @override
   State<DriverHomePage> createState() => _DriverHomePageState();
@@ -61,6 +63,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   final _boardOfferPriceCtrl = TextEditingController(text: '1600');
   bool _isOnline = false;
   bool _switchBusy = false;
+  bool? _pendingOnlineValue;
   bool _rideStatusBusy = false;
   String? _rideStatusMessage;
   String? _driverStatus;
@@ -116,6 +119,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   final _spokenManeuvers = <String, int>{};
   Timer? _dashboardMetricsTimer;
   final _pickupDeparture = PickupDepartureTracker();
+  final _bonusNotices = <String>{};
 
   bool get _isDriverApproved => isApprovedDriverStatus(_driverStatus);
 
@@ -215,12 +219,15 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  ApiClient get _api => widget.apiClient ?? ApiClient();
+
   Future<void> _bootstrap() async {
-    if (_routeStage('active') ||
-        _routeStage('chosen') ||
-        _routeStage('offer') ||
-        _routeStage('auction') ||
-        _routeStage('fixed')) {
+    if (kIntercityScreenBoard &&
+        (_routeStage('active') ||
+            _routeStage('chosen') ||
+            _routeStage('offer') ||
+            _routeStage('auction') ||
+            _routeStage('fixed'))) {
       _seedBoardDriverHome();
       return;
     }
@@ -264,10 +271,29 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   bool get _useIntercityBoardUi => true;
 
+  Future<void> _notifyDailyBonus(Map<String, dynamic> profile) async {
+    final raw = profile['dailyBonus'];
+    if (raw is! Map || raw['credited'] != true || raw['day'] == null) return;
+    final driverId = profile['id']?.toString();
+    if (driverId == null) return;
+    final currency = raw['currency'] == 'RUB' ? 'RUB' : 'KZT';
+    final day = raw['day'].toString();
+    final key = '$driverId:$day:$currency';
+    if (!_bonusNotices.add(key)) return;
+    final shouldShow =
+        await AppPreferences.claimDailyBonusNotice(driverId, day, currency);
+    if (!mounted || !shouldShow) return;
+    final amount = raw['creditedAmount'] ?? raw['rewardAmount'];
+    final text =
+        'Бонус начислен: +${formatWalletAmount(amount)} ${currency == 'RUB' ? '₽' : '₸'} на основной баланс';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
   Future<void> _loadDriverProfileState({bool metricsOnly = false}) async {
     try {
-      final res = await ApiClient().get('/driver/profile');
+      final res = await _api.get('/driver/profile');
       final profile = Map<String, dynamic>.from(res.data as Map);
+      unawaited(_notifyDailyBonus(profile));
       if (metricsOnly) {
         if (mounted) setState(() => _driverProfile = profile);
         return;
@@ -341,7 +367,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _loadDriverWallet() async {
     try {
-      final res = await ApiClient().get('/wallet');
+      final res = await _api.get('/wallet');
       if (!mounted) return;
       setState(() {
         _driverWallet = Map<String, dynamic>.from(res.data as Map);
@@ -362,13 +388,23 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
     if (_switchBusy) return;
-    setState(() => _switchBusy = true);
+    setState(() {
+      _switchBusy = true;
+      _pendingOnlineValue = value;
+    });
     try {
       if (value) {
-        try {
-          await _fillLocationFromDevice();
-        } catch (_) {
-          // Use the last known/default point if browser GPS is unavailable.
+        {
+          final gpsAge = _lastGpsAt == null
+              ? null
+              : DateTime.now().difference(_lastGpsAt!);
+          if (_lastGpsPoint == null ||
+              (_lastGpsAccuracy ?? double.infinity) > 100 ||
+              gpsAge == null ||
+              gpsAge.isNegative ||
+              gpsAge.inSeconds > 30) {
+            await _fillLocationFromDevice();
+          }
         }
         final locationSaved = await _updateLocation(silent: false);
         if (!locationSaved) {
@@ -382,20 +418,21 @@ class _DriverHomePageState extends State<DriverHomePage>
           return;
         }
       }
-      final onlineResponse = await ApiClient().post(
+      final onlineResponse = await _api.post(
         '/driver/online',
         data: {
           'isOnline': value,
           'cityId': _cityIdCtrl.text.isEmpty ? null : _cityIdCtrl.text,
         },
       );
+      if (!mounted) return;
       setState(() {
         _isOnline = onlineResponse.data is Map &&
             onlineResponse.data['isOnline'] == true;
         _message = 'Статус онлайн: ${value ? 'включен' : 'выключен'}';
       });
       if (value) {
-        await _enableDriverFeeds();
+        unawaited(_enableDriverFeeds());
       } else {
         await _disableDriverFeeds();
       }
@@ -409,7 +446,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       await _showTopupRequiredDialogIfNeeded(message);
       await _loadDriverProfileState();
     } finally {
-      if (mounted) setState(() => _switchBusy = false);
+      if (mounted)
+        setState(() {
+          _switchBusy = false;
+          _pendingOnlineValue = null;
+        });
     }
   }
 
@@ -489,10 +530,9 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _enableDriverFeeds() async {
     _startLocationUpdates();
-    await _connectDriverRealtime();
-    await _updateLocation(silent: true);
-    await _loadNearby(silent: true);
     _startNearbyPolling();
+    unawaited(_connectDriverRealtime());
+    await _loadNearby(silent: true);
   }
 
   Future<bool> _updateLocation({
@@ -505,7 +545,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (autoDetect) {
         await _fillLocationFromDevice();
       }
-      await ApiClient().post(
+      await _api.post(
         '/driver/location',
         data: {
           'lat': double.parse(_latCtrl.text),
@@ -540,7 +580,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       throw Exception('Разрешите доступ к геолокации для водителя');
     }
     final pos = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 8)),
     );
     if (pos.accuracy > 100) {
       throw Exception('Не удалось получить точное местоположение водителя');
@@ -563,7 +604,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           .map((e) => driverOfferIdentity(Map<String, dynamic>.from(e)))
           .where((id) => id.isNotEmpty)
           .toSet();
-      final res = await ApiClient().get('/driver/orders/nearby');
+      final res = await _api.get('/driver/orders/nearby');
       final list = List<dynamic>.from(res.data as List);
       if (!mounted) return;
       final normalized = list
@@ -613,8 +654,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
     try {
       final responses = await Future.wait([
-        ApiClient().get('/driver/intercity/active'),
-        ApiClient().get('/ridesharing/trips/my'),
+        _api.get('/driver/intercity/active'),
+        _api.get('/ridesharing/trips/my'),
       ]);
       if (!mounted) return;
       final active = List<dynamic>.from(responses[0].data as List)
@@ -1703,7 +1744,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _accept(String id) async {
     try {
-      await ApiClient().post('/driver/orders/$id/accept');
+      await _api.post('/driver/orders/$id/accept');
       _stopOfferAlarmIfMatches(id);
       setState(() => _message = 'Заказ $id принят');
       await _loadOrderById(id);
@@ -1727,7 +1768,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         setState(() => _message = 'Укажите цену предложения.');
         return;
       }
-      final res = await ApiClient().post(
+      final res = await _api.post(
         '/orders/$id/offers',
         data: {'price': price},
       );
@@ -1758,7 +1799,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         setState(() => _message = 'Укажите цену предложения.');
         return;
       }
-      await ApiClient().post(
+      await _api.post(
         '/intercity/requests/$id/offers',
         data: {'price': price, 'seats': 1},
       );
@@ -1777,7 +1818,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _rejectNearby(String id) async {
     try {
-      final res = await ApiClient().post('/driver/orders/$id/reject');
+      final res = await _api.post('/driver/orders/$id/reject');
       final data = res.data is Map
           ? Map<String, dynamic>.from(res.data as Map)
           : <String, dynamic>{};
@@ -1802,7 +1843,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _loadOrderById(String id) async {
     try {
-      final res = await ApiClient().get('/orders/$id');
+      final res = await _api.get('/orders/$id');
       if (!mounted) return;
       final order = Map<String, dynamic>.from(res.data as Map);
       final status = (order['status'] ?? '').toString().toUpperCase();
@@ -1828,7 +1869,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _loadActiveIntercityById(String id) async {
     try {
-      final res = await ApiClient().get('/driver/intercity/active');
+      final res = await _api.get('/driver/intercity/active');
       final active = List<dynamic>.from(res.data as List)
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
@@ -1920,7 +1961,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final request = ++_activeRouteRequest;
 
     try {
-      final res = await ApiClient().get(
+      final res = await _api.get(
         '/route',
         queryParameters: {
           'fromLat': fromLat,
@@ -1972,7 +2013,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _restoreActiveOrderIfAny() async {
     try {
-      final res = await ApiClient().get('/orders/my');
+      final res = await _api.get('/orders/my');
       final list = List<dynamic>.from(res.data as List);
       final active =
           list.cast<Map>().map((e) => Map<String, dynamic>.from(e)).firstWhere(
@@ -2016,7 +2057,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     if (id == null || id.isEmpty) return;
     try {
       if (_activeOrderIsIntercity) {
-        await ApiClient().post(
+        await _api.post(
           '/intercity/requests/$id/status',
           data: {'status': status},
         );
@@ -2034,7 +2075,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         }
         await _loadIntercityMainState();
       } else {
-        await ApiClient().post('/orders/$id/status', data: {'status': status});
+        await _api.post('/orders/$id/status', data: {'status': status});
         await _loadOrderById(id);
       }
       if (status == 'DRIVER_ARRIVED' && _navSteps.isNotEmpty) {
@@ -2625,7 +2666,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       return;
     }
     try {
-      final res = await ApiClient().get('/orders/$orderId');
+      final res = await _api.get('/orders/$orderId');
       if (!mounted) return;
       final order = Map<String, dynamic>.from(res.data as Map);
       final status = (order['status'] ?? '').toString().toUpperCase();
@@ -3912,6 +3953,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final isDark = theme.brightness == Brightness.dark;
     final bg = isDark ? AppTheme.darkBackground : AppTheme.lightBackground;
     final text = isDark ? Colors.white : const Color(0xFF15162C);
+    final displayOnline = _pendingOnlineValue ?? _isOnline;
     final muted = isDark ? Colors.white60 : const Color(0xFF77768A);
 
     return Scaffold(
@@ -3926,7 +3968,9 @@ class _DriverHomePageState extends State<DriverHomePage>
               Row(
                 children: [
                   Text(
-                    _isOnline ? 'Вы онлайн' : 'Вы офлайн',
+                    _switchBusy
+                        ? (displayOnline ? 'Подключение…' : 'Отключение…')
+                        : (_isOnline ? 'Вы онлайн' : 'Вы офлайн'),
                     style: TextStyle(
                       color: text,
                       fontWeight: FontWeight.w900,
@@ -3954,18 +3998,25 @@ class _DriverHomePageState extends State<DriverHomePage>
                       height: 28,
                       padding: const EdgeInsets.all(3),
                       decoration: BoxDecoration(
-                        color: _isOnline
+                        color: displayOnline
                             ? AppTheme.primaryColor
                             : muted.withValues(alpha: 0.35),
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Align(
-                        alignment: _isOnline
+                        alignment: displayOnline
                             ? Alignment.centerRight
                             : Alignment.centerLeft,
-                        child: const CircleAvatar(
+                        child: CircleAvatar(
                           radius: 11,
                           backgroundColor: Colors.white,
+                          child: _switchBusy
+                              ? const SizedBox(
+                                  width: 13,
+                                  height: 13,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
+                              : null,
                         ),
                       ),
                     ),
