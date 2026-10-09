@@ -1,5 +1,5 @@
 import { moneyField } from '../common/currency';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { PushService } from '../notifications/push.service';
@@ -15,7 +15,40 @@ interface DriverScore {
 }
 
 @Injectable()
-export class AutoDispatchService {
+export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
+    private timer?: ReturnType<typeof setInterval>;
+    private processing = false;
+
+    onModuleInit() {
+        this.timer = setInterval(() => { void this.processQueue(); }, 3000);
+        this.timer.unref();
+        void this.processQueue();
+    }
+
+    onModuleDestroy() { if (this.timer) clearInterval(this.timer); }
+
+    async processQueue() {
+        if (this.processing) return;
+        this.processing = true;
+        try {
+            const orders = await this.prisma.order.findMany({
+                where: { status: { in: ['CREATED', 'SEARCHING_DRIVER'] }, driverId: null,
+                    mode: { in: ['CITY', 'CARGO', 'DELIVERY'] },
+                    AND: [
+                        { OR: [{ requestType: null }, { requestType: { not: 'CITY_AUCTION' } }] },
+                        { OR: [{ dispatchExpiresAt: null }, { dispatchExpiresAt: { lte: new Date() } }] },
+                    ],
+                    OR: [{ dispatchRetryAt: null }, { dispatchRetryAt: { lte: new Date() } }],
+                },
+                select: { id: true }, orderBy: { createdAt: 'asc' }, take: 200,
+            });
+            for (const order of orders) {
+                try { await this.assignCityOrder(order.id); }
+                catch (_) { this.logger.warn(`Dispatch retry deferred for order ${order.id}`); }
+            }
+        } catch (error) { this.logger.error('Dispatch queue processing failed'); }
+        finally { this.processing = false; }
+    }
     private readonly logger = new Logger(AutoDispatchService.name);
 
     constructor(
@@ -25,115 +58,67 @@ export class AutoDispatchService {
     ) { }
 
     async assignCityOrder(orderId: string) {
-        const order = await this.prisma.order.findUnique({
-            where: { id: orderId },
-            include: { city: true },
-        });
-
-        if (!order || !['CITY', 'CARGO', 'DELIVERY'].includes(order.mode) || !['CREATED', 'SEARCHING_DRIVER'].includes(order.status) || order.driverId) {
-            return;
-        }
-
-        if (!order.cityId) {
-            this.logger.log(`Order ${orderId} has no cityId, cannot auto-dispatch`);
-            return;
-        }
-
-        // Update order status to SEARCHING_DRIVER
-        const queued = await this.prisma.order.updateMany({
-            where: { id: orderId, status: { in: ['CREATED', 'SEARCHING_DRIVER'] }, driverId: null },
-            data: { status: 'SEARCHING_DRIVER' },
-        });
-        if (queued.count !== 1) return;
-        await this.recordRideEventSafe({
-            orderId,
-            fromStatus: order.status,
-            toStatus: 'SEARCHING_DRIVER',
-            source: 'AUTO_DISPATCH',
-            reason: 'Order entered dispatch queue',
-        });
-        this.realtimeService.publish({
-            type: 'order.status.changed',
-            entity: 'order',
-            entityId: orderId,
-            at: new Date().toISOString(),
-            payload: { fromStatus: order.status, toStatus: 'SEARCHING_DRIVER' },
-        });
-
-        // Get app settings
         const settings = await this.getSettings();
-        if (!settings.cityAutoAssignEnabled) {
-            this.logger.log(`Auto-assign disabled. Order ${orderId} left in SEARCHING_DRIVER`);
-            return;
-        }
-        const searchRadiusKm = settings.searchRadiusKm || 5;
-        const minFreshSec = settings.minDriverLocationFreshSec || 60;
-
-        // Find eligible drivers
-        const drivers = await this.findEligibleDrivers(
-            order.cityId,
-            order.fromLat,
-            order.fromLng,
-            searchRadiusKm,
-            minFreshSec,
-            order.currency === 'RUB' ? settings.driverMinOnlineBalanceRub : settings.driverMinOnlineBalance,
-            order.currency,
-        );
-
-        if (drivers.length === 0) {
-            this.logger.log(`No eligible drivers found for order ${orderId}`);
-            return;
-        }
-
-        // Compute scores and find best driver
-        const scoredDrivers = await Promise.all(
-            drivers.map(async (driver) => {
-                const score = await this.computeScore(driver, order.fromLat, order.fromLng);
-                return { driver, score };
-            })
-        );
-
-        // Sort by total score descending
-        scoredDrivers.sort((a, b) => b.score.totalScore - a.score.totalScore);
-
-        // Select best driver
-        const bestDriver = scoredDrivers[0];
-
-        // Assign driver to order
-        const assigned = await this.prisma.order.updateMany({
-            where: { id: orderId, status: 'SEARCHING_DRIVER', driverId: null },
-            data: {
-                driverId: bestDriver.driver.driverId,
-                status: 'DRIVER_ASSIGNED',
-                assignedScore: bestDriver.score.totalScore,
-                assignedReasonJson: JSON.stringify(bestDriver.score),
-            },
-        });
-        if (assigned.count !== 1) return;
-        await this.recordRideEventSafe({
-            orderId,
-            fromStatus: 'SEARCHING_DRIVER',
-            toStatus: 'DRIVER_ASSIGNED',
-            actorUserId: bestDriver.driver.driver?.userId ?? null,
-            actorRole: 'DRIVER',
-            source: 'AUTO_DISPATCH',
-            reason: 'Best score driver selected',
-            payload: bestDriver.score as unknown as Record<string, unknown>,
-        });
-        this.realtimeService.publish({
-            type: 'order.status.changed',
-            entity: 'order',
-            entityId: orderId,
-            at: new Date().toISOString(),
-            payload: {
-                fromStatus: 'SEARCHING_DRIVER',
-                toStatus: 'DRIVER_ASSIGNED',
-                driverId: bestDriver.driver.driverId,
-            },
-        });
-        await this.pushService.sendOrderStatusToPassenger(orderId, 'DRIVER_ASSIGNED');
-
-        this.logger.log(`Assigned driver ${bestDriver.driver.driverId} to order ${orderId} with score ${bestDriver.score.totalScore}`);
+        const offer = await this.prisma.$transaction(async (tx) => {
+            // One dispatcher across every API worker. Acceptance/rejection use conditional writes.
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302091)`;
+            const order = await tx.order.findUnique({ where: { id: orderId } });
+            if (!order || !['CITY', 'CARGO', 'DELIVERY'].includes(order.mode) ||
+                order.requestType === 'CITY_AUCTION' || !order.cityId || order.driverId ||
+                !['CREATED', 'SEARCHING_DRIVER'].includes(order.status)) return null;
+            const now = new Date();
+            if (order.dispatchRetryAt && order.dispatchRetryAt > now) return null;
+            if (order.dispatchDriverId && order.dispatchExpiresAt && order.dispatchExpiresAt > now) {
+                const online = await tx.driverOnline.findUnique({ where: { driverId: order.dispatchDriverId } });
+                if (online?.isOnline && online.cityId === order.cityId) return null;
+            }
+            const queued = await tx.order.updateMany({
+                where: { id: orderId, status: { in: ['CREATED', 'SEARCHING_DRIVER'] }, driverId: null },
+                data: { status: 'SEARCHING_DRIVER', dispatchDriverId: null, dispatchExpiresAt: null },
+            });
+            if (!queued.count) return null;
+            // Expired reservations must not prevent another order using an available driver.
+            await tx.order.updateMany({
+                where: { status: 'SEARCHING_DRIVER', dispatchExpiresAt: { lte: now } },
+                data: { dispatchDriverId: null, dispatchExpiresAt: null },
+            });
+            const drivers = await this.findEligibleDrivers(order.cityId, order.fromLat, order.fromLng,
+                settings.searchRadiusKm, settings.minDriverLocationFreshSec,
+                order.currency === 'RUB' ? settings.driverMinOnlineBalanceRub : settings.driverMinOnlineBalance,
+                order.currency, tx);
+            const compatible = drivers.filter((d) => order.mode === 'CARGO' ? d.driver.acceptCargo :
+                order.mode === 'DELIVERY' ? d.driver.acceptDelivery : d.driver.acceptCityFixed);
+            const tried = new Set(order.dispatchTriedDriverIds);
+            const remaining = compatible.filter(d => !tried.has(d.driverId));
+            if (!remaining.length) {
+                await tx.order.updateMany({
+                    where: { id: orderId, status: 'SEARCHING_DRIVER', driverId: null },
+                    data: { dispatchRetryAt: new Date(now.getTime() + 30000),
+                        ...(compatible.length ? { dispatchTriedDriverIds: [] } : {}) },
+                });
+                return null;
+            }
+            const scored = await Promise.all(remaining.map(async driver => ({driver,
+                score: await this.computeScore(driver, order.fromLat, order.fromLng)})));
+            scored.sort((a, b) => b.score.totalScore - a.score.totalScore);
+            const best = scored[0];
+            const expiresAt = new Date(now.getTime() + settings.dispatchTimeoutSec * 1000);
+            const changed = await tx.order.updateMany({
+                where: { id: orderId, status: 'SEARCHING_DRIVER', driverId: null, dispatchDriverId: null },
+                data: { dispatchDriverId: best.driver.driverId, dispatchExpiresAt: expiresAt,
+                    dispatchRetryAt: null, dispatchTriedDriverIds: { push: best.driver.driverId },
+                    assignedScore: best.score.totalScore, assignedReasonJson: JSON.stringify(best.score) },
+            });
+            return changed.count ? {driverId: best.driver.driverId, userId: best.driver.driver.userId, expiresAt} : null;
+        }, { maxWait: 10000, timeout: 15000 });
+        if (!offer) return;
+        await this.recordRideEventSafe({orderId, fromStatus: 'SEARCHING_DRIVER', toStatus: 'SEARCHING_DRIVER',
+            source: 'AUTO_DISPATCH', reason: 'Driver offered order',
+            payload: {driverId: offer.driverId, expiresAt: offer.expiresAt.toISOString()}});
+        this.realtimeService.publish({type: 'order.dispatch.offered', entity: 'order', entityId: orderId,
+            at: new Date().toISOString(), payload: { driverId: offer.driverId, expiresAt: offer.expiresAt }});
+        await this.pushService.sendToUser(offer.userId, {title: 'Новый заказ', body: 'Примите заказ или откажитесь до окончания времени ответа.',
+            data: {type: 'order_offer', orderId, expiresAt: offer.expiresAt.toISOString()}}).catch(() => false);
     }
 
     private async findEligibleDrivers(
@@ -144,12 +129,14 @@ export class AutoDispatchService {
         minFreshSec: number,
         minDriverBalance: number,
         currency = 'KZT',
+        db: any = this.prisma,
     ) {
         const minLocationTime = new Date(Date.now() - minFreshSec * 1000);
 
-        const onlineDrivers = await this.prisma.driverOnline.findMany({
+        const onlineDrivers = await db.driverOnline.findMany({
             where: {
-                isOnline: true,
+                isOnline: true, cityId,
+                driver: { status: { in: ['ACTIVE', 'APPROVED'] } },
             },
             include: {
                 city: true,
@@ -171,7 +158,11 @@ export class AutoDispatchService {
         const eligibleDrivers = [];
 
         for (const onlineDriver of onlineDrivers) {
-            const hasActiveOrder = await this.prisma.order.findFirst({
+            const reservation = await db.order.findFirst({ where: { dispatchDriverId: onlineDriver.driverId, status: 'SEARCHING_DRIVER', dispatchExpiresAt: { gt: new Date() } } });
+            if (reservation) continue;
+            const activeIntercity = await db.intercityRequest.findFirst({ where: { selectedDriverId: onlineDriver.driver.userId, status: { in: ['ACCEPTED', 'DRIVER_ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'] } } });
+            if (activeIntercity) continue;
+            const hasActiveOrder = await db.order.findFirst({
                 where: {
                     driverId: onlineDriver.driverId,
                     status: {
@@ -186,7 +177,7 @@ export class AutoDispatchService {
                     if (onlineDriver.cityId !== cityId) continue;
                     const balance = onlineDriver.driver.user?.wallet?.[moneyField(currency)] ?? 0;
                     if (minDriverBalance > 0 && balance < minDriverBalance) {
-                        await this.prisma.driverOnline.update({
+                        await db.driverOnline.update({
                             where: { driverId: onlineDriver.driverId },
                             data: { isOnline: false },
                         }).catch(() => null);
@@ -214,7 +205,7 @@ export class AutoDispatchService {
                         serviceStats?.activityBlockedUntil &&
                         new Date(serviceStats.activityBlockedUntil) <= new Date()
                     ) {
-                        const restored = await this.prisma.driverServiceStats.update({
+                        const restored = await db.driverServiceStats.update({
                             where: { driverId: onlineDriver.driverId },
                             data: { activityScore: 30, activityBlockedUntil: null },
                         });
@@ -352,7 +343,7 @@ export class AutoDispatchService {
         }
         return {
             searchRadiusKm: parseFloat(settingsMap['searchRadiusKm'] || '5'),
-            dispatchTimeoutSec: parseInt(settingsMap['dispatchTimeoutSec'] || '20'),
+            dispatchTimeoutSec: Math.min(120, Math.max(10, parseInt(settingsMap['driverOfferAcceptSec'] || settingsMap['dispatchTimeoutSec'] || '20') || 20)),
             minDriverLocationFreshSec: parseInt(settingsMap['minDriverLocationFreshSec'] || '60'),
             referralPercent: parseFloat(settingsMap['referralPercent'] || '10'),
             cityAutoAssignEnabled: (settingsMap['cityAutoAssignEnabled'] || 'false').toLowerCase() === 'true',

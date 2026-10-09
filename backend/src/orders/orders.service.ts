@@ -241,7 +241,7 @@ export class OrdersService {
 
         // Auto-dispatch for CITY-like modes
         if ((mode === 'CITY' || mode === 'CARGO' || mode === 'DELIVERY') && !isCityAuction) {
-            await this.autoDispatchService.assignCityOrder(order.id);
+            await this.autoDispatchService.assignCityOrder(order.id).catch(() => null);
         }
 
         this.realtimeService.publish({

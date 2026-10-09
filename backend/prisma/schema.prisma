@@ -296,6 +296,10 @@ model Order {
   deliveryDimensions String?
   deliveryRecipientContact String?
   scheduledFor       DateTime?
+  dispatchDriverId   String?
+  dispatchExpiresAt  DateTime?
+  dispatchTriedDriverIds String[] @default([])
+  dispatchRetryAt    DateTime?
   assignedScore      Float?
   assignedReasonJson String?
   commissionAmount   Float?

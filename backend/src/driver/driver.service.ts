@@ -1,3 +1,4 @@
+import { AutoDispatchService } from '../orders/auto-dispatch.service';
 import { currencyForCountry, moneyField } from '../common/currency';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { promises as fs } from 'fs';
@@ -17,6 +18,7 @@ export class DriverService {
         private geoService: GeoService,
         private realtimeService: RealtimeService,
         private pushService: PushService,
+        private autoDispatchService: AutoDispatchService,
     ) { }
 
     async createProfile(userId: string, dto: CreateDriverProfileDto) {
@@ -360,6 +362,10 @@ export class DriverService {
         const cityWhere: any = {
             status: 'SEARCHING_DRIVER',
             OR: orderModeFilters,
+            AND: [{ OR: [
+                { requestType: 'CITY_AUCTION' },
+                { dispatchDriverId: profile.id, dispatchExpiresAt: { gt: new Date() } },
+            ] }],
         };
 
         const rejectedOrderEvents = await (this.prisma as any).rideEvent.findMany({
@@ -376,7 +382,10 @@ export class DriverService {
                 .filter((orderId: string | null | undefined): orderId is string => Boolean(orderId)),
         ));
         if (rejectedOrderIds.length > 0) {
-            cityWhere.id = { notIn: rejectedOrderIds };
+            cityWhere.AND.push({ OR: [
+                { requestType: null }, { requestType: { not: 'CITY_AUCTION' } },
+                { id: { notIn: rejectedOrderIds } },
+            ] });
         }
 
         const orders = orderModeFilters.length === 0 ? [] : await this.prisma.order.findMany({
@@ -395,8 +404,8 @@ export class DriverService {
         const ratingAvg = profile.rating?.ratingAvg || 5.0;
         const activityScore = stats.activityScore || 0;
         const withDistance = orders.map((order) => {
-            const offerExpiresAt = new Date(nowMs + offerAcceptSec * 1000);
-            const offerExpiresInSec = offerAcceptSec;
+            const offerExpiresAt = order.dispatchExpiresAt ?? new Date(nowMs + offerAcceptSec * 1000);
+            const offerExpiresInSec = Math.max(0, Math.ceil((offerExpiresAt.getTime() - nowMs) / 1000));
             const hasCoords = order.fromLat != null && order.fromLng != null;
             const distanceKm = hasCoords
                 ? this.haversine(driverLat, driverLng, order.fromLat, order.fromLng)
@@ -415,7 +424,7 @@ export class DriverService {
         });
 
         const nearbyOrders = withDistance
-            .filter((order) => order.hasUnconfirmedLocation || order.distanceKm <= searchRadiusKm)
+            .filter((order) => order.requestType !== 'CITY_AUCTION' || order.hasUnconfirmedLocation || order.distanceKm <= searchRadiusKm)
             .sort((a, b) => b.rankScore - a.rankScore);
 
         const intercityRequests = profile.acceptIntercity
@@ -583,13 +592,14 @@ export class DriverService {
             throw new BadRequestException('Для аукциона отправьте своё предложение цены');
         }
 
-        const updated = await this.prisma.order.update({
-            where: { id: orderId },
-            data: {
-                driverId: profile.id,
-                status: 'DRIVER_EN_ROUTE',
-            },
+        const accepted = await this.prisma.order.updateMany({
+            where: { id: orderId, status: 'SEARCHING_DRIVER', driverId: null,
+                dispatchDriverId: profile.id, dispatchExpiresAt: { gt: new Date() } },
+            data: { driverId: profile.id, status: 'DRIVER_EN_ROUTE',
+                dispatchDriverId: null, dispatchExpiresAt: null, dispatchRetryAt: null },
         });
+        if (accepted.count !== 1) throw new BadRequestException('Время ответа истекло или заказ предложен другому водителю');
+        const updated = await this.prisma.order.findUnique({ where: { id: orderId } });
         await this.recordRideEventSafe({
             orderId: order.id,
             fromStatus: order.status,
@@ -628,7 +638,20 @@ export class DriverService {
             throw new BadRequestException('Order not available');
         }
 
-        const updatedStats = await this.applyRejectPenalty(profile.id);
+        if (order.requestType !== 'CITY_AUCTION') {
+            const declined = await this.prisma.order.updateMany({
+                where: { id: orderId, status: 'SEARCHING_DRIVER', driverId: null,
+                    dispatchDriverId: profile.id, dispatchExpiresAt: { gt: new Date() } },
+                data: { dispatchDriverId: null, dispatchExpiresAt: null, dispatchRetryAt: null },
+            });
+            if (declined.count !== 1) throw new BadRequestException('Время ответа истекло или заказ предложен другому водителю');
+        }
+        const previousRejection = await this.prisma.rideEvent.findFirst({
+            where: {orderId, actorUserId: driverUserId, reason: 'Driver rejected order'},
+        });
+        const updatedStats = previousRejection
+            ? await this.ensureDriverActivityState(profile.id)
+            : await this.applyRejectPenalty(profile.id);
         await this.recordRideEventSafe({
             orderId: order.id,
             fromStatus: order.status,
@@ -653,6 +676,7 @@ export class DriverService {
                 blockedUntil: updatedStats.activityBlockedUntil?.toISOString?.() ?? null,
             },
         });
+        if (order.requestType !== 'CITY_AUCTION') await this.autoDispatchService.assignCityOrder(orderId);
         return {
             ok: true,
             orderId,
