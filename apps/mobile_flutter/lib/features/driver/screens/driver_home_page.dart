@@ -26,6 +26,7 @@ import '../../../core/widgets/intercity_static_tile_map.dart';
 import '../../shared/widgets/order_chat_sheet.dart';
 import '../utils/driver_offer_utils.dart';
 import '../widgets/driver_bottom_nav.dart';
+import '../widgets/driver_active_trip_view.dart';
 
 const bool kIntercityScreenBoard = bool.fromEnvironment(
   'INTERCITY_SCREEN_PREVIEW',
@@ -50,6 +51,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   final _boardOfferPriceCtrl = TextEditingController(text: '1600');
   bool _isOnline = false;
   bool _switchBusy = false;
+  bool _rideStatusBusy = false;
+  String? _rideStatusMessage;
   String? _driverStatus;
   Map<String, dynamic>? _driverProfile;
   Map<String, dynamic>? _driverWallet;
@@ -3674,10 +3677,10 @@ class _DriverHomePageState extends State<DriverHomePage>
         (_activeOrder?['status'] ?? '').toString().toUpperCase();
     final hasActiveOrder = _activeOrder != null &&
         !const ['COMPLETED', 'CANCELLED'].contains(activeOrderStatus);
+    if (hasActiveOrder) return _activeDriverTripScaffold(activeOrderStatus);
     return Scaffold(
       backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
-      bottomNavigationBar:
-          hasActiveOrder ? null : const DriverBottomNav(currentIndex: 0),
+      bottomNavigationBar: const DriverBottomNav(currentIndex: 0),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
@@ -3686,9 +3689,7 @@ class _DriverHomePageState extends State<DriverHomePage>
               _driverHeader(),
               const SizedBox(height: 14),
               Expanded(
-                child: hasActiveOrder
-                    ? _buildActiveRideMode(activeOrderStatus)
-                    : _buildIdleDriverMode(),
+                child: _buildIdleDriverMode(),
               ),
             ],
           ),
@@ -3698,48 +3699,53 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Widget _activeDriverTripScaffold(String activeOrderStatus) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    return Scaffold(
-      backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  IconButton(
-                    onPressed: () =>
-                        goBackOr(context, fallback: '/driver/home'),
-                    icon: const Icon(Icons.arrow_back_rounded),
-                  ),
-                  const Expanded(
-                    child: Text(
-                      'Активный заказ',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: _activeOrder == null
-                        ? null
-                        : () =>
-                            _loadOrderById((_activeOrder!['id']).toString()),
-                    icon: const Icon(Icons.refresh_rounded),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Expanded(child: _buildActiveRideMode(activeOrderStatus)),
-            ],
-          ),
-        ),
-      ),
+    final order = _activeOrder!;
+    final action = _primaryRideAction(activeOrderStatus);
+    final nav = _currentNavInfo();
+    final remaining = _distanceToActiveDestinationKm();
+    return DriverActiveTripView(
+      map: _activeOrderMap(),
+      message: _rideStatusMessage,
+      onBack: () => goBackOr(context, fallback: '/driver/home'),
+      passenger: _activePassengerName(order),
+      from: (order['fromAddress'] ?? 'Точка подачи').toString(),
+      to: (order['toAddress'] ?? 'Точка назначения').toString(),
+      price: '${order['price'] ?? '-'} ${rideCurrencySymbol(order)}',
+      status:
+          '${_orderStatusRu(activeOrderStatus)}${remaining == null ? '' : ' · ${_formatDistanceRu(remaining)}'}',
+      payment: paymentMethodLabel(order['paymentMethod']?.toString()),
+      instruction: nav == null
+          ? null
+          : '${nav['instruction']}${nav['distanceKm'] is double ? ' · ${_formatDistanceRu(nav['distanceKm'] as double)}' : ''}',
+      onRefresh: () => _loadOrderById(order['id'].toString()),
+      onCall: () => _callPassenger(order),
+      onChat: () => _openActiveOrderChat(order),
+      onNavigate: _openActiveOrderInNavigator,
+      actionLabel: action?.label,
+      actionIcon: action?.icon,
+      busy: _rideStatusBusy,
+      onAction: action != null && _canMoveToStatus(action.nextStatus)
+          ? () => _advanceRideStatus(action.nextStatus)
+          : null,
     );
+  }
+
+  Future<void> _advanceRideStatus(String status) async {
+    if (_rideStatusBusy) return;
+    setState(() {
+      _rideStatusBusy = true;
+      _rideStatusMessage = null;
+    });
+    try {
+      await _setActiveOrderStatus(status);
+      if (mounted &&
+          _activeOrder != null &&
+          _activeOrder?['status'] != status) {
+        setState(() => _rideStatusMessage = _message);
+      }
+    } finally {
+      if (mounted) setState(() => _rideStatusBusy = false);
+    }
   }
 
   void _goDriverBoard(String marker) {
@@ -5817,526 +5823,6 @@ class _DriverHomePageState extends State<DriverHomePage>
     );
   }
 
-  Widget _buildActiveRideMode(String activeOrderStatus) {
-    final order = _activeOrder!;
-    final remainingKm = _distanceToActiveDestinationKm();
-    return ListView(
-      children: [
-        _luxCard(
-          gradient: const LinearGradient(
-            colors: [Color(0x267C2DFF), Color(0x14171426)],
-          ),
-          borderColor: AppTheme.primaryColor.withValues(alpha: 0.24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Текущий заказ',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white,
-                ),
-              ),
-              if (remainingKm != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    'До точки завершения: ${remainingKm.toStringAsFixed(1)} км',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        _activeOrderMap(),
-        if (_currentNavInfo() != null) ...[
-          const SizedBox(height: 8),
-          Builder(
-            builder: (context) {
-              final nav = _currentNavInfo()!;
-              final distanceKm = nav['distanceKm'] as double?;
-              return _luxCard(
-                borderColor: AppTheme.primaryColor.withValues(alpha: 0.30),
-                gradient: const LinearGradient(
-                  colors: [Color(0x1A2F80ED), Color(0x102F80ED)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.navigation,
-                          color: Colors.white,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Навигация • шаг ${(nav['index'] as int) + 1}/${nav['total']}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      nav['instruction'] as String,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    if (distanceKm != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'Через ${_formatDistanceRu(distanceKm)}',
-                        style: const TextStyle(color: Colors.white70),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: _rideActionButton(
-                        label: 'Открыть в навигаторе',
-                        icon: Icons.map_rounded,
-                        enabled: true,
-                        filled: true,
-                        onPressed: _openActiveOrderInNavigator,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
-        const SizedBox(height: 8),
-        _activeRideDetailsCard(order, activeOrderStatus),
-        const SizedBox(height: 8),
-        if (_message.isNotEmpty) _infoBanner(_message),
-      ],
-    );
-  }
-
-  Widget _activeRideDetailsCard(
-    Map<String, dynamic> order,
-    String activeOrderStatus,
-  ) {
-    final from = (order['fromAddress'] ?? 'Точка подачи').toString();
-    final to = (order['toAddress'] ?? 'Точка назначения').toString();
-    final price = (order['price'] ?? '-').toString();
-    final payment = paymentMethodLabel(order['paymentMethod']?.toString());
-    final vehicleClass = vehicleClassLabel(
-      order['vehicleClass']?.toString() ?? '',
-    );
-    final paymentRaw = (order['paymentMethod'] ?? '').toString();
-    final vehicleRaw = (order['vehicleClass'] ?? '').toString();
-    final passenger = _activePassengerName(order);
-    final remainingKm = _distanceToActiveDestinationKm();
-
-    return _luxCard(
-      padding: EdgeInsets.zero,
-      borderColor: AppTheme.primaryColor.withValues(alpha: 0.24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF1B0D33), Color(0xFF0B0817)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const LinearGradient(
-                      colors: [AppTheme.secondaryColor, AppTheme.primaryColor],
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppTheme.primaryColor.withValues(alpha: 0.32),
-                        blurRadius: 18,
-                      ),
-                    ],
-                  ),
-                  child: const Icon(Icons.person_rounded, color: Colors.white),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Поездка в пути',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        passenger,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 9,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Text(
-                    price == '-' ? '-' : '$price ${rideCurrencySymbol(order)}',
-                    style: const TextStyle(
-                      color: AppTheme.primaryColor,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 16,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: _activeMetricCard(
-                        icon: Icons.timeline_rounded,
-                        label: 'Статус',
-                        value: _orderStatusRu(
-                          (order['status'] ?? '').toString(),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _activeMetricCard(
-                        icon: Icons.near_me_rounded,
-                        label: 'Осталось',
-                        value: remainingKm == null
-                            ? '-'
-                            : _formatDistanceRu(remainingKm),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                _activeRideProgress(activeOrderStatus),
-                const SizedBox(height: 10),
-                _activeRouteCard(from: from, to: to),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    if (paymentRaw.isNotEmpty)
-                      _offerInfoChip(
-                        icon: Icons.credit_card_rounded,
-                        label: 'Оплата: $payment',
-                      ),
-                    if (vehicleRaw.isNotEmpty)
-                      _offerInfoChip(
-                        icon: Icons.event_seat_rounded,
-                        label: 'Класс: $vehicleClass',
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _rideActionButton(
-                        label: 'Позвонить',
-                        icon: Icons.phone_rounded,
-                        enabled: !const [
-                          'COMPLETED',
-                          'CANCELLED',
-                        ].contains(activeOrderStatus),
-                        filled: false,
-                        onPressed: () => _callPassenger(order),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _rideActionButton(
-                        label: 'Чат',
-                        icon: Icons.chat_bubble_outline_rounded,
-                        enabled: !const [
-                          'COMPLETED',
-                          'CANCELLED',
-                        ].contains(activeOrderStatus),
-                        filled: false,
-                        onPressed: () => _openActiveOrderChat(order),
-                      ),
-                    ),
-                  ],
-                ),
-                if (_primaryRideAction(activeOrderStatus) != null) ...[
-                  const SizedBox(height: 12),
-                  Builder(
-                    builder: (context) {
-                      final action = _primaryRideAction(activeOrderStatus)!;
-                      return _rideActionButton(
-                        label: action.label,
-                        icon: action.icon,
-                        enabled: _canMoveToStatus(action.nextStatus),
-                        filled: true,
-                        onPressed: () =>
-                            _setActiveOrderStatus(action.nextStatus),
-                      );
-                    },
-                  ),
-                ],
-                if (!const [
-                  'COMPLETED',
-                  'CANCELLED',
-                ].contains(activeOrderStatus)) ...[
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: _rideIconButton(
-                      icon: Icons.refresh_rounded,
-                      onPressed: () => _loadOrderById((order['id']).toString()),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _activeRideProgress(String status) {
-    final current = status.toUpperCase();
-    final steps = [
-      ('DRIVER_ASSIGNED', 'Принят', Icons.check_circle_rounded),
-      ('DRIVER_ARRIVED', 'На месте', Icons.location_on_rounded),
-      ('IN_PROGRESS', 'В пути', Icons.navigation_rounded),
-      ('COMPLETED', 'Завершён', Icons.flag_rounded),
-    ];
-    final currentIndex = switch (current) {
-      'DRIVER_ARRIVED' => 1,
-      'IN_PROGRESS' => 2,
-      'COMPLETED' => 3,
-      _ => 0,
-    };
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      child: Row(
-        children: [
-          for (var i = 0; i < steps.length; i++) ...[
-            Expanded(
-              child: Column(
-                children: [
-                  Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: i <= currentIndex
-                          ? const LinearGradient(
-                              colors: [
-                                AppTheme.secondaryColor,
-                                AppTheme.primaryColor,
-                              ],
-                            )
-                          : null,
-                      color: i <= currentIndex
-                          ? null
-                          : Colors.white.withValues(alpha: 0.08),
-                    ),
-                    child: Icon(
-                      steps[i].$3,
-                      color: i <= currentIndex ? Colors.white : Colors.white38,
-                      size: 17,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    steps[i].$2,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: i <= currentIndex ? Colors.white : Colors.white54,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (i != steps.length - 1)
-              Container(
-                width: 14,
-                height: 2,
-                margin: const EdgeInsets.only(bottom: 22),
-                color: i < currentIndex
-                    ? AppTheme.primaryColor
-                    : Colors.white.withValues(alpha: 0.12),
-              ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _activeRouteCard({required String from, required String to}) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      child: Column(
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Column(
-                children: [
-                  Container(
-                    width: 10,
-                    height: 10,
-                    decoration: const BoxDecoration(
-                      color: AppTheme.primaryColor,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  Container(
-                    width: 2,
-                    height: 34,
-                    color: AppTheme.primaryColor.withValues(alpha: 0.45),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _routeText(title: 'Откуда', address: from),
-              ),
-            ],
-          ),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                margin: const EdgeInsets.only(top: 4),
-                decoration: const BoxDecoration(
-                  color: AppTheme.secondaryColor,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _routeText(title: 'Куда', address: to),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _activeMetricCard({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              gradient: const LinearGradient(
-                colors: [AppTheme.secondaryColor, AppTheme.primaryColor],
-              ),
-            ),
-            child: Icon(icon, color: Colors.white, size: 18),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   String _activePassengerName(Map<String, dynamic> order) {
     final direct = order['passengerName'] ?? order['customerName'];
     if (direct != null && direct.toString().trim().isNotEmpty) {
@@ -6413,93 +5899,6 @@ class _DriverHomePageState extends State<DriverHomePage>
       orderStatus: (order['status'] ?? '').toString(),
       title: 'Чат с пассажиром',
       currentRole: 'DRIVER',
-    );
-  }
-
-  Widget _rideActionButton({
-    required String label,
-    required IconData icon,
-    required bool enabled,
-    required bool filled,
-    required VoidCallback onPressed,
-  }) {
-    final radius = BorderRadius.circular(16);
-    return AnimatedOpacity(
-      duration: const Duration(milliseconds: 160),
-      opacity: enabled ? 1 : 0.48,
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: radius,
-        child: InkWell(
-          onTap: enabled ? onPressed : null,
-          borderRadius: radius,
-          child: Ink(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-            decoration: BoxDecoration(
-              borderRadius: radius,
-              gradient: filled
-                  ? const LinearGradient(
-                      colors: [AppTheme.secondaryColor, AppTheme.primaryColor],
-                    )
-                  : null,
-              border: filled
-                  ? null
-                  : Border.all(color: Colors.white.withValues(alpha: 0.18)),
-              boxShadow: filled && enabled
-                  ? [
-                      BoxShadow(
-                        color: AppTheme.primaryColor.withValues(alpha: 0.24),
-                        blurRadius: 16,
-                        offset: const Offset(0, 8),
-                      ),
-                    ]
-                  : null,
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 18, color: Colors.white),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    label,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _rideIconButton({
-    required IconData icon,
-    required VoidCallback onPressed,
-  }) {
-    return SizedBox(
-      width: 52,
-      height: 52,
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(16),
-          child: Ink(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
-            ),
-            child: Icon(icon, color: Colors.white),
-          ),
-        ),
-      ),
     );
   }
 }

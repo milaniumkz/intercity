@@ -55,6 +55,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
   Map<String, dynamic>? _order;
   String _message = 'Ищем водителя рядом с точкой подачи...';
   bool _loading = true;
+  bool _refreshing = false;
   bool _cancelling = false;
   Timer? _pollTimer;
   SseConnection? _orderSse;
@@ -92,6 +93,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
       return;
     }
     _loadOrder();
+    _startPollingFallback();
     unawaited(_connectOrderStream());
   }
 
@@ -253,6 +255,8 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
   }
 
   Future<void> _loadOrder() async {
+    if (_refreshing || !mounted) return;
+    _refreshing = true;
     try {
       final res = await _api.get('/orders/${widget.orderId}');
       final order = Map<String, dynamic>.from(res.data as Map);
@@ -296,6 +300,8 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
         _loading = false;
         _message = errorMessageRu(e);
       });
+    } finally {
+      _refreshing = false;
     }
   }
 
@@ -626,14 +632,14 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     final showAuctionOffers = pendingOffers.isNotEmpty && !isFinalOrder;
 
     if (_useBoardDesign && !showAuctionOffers) {
-      if (order != null && _statusStep(displayStatus) >= 4) {
+      if (order != null && _statusStep(displayStatus) >= 1) {
         return _boardActiveTripScreen();
       }
       return _boardSearchingScreen();
     }
 
     if (hasActiveOrder && !showAuctionOffers) {
-      if (_statusStep(displayStatus) >= 4) {
+      if (_statusStep(displayStatus) >= 1) {
         return _boardActiveTripScreen();
       }
       return _boardSearchingScreen();
@@ -1082,6 +1088,9 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final order = _order;
+    final status =
+        _effectiveStatus(order, (order?['status'] ?? 'IN_PROGRESS').toString());
+    final step = _statusStep(status);
     final driverProfile = order?['driver'] is Map
         ? Map<String, dynamic>.from(order!['driver'] as Map)
         : null;
@@ -1103,7 +1112,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
       body: SafeArea(
         child: Stack(
           children: [
-            Positioned.fill(child: _mapLayer(4)),
+            Positioned.fill(child: _mapLayer(step)),
             Positioned(
               top: 12,
               left: 16,
@@ -1114,11 +1123,11 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                     icon: Icons.arrow_back_rounded,
                     onTap: () => goBackOr(context, fallback: '/order'),
                   ),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Поездка\nв пути',
+                      _statusShort(status),
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontWeight: FontWeight.w900,
                         fontSize: 16,
                         height: 1.05,

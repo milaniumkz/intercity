@@ -73,7 +73,8 @@ void main() {
     });
   }
 
-  testWidgets('does not keep polling while realtime stream is active',
+  testWidgets(
+      'recovers accepted driver when connected realtime delivers no event',
       (tester) async {
     tester.view.physicalSize = const Size(1440, 2200);
     tester.view.devicePixelRatio = 1;
@@ -104,9 +105,18 @@ void main() {
 
     expect(api.getCalls, 1);
 
+    api.status = 'DRIVER_EN_ROUTE';
     await tester.pump(const Duration(seconds: 3));
-
-    expect(api.getCalls, 1);
+    await tester.pump();
+    expect(api.getCalls, greaterThan(1));
+    expect(find.text('Водитель едет'), findsWidgets);
+    expect(find.text('Тестовый водитель'), findsWidgets);
+    expect(find.text('Ищем водителя'), findsNothing);
+    api.status = 'DRIVER_ARRIVED';
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(find.text('Водитель на месте'), findsWidgets);
+    await tester.pumpWidget(const SizedBox.shrink());
     await controller.close();
   });
 
@@ -154,7 +164,7 @@ class _FakeApiClient extends ApiClient {
 
   int getCalls = 0;
   final String currency;
-  final String status;
+  String status;
 
   @override
   Future<Response<dynamic>> get(
@@ -168,6 +178,12 @@ class _FakeApiClient extends ApiClient {
       data: <String, dynamic>{
         'id': 'order-1',
         'status': status,
+        if (status != 'SEARCHING_DRIVER' && status != 'CANCELLED')
+          'driver': {
+            'carModel': 'Toyota',
+            'carNumber': 'TEST',
+            'user': {'name': 'Тестовый водитель', 'phone': '+70000000001'}
+          },
         'currency': currency,
         'price': 1500,
         'fromAddress': 'Точка A',
