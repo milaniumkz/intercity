@@ -1805,7 +1805,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                               onPressed: _loadRequest,
                             ),
                           ),
-                          if (!_isFinalStatus(status)) ...[
+                          if (!_isFinalStatus(status) &&
+                              status != 'IN_PROGRESS') ...[
                             const SizedBox(width: 8),
                             Expanded(
                               child: _requestActionButton(

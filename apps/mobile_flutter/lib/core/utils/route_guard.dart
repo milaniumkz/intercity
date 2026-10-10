@@ -6,7 +6,9 @@ bool isPublicRoute(String path) {
       path == '/forgot-password') {
     return true;
   }
-  return path.startsWith('/register/') || path.startsWith('/ref/');
+  return path.startsWith('/register/') ||
+      path.startsWith('/ref/') ||
+      path.startsWith('/trip/');
 }
 
 String? resolveAuthRedirect({
@@ -32,6 +34,7 @@ String? resolveAuthRedirect({
   if (hasToken &&
       publicRoute &&
       path != '/startup' &&
+      !path.startsWith('/trip/') &&
       !(path.startsWith('/ref/') && path.endsWith('/download'))) {
     return '/startup';
   }

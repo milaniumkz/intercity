@@ -188,7 +188,7 @@ void main() {
     expect(find.text('Поиск водителя...'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
-  testWidgets('ongoing city trip has a cancellation action', (tester) async {
+  testWidgets('ongoing city trip cannot be cancelled', (tester) async {
     tester.view.physicalSize = const Size(1440, 2200);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -202,7 +202,7 @@ void main() {
     )));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('Отменить заказ'), findsOneWidget);
+    expect(find.text('Отменить заказ'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
   for (final currency in ['RUB', 'KZT']) {

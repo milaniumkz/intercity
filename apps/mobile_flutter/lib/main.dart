@@ -1,3 +1,4 @@
+import 'features/passenger/screens/shared_trip_page.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -123,6 +124,12 @@ GoRouter createRouter({
             initialStep: int.tryParse(state.uri.queryParameters['step'] ?? ''),
           ),
         ),
+        GoRoute(
+            path: '/trip/:token',
+            builder: (context, state) => SharedTripPage(
+                token: state.pathParameters['token'] ?? '',
+                apiClient: orderApiClient,
+                mapTileProvider: mapTileProvider)),
         GoRoute(
           path: '/order/searching/:id',
           builder: (context, state) => OrderSearchingPage(

@@ -17,6 +17,12 @@ void main() {
       );
     });
 
+    test('allows shared trip links for guests and signed-in users', () {
+      expect(resolveAuthRedirect(path: '/trip/signed-token', hasToken: false),
+          isNull);
+      expect(resolveAuthRedirect(path: '/trip/signed-token', hasToken: true),
+          isNull);
+    });
     test('allows guest on public routes', () {
       expect(resolveAuthRedirect(path: '/login', hasToken: false), isNull);
       expect(resolveAuthRedirect(path: '/register/passenger', hasToken: false),

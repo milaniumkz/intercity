@@ -3,7 +3,7 @@ const {OrdersService}=require('../dist/src/orders/orders.service');const {AutoDi
 const database=process.env.DISPATCH_TEST_DATABASE_URL;
 test('taxi broadcast, passenger confirmation, 30s expiry and activity accounting',{skip:!database},async()=>{
  const url=new URL(database);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.pathname,'/dispatch_test');
- const p=new PrismaClient({datasources:{db:{url:database}}});const key='auction-'+Date.now();const pushes=[];const realtime={publish:()=>{}};const push={sendToUser:async id=>{pushes.push(id);return true},sendOrderStatusToPassenger:async()=>true};let city,passenger;const drivers=[];
+ const p=new PrismaClient({datasources:{db:{url:database}}});const key='auction-'+Date.now();const pushes=[];const realtime={publish:()=>{}};const push={sendToUser:async id=>{pushes.push(id);return true},sendOrderStatusToPassenger:async()=>true};let city,passenger;const drivers=[];const oldSecret=process.env.JWT_SECRET;process.env.JWT_SECRET='isolated-trip-share-test-secret';
  try{
   city=await p.city.create({data:{name:key,countryCode:'KZ',lat:49.95,lng:82.6}});
   passenger=await p.user.create({data:{phone:key+'-p',password:'test-only',name:'Passenger',refCode:key+'-p',refLink:'test-only'}});
@@ -18,6 +18,7 @@ test('taxi broadcast, passenger confirmation, 30s expiry and activity accounting
   for(const d of drivers)assert.ok((await driverApi.getNearbyOrders(d.userId)).some(o=>o.id===order.id));
   const offer=await service.createOrderOffer(order.id,drivers[0].userId,{price:700});assert.ok(offer.expiresAt-new Date()>25000 && offer.expiresAt-new Date()<=30000);assert.equal((await p.order.findUnique({where:{id:order.id}})).driverId,null);
   assert.deepEqual(await driverApi.getNearbyOrders(drivers[0].userId),[]);await service.rejectOrderOffer(offer.id,passenger.id);assert.equal(await score(drivers[0]),82);await assert.rejects(service.acceptOrderOffer(offer.id,passenger.id));
+  const rejectedView=await service.getOrder(order.id,{userId:drivers[0].userId,role:'PASSENGER'});assert.equal(rejectedView.offers.find(item=>item.id===offer.id).status,'REJECTED');await assert.rejects(service.getOrder(order.id,{userId:'unrelated-user',role:'PASSENGER'}));
   const expired=await service.createOrderOffer(order.id,drivers[1].userId,{price:800});await p.orderOffer.update({where:{id:expired.id},data:{expiresAt:new Date(Date.now()-1000)}});await assert.rejects(service.acceptOrderOffer(expired.id,passenger.id));
   await driverApi.rejectOrder(drivers[2].userId,order.id);assert.equal(await score(drivers[2]),79);
   await p.orderAuctionInvitation.updateMany({where:{orderId:order.id,driverId:drivers[3].id},data:{expiresAt:new Date(Date.now()-1000)}});await dispatch.processQueue();assert.equal((await p.orderOffer.findUnique({where:{id:expired.id}})).status,'EXPIRED');assert.equal(await score(drivers[1]),82);assert.equal(await score(drivers[3]),79);await dispatch.processQueue();assert.equal(await score(drivers[3]),79);
@@ -34,7 +35,17 @@ test('taxi broadcast, passenger confirmation, 30s expiry and activity accounting
   await p.order.update({where:{id:order.id},data:{status:'CANCELLED'}});await p.driverOnline.updateMany({where:{driverId:{in:drivers.map(d=>d.id)}},data:{isOnline:true,lastLocationAt:new Date()}});
   const second=await create();const a=await service.createOrderOffer(second.id,drivers[0].userId,{price:700});const b=await service.createOrderOffer(second.id,drivers[1].userId,{price:900});const result=await Promise.allSettled([service.acceptOrderOffer(a.id,passenger.id),service.acceptOrderOffer(b.id,passenger.id)]);assert.equal(result.filter(x=>x.status==='fulfilled').length,1);
   const trip=await p.order.findUnique({where:{id:second.id}});assert.equal(trip.status,'DRIVER_EN_ROUTE');assert.ok([700,900].includes(trip.price));assert.equal(await p.orderAuctionInvitation.count({where:{orderId:second.id,status:'PENDING'}}),0);await assert.rejects(service.rejectOrderOffer(trip.selectedOfferId,passenger.id));assert.equal(await score({id:trip.driverId}),85);
+  await p.order.update({where:{id:trip.id},data:{status:'IN_PROGRESS'}});
+  await assert.rejects(service.cancelOrder(trip.id,passenger.id));
+  await assert.rejects(service.updateOrderStatus(trip.id,'CANCELLED',{userId:passenger.id,role:'ADMIN'}));
+  const share=await service.createTripShare(trip.id,passenger.id);assert.ok(share.url.includes('/#/trip/'));
+  const view=await service.getSharedTrip(share.token);assert.equal(view.status,'IN_PROGRESS');assert.equal(view.passengerId,undefined);assert.equal(view.driver.user,undefined);
+  await assert.rejects(service.createTripShare(trip.id,'unrelated-user'));
+  await assert.rejects(service.getSharedTrip(share.token+'tampered'));
+  await p.order.update({where:{id:trip.id},data:{status:'COMPLETED'}});
+  assert.equal((await service.getSharedTrip(share.token)).driver.online,null);
  }finally{
+  if(oldSecret===undefined)delete process.env.JWT_SECRET;else process.env.JWT_SECRET=oldSecret;
   if(passenger){const ids=(await p.order.findMany({where:{passengerId:passenger.id},select:{id:true}})).map(x=>x.id);await p.rideEvent.deleteMany({where:{orderId:{in:ids}}});await p.orderOffer.deleteMany({where:{orderId:{in:ids}}});await p.order.deleteMany({where:{id:{in:ids}}});}
   await p.driverActivityEvent.deleteMany({where:{driverId:{in:drivers.map(d=>d.id)}}});for(const d of drivers){await p.driverOnline.deleteMany({where:{driverId:d.id}});await p.driverServiceStats.deleteMany({where:{driverId:d.id}});await p.driverProfile.delete({where:{id:d.id}});await p.wallet.deleteMany({where:{userId:d.userId}});await p.user.delete({where:{id:d.userId}});}if(passenger)await p.user.delete({where:{id:passenger.id}});if(city)await p.city.delete({where:{id:city.id}});await p.$disconnect();
  }
