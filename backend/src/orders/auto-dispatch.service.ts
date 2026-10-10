@@ -38,11 +38,16 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
         if (this.processing) return;
         this.processing = true;
         try {
+            const stale = await this.prisma.orderOffer.findMany({where: {status: 'PENDING', expiresAt: {lte: new Date()}}, select: {id: true, orderId: true, driverId: true}});
+            for (const item of stale) {
+                const expired = await this.prisma.orderOffer.updateMany({where: {id: item.id, status: 'PENDING', expiresAt: {lte: new Date()}}, data: {status: 'EXPIRED'}});
+                if (expired.count) this.realtimeService.publish({type: 'order.offer.expired', entity: 'order', entityId: item.orderId, at: new Date().toISOString(), payload: {orderId: item.orderId, offerId: item.id, driverId: item.driverId}});
+            }
+            await this.expireAuctionInvitations();
             const orders = await this.prisma.order.findMany({
                 where: { status: { in: ['CREATED', 'SEARCHING_DRIVER'] }, driverId: null,
                     mode: { in: ['CITY', 'CARGO', 'DELIVERY'] },
                     AND: [
-                        { OR: [{ requestType: null }, { requestType: { not: 'CITY_AUCTION' } }] },
                         { OR: [{ dispatchExpiresAt: null }, { dispatchExpiresAt: { lte: new Date() } }] },
                     ],
                     OR: [{ dispatchRetryAt: null }, { dispatchRetryAt: { lte: new Date() } }],
@@ -66,13 +71,15 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
 
     async assignCityOrder(orderId: string) {
         const settings = await this.getSettings();
+        const draft = await this.prisma.order.findUnique({where: {id: orderId}});
+        if (draft?.requestType === 'CITY_AUCTION') return this.broadcastAuctionOrder(orderId, settings);
         const timeouts: Array<{driverId: string; activityScore: number}> = [];
         const offer = await this.prisma.$transaction(async (tx) => {
             // One dispatcher across every API worker. Acceptance/rejection use conditional writes.
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302091)`;
             const order = await tx.order.findUnique({ where: { id: orderId } });
             if (!order || !['CITY', 'CARGO', 'DELIVERY'].includes(order.mode) ||
-                order.requestType === 'CITY_AUCTION' || !order.cityId || order.driverId ||
+                !order.cityId || order.driverId ||
                 !['CREATED', 'SEARCHING_DRIVER'].includes(order.status)) return null;
             const now = new Date();
             if (order.dispatchRetryAt && order.dispatchRetryAt > now) return null;
@@ -97,7 +104,7 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
                 order.currency === 'RUB' ? settings.driverMinOnlineBalanceRub : settings.driverMinOnlineBalance,
                 order.currency, tx);
             const compatible = drivers.filter((d) => order.mode === 'CARGO' ? d.driver.acceptCargo :
-                order.mode === 'DELIVERY' ? d.driver.acceptDelivery : d.driver.acceptCityFixed);
+                order.mode === 'DELIVERY' ? d.driver.acceptDelivery : order.requestType === 'CITY_AUCTION' ? d.driver.acceptCityAuction : d.driver.acceptCityFixed);
             const tried = new Set(order.dispatchTriedDriverIds);
             const remaining = compatible.filter(d => !tried.has(d.driverId));
             if (!remaining.length) {
@@ -133,6 +140,50 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
             at: new Date().toISOString(), payload: { driverId: offer.driverId, expiresAt: offer.expiresAt }});
         await this.pushService.sendToUser(offer.userId, {title: 'Новый заказ', body: 'Примите заказ или откажитесь до окончания времени ответа.',
             data: {type: 'driver_offer', route: '/driver/home', orderId, expiresAt: offer.expiresAt.toISOString()}}).catch(() => false);
+    }
+
+    private async expireAuctionInvitations() {
+        const expired = await this.prisma.$transaction(async tx => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302091)`;
+            const now = new Date();
+            const invites = await tx.orderAuctionInvitation.findMany({where: {status: 'PENDING', expiresAt: {lte: now}}, include: {order: true}});
+            const changes: Array<{driverId: string; activityScore: number}> = [];
+            for (const invitation of invites) {
+                const live = invitation.order.status === 'SEARCHING_DRIVER' && !invitation.order.driverId;
+                const changed = await tx.orderAuctionInvitation.updateMany({where: {id: invitation.id, status: 'PENDING'}, data: {status: live ? 'EXPIRED' : 'CANCELLED'}});
+                if (changed.count && live) {
+                    const stats = await applyDriverActivity(tx, invitation.driverId, `auction-invite:${invitation.id}`, -DRIVER_ACTIVITY_RULES.rejectPenalty, now);
+                    await tx.driverOnline.updateMany({where: {driverId: invitation.driverId}, data: {isOnline: false}});
+                    changes.push({driverId: invitation.driverId, activityScore: stats.activityScore});
+                }
+            }
+            return changes;
+        });
+        for (const change of expired) this.realtimeService.publish({type: 'driver.online.changed', entity: 'driver', entityId: change.driverId, at: new Date().toISOString(), payload: {...change, isOnline: false, reason: 'OFFER_TIMEOUT'}});
+    }
+
+    private async broadcastAuctionOrder(orderId: string, settings: any) {
+        const invites = await this.prisma.$transaction(async tx => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302091)`;
+            const order = await tx.order.findUnique({where: {id: orderId}});
+            if (!order || !order.cityId || order.driverId || order.status !== 'SEARCHING_DRIVER') return [];
+            const drivers = await this.findEligibleDrivers(order.cityId, order.fromLat, order.fromLng,
+                settings.searchRadiusKm, settings.minDriverLocationFreshSec,
+                order.currency === 'RUB' ? settings.driverMinOnlineBalanceRub : settings.driverMinOnlineBalance, order.currency, tx);
+            const result: Array<{driverId: string; userId: string; expiresAt: Date}> = [];
+            for (const driver of drivers.filter(item => item.driver.acceptCityAuction && item.driver.userId !== order.passengerId && !item.locationFallback && item.distanceFromPassenger <= settings.searchRadiusKm)) {
+                const existing = await tx.orderAuctionInvitation.findUnique({where: {orderId_driverId: {orderId, driverId: driver.driverId}}});
+                if (existing) continue;
+                const expiresAt = new Date(Date.now() + 30_000);
+                await tx.orderAuctionInvitation.create({data: {orderId, driverId: driver.driverId, expiresAt}});
+                result.push({driverId: driver.driverId, userId: driver.driver.userId, expiresAt});
+            }
+            return result;
+        }, {maxWait: 10000, timeout: 15000});
+        await Promise.all(invites.map(async invite => {
+            this.realtimeService.publish({type: 'order.dispatch.offered', entity: 'order', entityId: orderId, at: new Date().toISOString(), payload: {driverId: invite.driverId, expiresAt: invite.expiresAt}});
+            await this.pushService.sendToUser(invite.userId, {title: 'Новый заказ такси', body: 'Согласитесь с ценой пассажира или предложите свою.', data: {type: 'driver_offer', route: '/driver/home', orderId, expiresAt: invite.expiresAt.toISOString()}}).catch(() => false);
+        }));
     }
 
     private async findEligibleDrivers(
@@ -174,6 +225,10 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
         for (const onlineDriver of onlineDrivers) {
             const reservation = await db.order.findFirst({ where: { dispatchDriverId: onlineDriver.driverId, status: 'SEARCHING_DRIVER', dispatchExpiresAt: { gt: new Date() } } });
             if (reservation) continue;
+            const incomingAuction = await db.orderAuctionInvitation.findFirst({where: {driverId: onlineDriver.driverId, status: 'PENDING', order: {status: 'SEARCHING_DRIVER'}}});
+            if (incomingAuction) continue;
+            const pendingPrice = await db.orderOffer.findFirst({where: {driverId: onlineDriver.driverId, status: 'PENDING', expiresAt: {gt: new Date()}, order: {status: 'SEARCHING_DRIVER'}}});
+            if (pendingPrice) continue;
             const activeIntercity = await db.intercityRequest.findFirst({ where: { selectedDriverId: onlineDriver.driver.userId, status: { in: ['ACCEPTED', 'DRIVER_ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS'] } } });
             if (activeIntercity) continue;
             const hasActiveOrder = await db.order.findFirst({

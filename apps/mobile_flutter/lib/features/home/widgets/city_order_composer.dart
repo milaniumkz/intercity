@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:intercity_shared/intercity_shared.dart';
 import 'package:flutter/material.dart';
 import '../../../core/theme/theme_controller.dart';
 import '../../../core/utils/request_flow_utils.dart';
@@ -35,7 +36,11 @@ class CityOrderComposer extends StatelessWidget {
       required this.commentExpanded,
       required this.onCommentToggle,
       this.cardPanel,
+      this.auctionPriceController,
+      this.onAuctionPriceChanged,
       this.onBack});
+  final TextEditingController? auctionPriceController;
+  final ValueChanged<String>? onAuctionPriceChanged;
   final Widget map;
   final TextEditingController fromController, toController, commentController;
   final bool isFrom,
@@ -182,6 +187,27 @@ class CityOrderComposer extends StatelessWidget {
                                                   onSuggestionSelected(item);
                                                 });
                                     })),
+                          if (auctionPriceController != null) ...[
+                            const SizedBox(height: 8),
+                            TextField(
+                              key: const ValueKey('taxi-passenger-price'),
+                              controller: auctionPriceController,
+                              enabled: !busy,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
+                              onChanged: onAuctionPriceChanged,
+                              decoration: InputDecoration(
+                                labelText: 'Ваша цена',
+                                helperText:
+                                    'Водитель может согласиться или предложить свою',
+                                suffixText:
+                                    rideCurrencySymbol({'currency': currency}),
+                                border: const OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 10),
                           const Text('Тариф',
                               style: TextStyle(

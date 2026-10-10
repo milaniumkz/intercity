@@ -37,6 +37,7 @@ import '../../../core/widgets/intercity_static_tile_map.dart';
 import '../../shared/widgets/order_chat_sheet.dart';
 import '../utils/driver_offer_utils.dart';
 import '../widgets/driver_bottom_nav.dart';
+import '../widgets/taxi_price_offer_dialog.dart';
 import '../widgets/driver_active_trip_view.dart';
 import '../widgets/driver_dashboard_metrics.dart';
 
@@ -335,9 +336,19 @@ class _DriverHomePageState extends State<DriverHomePage>
           _cityIdCtrl.text = online!['cityId'].toString();
         }
       });
+      final pendingPriceOffer = profile['pendingAuctionOffer'];
+      if (pendingPriceOffer is Map &&
+          _activeOrder == null &&
+          _waitingAuctionOrderId == null) {
+        _startAuctionOfferWait('${pendingPriceOffer['orderId']}',
+            offerId: '${pendingPriceOffer['id']}',
+            expiresAt: DateTime.tryParse('${pendingPriceOffer['expiresAt']}'));
+      }
       if (_isOnline) {
         _startLocationUpdates();
-        if (_activeOrder == null) _startNearbyPolling();
+        if (_activeOrder == null && !_isWaitingAuctionDecision) {
+          _startNearbyPolling();
+        }
       } else {
         unawaited(_disableDriverFeeds());
       }
@@ -806,9 +817,79 @@ class _DriverHomePageState extends State<DriverHomePage>
     });
   }
 
+  Future<void> _showTaxiPriceOffer(Map<String, dynamic> order) async {
+    final orderId = '${order['id'] ?? ''}';
+    if (orderId.isEmpty) return;
+    _offerDialogOpen = true;
+    _playNewOfferSoundOnce(driverOfferIdentity(order));
+    _startOfferAlarm(orderId);
+    var completed = false;
+    var secondsLeft = _offerSecondsLeft(order);
+    try {
+      await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => StatefulBuilder(
+              builder: (context, update) => DriverOfferExpiryWatcher(
+                    secondsLeft: () {
+                      final live = _nearby
+                          .where((item) => '${item['id'] ?? ''}' == orderId)
+                          .firstOrNull;
+                      return live == null || !_isOnline || _activeOrder != null
+                          ? 0
+                          : _offerSecondsLeft(live);
+                    },
+                    onTick: (seconds) {
+                      if (!completed && context.mounted) {
+                        update(() => secondsLeft = seconds);
+                      }
+                    },
+                    onExpired: () {
+                      if (completed || !ctx.mounted) return;
+                      completed = true;
+                      _stopOfferAlarmIfMatches(orderId);
+                      final route = ModalRoute.of(ctx);
+                      if (route?.isCurrent == true) {
+                        Navigator.of(ctx).pop();
+                      } else if (route != null) {
+                        Navigator.of(ctx).removeRoute(route);
+                      }
+                    },
+                    child: TaxiPriceOfferDialog(
+                        order: order,
+                        secondsLeft: secondsLeft,
+                        onSubmit: (price) async {
+                          if (completed) return;
+                          completed = true;
+                          _stopOfferAlarmIfMatches(orderId);
+                          Navigator.of(ctx).pop();
+                          await _sendAuctionOffer(orderId, price.toString());
+                        },
+                        onReject: () async {
+                          if (completed) return;
+                          completed = true;
+                          _stopOfferAlarmIfMatches(orderId);
+                          Navigator.of(ctx).pop();
+                          await _rejectNearby(orderId);
+                        }),
+                  )));
+    } finally {
+      _offerDialogOpen = false;
+      _stopOfferAlarmIfMatches(orderId);
+      if (mounted) unawaited(_showPendingOfferDialogIfNeeded());
+    }
+  }
+
   Future<void> _showOfferAcceptDialog(Map<String, dynamic> order) async {
     _offerCurrencySymbol = rideCurrencySymbol(order);
     if (!mounted || _offerDialogOpen || _activeOrder != null || !_isOnline) {
+      return;
+    }
+    if ((order['requestType'] ?? '').toString().toUpperCase() ==
+            'CITY_AUCTION' &&
+        (order['sourceType'] ?? '').toString().toUpperCase() !=
+            'INTERCITY_REQUEST') {
+      await _showTaxiPriceOffer(order);
       return;
     }
     final orderId = (order['id'] ?? '').toString();
@@ -821,7 +902,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         (order['requestType'] ?? order['orderType'] ?? order['type'] ?? '')
             .toString()
             .toLowerCase();
-    final isAuction = typeRaw.contains('auction');
+    final isAuction = typeRaw.contains('auction') &&
+        (order['sourceType'] ?? '').toString().toUpperCase() !=
+            'INTERCITY_REQUEST';
     final sourceType = (order['sourceType'] ?? '').toString().toUpperCase();
     final modeRaw = (order['mode'] ?? '').toString().toUpperCase();
     final isIntercityRequest =
@@ -1789,7 +1872,9 @@ class _DriverHomePageState extends State<DriverHomePage>
           : <String, dynamic>{};
       final offerId = (offer['id'] ?? '').toString();
       setState(() => _message = 'Цена отправлена. Ждём ответ пассажира.');
-      _startAuctionOfferWait(id, offerId: offerId.isEmpty ? null : offerId);
+      _startAuctionOfferWait(id,
+          offerId: offerId.isEmpty ? null : offerId,
+          expiresAt: DateTime.tryParse('${offer['expiresAt'] ?? ''}'));
     } catch (e) {
       if (!mounted) return;
       final message = errorMessageRu(e);
@@ -2670,10 +2755,11 @@ class _DriverHomePageState extends State<DriverHomePage>
   int get _auctionWaitSecondsLeft {
     final until = _waitingAuctionUntil;
     if (until == null) return 0;
-    return until.difference(DateTime.now()).inSeconds.clamp(0, 60);
+    return until.difference(DateTime.now()).inSeconds.clamp(0, 30);
   }
 
-  void _startAuctionOfferWait(String orderId, {String? offerId}) {
+  void _startAuctionOfferWait(String orderId,
+      {String? offerId, DateTime? expiresAt}) {
     _auctionOfferWaitTimer?.cancel();
     _nearbyPollTimer?.cancel();
     _offerCountdownTimer?.cancel();
@@ -2681,7 +2767,8 @@ class _DriverHomePageState extends State<DriverHomePage>
     setState(() {
       _waitingAuctionOrderId = orderId;
       _waitingAuctionOfferId = offerId;
-      _waitingAuctionUntil = DateTime.now().add(const Duration(seconds: 60));
+      _waitingAuctionUntil =
+          expiresAt ?? DateTime.now().add(const Duration(seconds: 30));
       _nearby = const [];
     });
     _auctionOfferWaitTimer = Timer.periodic(
@@ -2695,10 +2782,6 @@ class _DriverHomePageState extends State<DriverHomePage>
     final orderId = _waitingAuctionOrderId;
     if (orderId == null || orderId.isEmpty) return;
     final offerId = _waitingAuctionOfferId;
-    if (!_isWaitingAuctionDecision) {
-      _finishAuctionOfferWait('Пассажир не ответил. Вы снова на линии.');
-      return;
-    }
     try {
       final res = await _api.get('/orders/$orderId');
       if (!mounted) return;
@@ -2713,7 +2796,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         return;
       }
       final driverId = (order['driverId'] ?? '').toString();
-      if (driverId.isNotEmpty && status != 'SEARCHING_DRIVER') {
+      if (driverId.isNotEmpty &&
+          status != 'SEARCHING_DRIVER' &&
+          driverId == (_driverProfile?['id'] ?? '').toString()) {
         _auctionOfferWaitTimer?.cancel();
         setState(() {
           _waitingAuctionOrderId = null;
@@ -2737,10 +2822,13 @@ class _DriverHomePageState extends State<DriverHomePage>
           )
           .firstOrNull;
       final myOfferStatus = (myOffer?['status'] ?? '').toString().toUpperCase();
-      if (myOffer == null ||
+      if (!_isWaitingAuctionDecision ||
+          myOffer == null ||
           const ['REJECTED', 'CANCELLED', 'EXPIRED'].contains(myOfferStatus)) {
         _finishAuctionOfferWait(
-          'Пассажир отклонил предложение. Вы снова на линии.',
+          !_isWaitingAuctionDecision || myOfferStatus == 'EXPIRED'
+              ? 'Время предложения истекло. Вы снова на линии.'
+              : 'Пассажир отклонил предложение. Вы снова на линии.',
         );
       } else {
         setState(
@@ -3361,7 +3449,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   borderRadius: BorderRadius.circular(999),
                   child: LinearProgressIndicator(
                     minHeight: 8,
-                    value: _auctionWaitSecondsLeft / 60,
+                    value: _auctionWaitSecondsLeft / 30,
                     backgroundColor: Colors.white.withValues(alpha: 0.10),
                     valueColor: const AlwaysStoppedAnimation<Color>(
                       AppTheme.secondaryColor,
@@ -4066,6 +4154,29 @@ class _DriverHomePageState extends State<DriverHomePage>
                         onPressed: () => _showDashboardPopover(anchorContext))),
               ),
             ]),
+            if (_isWaitingAuctionDecision) ...[
+              const SizedBox(height: 12),
+              Container(
+                key: const ValueKey('driver-auction-response-wait'),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                    color: theme.colorScheme.surface,
+                    borderRadius: BorderRadius.circular(18)),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Row(children: [
+                    const Icon(Icons.hourglass_top_rounded,
+                        color: AppTheme.primaryColor),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                        child: Text('Ждём подтверждения пассажира',
+                            style: TextStyle(fontWeight: FontWeight.w700))),
+                    Text('$_auctionWaitSecondsLeft с'),
+                  ]),
+                  const SizedBox(height: 10),
+                  LinearProgressIndicator(value: _auctionWaitSecondsLeft / 30),
+                ]),
+              ),
+            ],
             const SizedBox(height: 12),
             DriverDailyBonusCard(
                 bonus: _driverProfile?['dailyBonus'] is Map

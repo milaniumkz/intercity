@@ -151,10 +151,13 @@ export class OrdersService {
         if (mode === 'CITY' && !isCityAuction && !dto.vehicleClass) {
             throw new BadRequestException('Vehicle class is required for fixed city order');
         }
-        const vehicleClass = mode === 'CITY' && !isCityAuction
-            ? this.normalizeVehicleClass(dto.vehicleClass)
+        const vehicleClass = mode === 'CITY'
+            ? this.normalizeVehicleClass(dto.vehicleClass || 'ECONOMY')
             : null;
-        const useBonus = paymentMethod === 'BONUSES' ? true : dto.useBonus === true;
+        if (isCityAuction && (!Number.isFinite(dto.desiredPrice) || dto.desiredPrice! <= 0)) {
+            throw new BadRequestException('Укажите желаемую цену поездки');
+        }
+        const useBonus = !isCityAuction && (paymentMethod === 'BONUSES' ? true : dto.useBonus === true);
         if (mode === 'DELIVERY' && paymentMethod === 'BONUSES') {
             throw new BadRequestException('Bonuses are not available for delivery');
         }
@@ -213,7 +216,7 @@ export class OrdersService {
                     toAddressSource: 'GEOCODED',
                     mode,
                     requestType: requestType ?? 'CITY_FIXED',
-                    price: isCityAuction ? 0 : preview.price,
+                    price: isCityAuction ? dto.desiredPrice! : preview.price,
                     currency: preview.currency,
                     priceSource: isCityAuction ? 'DRIVER_OFFER' : 'SYSTEM',
                     paymentMethod,
@@ -251,7 +254,7 @@ export class OrdersService {
         });
 
         // Auto-dispatch for CITY-like modes
-        if ((mode === 'CITY' || mode === 'CARGO' || mode === 'DELIVERY') && !isCityAuction) {
+        if ((mode === 'CITY' || mode === 'CARGO' || mode === 'DELIVERY')) {
             await this.autoDispatchService.assignCityOrder(order.id).catch(() => null);
         }
 
@@ -273,10 +276,10 @@ export class OrdersService {
 
     private async cityAuctionDraftToOrder(dto: CreateOrderDto) {
         const geoResult = await this.geoService.reverseGeocode(dto.fromLat, dto.fromLng);
-        const distance = this.haversine(dto.fromLat, dto.fromLng, dto.toLat, dto.toLng);
+        const route = await this.geoService.getRoute(dto.fromLat, dto.fromLng, dto.toLat, dto.toLng);
         return {
-            distance,
-            duration: null,
+            distance: route.distance,
+            duration: route.duration,
             price: 0,
             tariff: null,
             cityId: geoResult?.cityId ?? null,
@@ -486,43 +489,57 @@ export class OrdersService {
             include: { user: { select: clientUserSelect }, rating: true },
         });
         if (!profile) throw new NotFoundException('Профиль водителя не найден');
-        if (!Number.isFinite(input.price) || input.price <= 0) {
+        if (!Number.isFinite(input.price) || input.price < 1 || input.price > 10000000) {
             throw new BadRequestException('Укажите цену предложения');
         }
-        const offerPrice = this.roundRidePrice(input.price);
+        const offerPrice = Math.round(input.price * 100) / 100;
 
         const order = await this.prisma.order.findUnique({ where: { id: orderId } });
-        if (!order || order.requestType !== 'CITY_AUCTION' || order.status !== 'SEARCHING_DRIVER') {
+        if (!order || order.passengerId === driverUserId || order.requestType !== 'CITY_AUCTION' || order.status !== 'SEARCHING_DRIVER') {
             throw new BadRequestException('Аукционная заявка недоступна');
         }
 
-        const offer = await (this.prisma as any).orderOffer.upsert({
-            where: {
-                orderId_driverId: {
-                    orderId,
-                    driverId: profile.id,
-                },
-            },
-            update: {
-                price: offerPrice,
-                comment: input.comment?.trim() || null,
-                status: 'PENDING',
-            },
-            create: {
-                orderId,
-                driverId: profile.id,
-                price: offerPrice,
-                comment: input.comment?.trim() || null,
-                status: 'PENDING',
-            },
-            include: {
-                driver: {
-                    include: {
-                        user: { select: clientUserSelect },
-                        rating: true,
+        const offer = await this.prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302091)`;
+            const now = new Date();
+            const online = await tx.driverOnline.findUnique({where: {driverId: profile.id}});
+            if (!online?.isOnline || !['ACTIVE','APPROVED'].includes(profile.status)) throw new BadRequestException('Выйдите на линию для отправки предложения');
+            const waiting = await tx.orderOffer.findFirst({where: {driverId: profile.id, status: 'PENDING', expiresAt: {gt: now}, order: {status: 'SEARCHING_DRIVER'}}});
+            if (waiting) throw new BadRequestException('Дождитесь ответа на предыдущее предложение');
+            const current = await tx.order.findUnique({where: {id: orderId}});
+            if (current?.status !== 'SEARCHING_DRIVER' || current.driverId) throw new BadRequestException('Заказ уже недоступен');
+            const released = await tx.orderAuctionInvitation.updateMany({where: {orderId, driverId: profile.id, status: 'PENDING', expiresAt: {gt: now}}, data: {status: 'PRICE_SENT'}});
+            if (released.count !== 1) throw new BadRequestException('Заказ уже недоступен');
+            return tx.orderOffer.upsert({
+                where: {
+                    orderId_driverId: {
+                        orderId,
+                        driverId: profile.id,
                     },
                 },
-            },
+                update: {
+                    price: offerPrice,
+                    comment: input.comment?.trim() || null,
+                    status: 'PENDING',
+                    expiresAt: new Date(Date.now() + 30_000),
+                },
+                create: {
+                    orderId,
+                    driverId: profile.id,
+                    price: offerPrice,
+                    comment: input.comment?.trim() || null,
+                    status: 'PENDING',
+                    expiresAt: new Date(Date.now() + 30_000),
+                },
+                include: {
+                    driver: {
+                        include: {
+                            user: { select: clientUserSelect },
+                            rating: true,
+                        },
+                    },
+                },
+            });
         });
 
         this.realtimeService.publish({
@@ -532,6 +549,7 @@ export class OrdersService {
             at: new Date().toISOString(),
             payload: { orderId, offerId: offer.id, driverId: profile.id },
         });
+        await this.autoDispatchService.assignCityOrder(orderId).catch(() => null);
         return offer;
     }
 
@@ -543,7 +561,7 @@ export class OrdersService {
         if (!offer || offer.order.passengerId !== passengerUserId) {
             throw new NotFoundException('Предложение не найдено');
         }
-        if (offer.order.status !== 'SEARCHING_DRIVER' || offer.status !== 'PENDING') {
+        if (offer.order.status !== 'SEARCHING_DRIVER' || offer.status !== 'PENDING' || offer.expiresAt <= new Date()) {
             throw new BadRequestException('Предложение уже недоступно');
         }
         const settings = await this.prisma.appSettings.findMany({
@@ -555,6 +573,16 @@ export class OrdersService {
         const commissionAmount = offer.price > 0 ? (offer.price * commissionPercent) / 100 : 0;
 
         const updated = await this.prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302091)`;
+            const now = new Date();
+            const liveOffer = await tx.orderOffer.findFirst({where: {id: offerId, status: 'PENDING', expiresAt: {gt: now}}});
+            if (!liveOffer) throw new BadRequestException('Время предложения истекло');
+            const activeCity = await tx.order.findFirst({where: {driverId: offer.driverId, status: {in: ['DRIVER_ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS']}}});
+            const activeIntercity = await tx.intercityRequest.findFirst({where: {selectedDriverId: offer.driver.userId, status: {in: ['ACCEPTED', 'DRIVER_ASSIGNED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'IN_PROGRESS']}}});
+            const online = await tx.driverOnline.findUnique({where: {driverId: offer.driverId}});
+            const driver = await tx.driverProfile.findUnique({where: {id: offer.driverId}, include: {serviceStats: true}});
+            if (!driver || !['ACTIVE','APPROVED'].includes(driver.status) || (driver.serviceStats?.activityScore ?? 100) <= 0 || (driver.serviceStats?.activityBlockedUntil && driver.serviceStats.activityBlockedUntil > now)) throw new BadRequestException('Водитель уже недоступен');
+            if (activeCity || activeIntercity || !online?.isOnline) throw new BadRequestException('Водитель уже недоступен');
             const claimed = await tx.order.updateMany({
                 where: { id: offer.orderId, selectedOfferId: null, status: { in: ['CREATED', 'SEARCHING_DRIVER'] } },
                 data: { selectedOfferId: offerId },
@@ -569,19 +597,19 @@ export class OrdersService {
                 await tx.walletTransaction.create({ data: { walletId: wallet!.id, currency: offer.order.currency, type: 'ORDER_BONUS_USED', direction: 'DEBIT', balanceSource: 'BONUS', amount: offer.price, orderId: offer.orderId } });
                 bonusUsedAmount = offer.price;
             }
-            await (tx as any).orderOffer.update({
-                where: { id: offerId },
-                data: { status: 'ACCEPTED' },
-            });
+            const acceptedOffer = await tx.orderOffer.updateMany({where: {id: offerId, status: 'PENDING', expiresAt: {gt: new Date()}}, data: {status: 'ACCEPTED'}});
+            if (acceptedOffer.count !== 1) throw new BadRequestException('Предложение уже недоступно');
             await (tx as any).orderOffer.updateMany({
                 where: { orderId: offer.orderId, id: { not: offerId }, status: 'PENDING' },
                 data: { status: 'REJECTED' },
             });
+            await tx.orderAuctionInvitation.updateMany({where: {orderId: offer.orderId, status: 'PENDING'}, data: {status: 'CANCELLED'}});
             await applyDriverActivity(tx, offer.driverId, `accept:city:${offer.orderId}:${offer.driverId}`, DRIVER_ACTIVITY_RULES.acceptReward);
             return tx.order.update({
                 where: { id: offer.orderId },
                 data: {
                     driverId: offer.driverId,
+                    dispatchDriverId: null, dispatchExpiresAt: null, dispatchRetryAt: null,
                     selectedOfferId: offerId,
                     bonusUsedAmount,
                     paidWithBonus: bonusUsedAmount > 0,
@@ -641,10 +669,9 @@ export class OrdersService {
         if (!offer || offer.order.passengerId !== passengerUserId) {
             throw new NotFoundException('Предложение не найдено');
         }
-        const updated = await (this.prisma as any).orderOffer.update({
-            where: { id: offerId },
-            data: { status: 'REJECTED' },
-        });
+        const changed = await this.prisma.orderOffer.updateMany({where: {id: offerId, status: 'PENDING', expiresAt: {gt: new Date()}}, data: {status: 'REJECTED'}});
+        if (changed.count !== 1) throw new BadRequestException('Предложение уже недоступно');
+        const updated = await this.prisma.orderOffer.findUnique({where: {id: offerId}});
         this.realtimeService.publish({
             type: 'order.offer.rejected',
             entity: 'order',

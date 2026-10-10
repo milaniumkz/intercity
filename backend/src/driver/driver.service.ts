@@ -260,6 +260,7 @@ export class DriverService {
                 priorityFlags: true,
                 serviceStats: true,
                 fuelBonus: true,
+                orderOffers: {where: {status: 'PENDING', expiresAt: {gt: new Date()}, order: {status: 'SEARCHING_DRIVER'}}, take: 1},
             },
         });
         if (!profile) return profile;
@@ -292,6 +293,7 @@ export class DriverService {
         ]);
         return {
             ...profile,
+            pendingAuctionOffer: profile.orderOffers?.[0] ?? null,
             performance: driverPerformance(profile),
             completedTrips: completedCityTrips + completedIntercityTrips,
             todayCompletedOrders: todayCityTrips + todayIntercityTrips,
@@ -346,7 +348,7 @@ export class DriverService {
             where: {
                 driverId: profile.id,
                 status: 'PENDING',
-                updatedAt: { gte: new Date(Date.now() - 60_000) },
+                expiresAt: { gt: new Date() },
                 order: {
                     requestType: 'CITY_AUCTION',
                     status: 'SEARCHING_DRIVER',
@@ -377,7 +379,7 @@ export class DriverService {
             status: 'SEARCHING_DRIVER',
             OR: orderModeFilters,
             AND: [{ OR: [
-                { requestType: 'CITY_AUCTION' },
+                {requestType: 'CITY_AUCTION', auctionInvitations: {some: {driverId: profile.id, status: 'PENDING', expiresAt: {gt: new Date()}}}},
                 { dispatchDriverId: profile.id, dispatchExpiresAt: { gt: new Date() } },
             ] }],
         };
@@ -406,6 +408,7 @@ export class DriverService {
             where: cityWhere,
             include: {
                 passenger: { select: clientUserSelect },
+                auctionInvitations: {where: {driverId: profile.id, status: 'PENDING'}},
             },
         });
 
@@ -418,7 +421,7 @@ export class DriverService {
         const ratingAvg = profile.rating?.ratingAvg || 5.0;
         const activityScore = stats.activityScore || 0;
         const withDistance = orders.map((order) => {
-            const offerExpiresAt = order.dispatchExpiresAt ?? new Date(nowMs + offerAcceptSec * 1000);
+            const offerExpiresAt = order.auctionInvitations?.[0]?.expiresAt ?? order.dispatchExpiresAt ?? new Date(nowMs + offerAcceptSec * 1000);
             const offerExpiresInSec = Math.max(0, Math.ceil((offerExpiresAt.getTime() - nowMs) / 1000));
             const hasCoords = order.fromLat != null && order.fromLng != null;
             const distanceKm = hasCoords
@@ -610,6 +613,7 @@ export class DriverService {
         }
 
         const result = await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302091)`;
         const accepted = await tx.order.updateMany({
             where: { id: orderId, status: 'SEARCHING_DRIVER', driverId: null,
                 dispatchDriverId: profile.id, dispatchExpiresAt: { gt: new Date() } },
@@ -662,7 +666,15 @@ export class DriverService {
         }
 
         const updatedStats = await this.prisma.$transaction(async (tx) => {
-            if (order.requestType !== 'CITY_AUCTION') {
+            let activityKey = driverOfferActivityKey(order, profile.id);
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302091)`;
+            if (order.requestType === 'CITY_AUCTION') {
+                const invitation = await tx.orderAuctionInvitation.findUnique({where: {orderId_driverId: {orderId, driverId: profile.id}}});
+                if (!invitation || invitation.status !== 'PENDING' || invitation.expiresAt <= new Date()) throw new BadRequestException('Время ответа истекло');
+                const declined = await tx.orderAuctionInvitation.updateMany({where: {id: invitation.id, status: 'PENDING', expiresAt: {gt: new Date()}}, data: {status: 'DECLINED'}});
+                if (declined.count !== 1) throw new BadRequestException('Заказ уже недоступен');
+                activityKey = `auction-invite:${invitation.id}`;
+            } else {
                 const declined = await tx.order.updateMany({
                     where: { id: orderId, status: 'SEARCHING_DRIVER', driverId: null,
                         dispatchDriverId: profile.id, dispatchExpiresAt: { gt: new Date() } },
@@ -670,7 +682,7 @@ export class DriverService {
                 });
                 if (declined.count !== 1) throw new BadRequestException('Время ответа истекло или заказ предложен другому водителю');
             }
-            const stats = await applyDriverActivity(tx, profile.id, driverOfferActivityKey(order, profile.id), -DRIVER_ACTIVITY_RULES.rejectPenalty);
+            const stats = await applyDriverActivity(tx, profile.id, activityKey, -DRIVER_ACTIVITY_RULES.rejectPenalty);
             if (stats.activityScore <= 0) await tx.driverOnline.updateMany({where:{driverId:profile.id},data:{isOnline:false}});
             return stats;
         });
@@ -700,7 +712,7 @@ export class DriverService {
                 blockedUntil: updatedStats.activityBlockedUntil?.toISOString?.() ?? null,
             },
         });
-        if (order.requestType !== 'CITY_AUCTION') await this.autoDispatchService.assignCityOrder(orderId);
+        await this.autoDispatchService.assignCityOrder(orderId);
         return {
             ok: true,
             orderId,
