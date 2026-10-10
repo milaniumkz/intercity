@@ -457,13 +457,13 @@ export class IntercityService {
     if (request.status === "CANCELLED") {
       return request;
     }
-    if (request.status === "COMPLETED") throw new BadRequestException('Завершённую поездку нельзя отменить');
+    if (["IN_PROGRESS", "COMPLETED"].includes(request.status)) throw new BadRequestException('Завершённую поездку нельзя отменить');
 
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT id FROM "IntercityRequest" WHERE id=${requestId} FOR UPDATE`;
       const current = await tx.intercityRequest.findUniqueOrThrow({where:{id:requestId}});
       if (current.status === 'CANCELLED') return current;
-      if (current.status === 'COMPLETED') throw new BadRequestException('Завершённую поездку нельзя отменить');
+      if (['IN_PROGRESS', 'COMPLETED'].includes(current.status)) throw new BadRequestException('Завершённую поездку нельзя отменить');
       await tx.tripVerification.updateMany({where:{id:`INTERCITY:${requestId}`,status:'PENDING'},data:{status:'CANCELLED'}});
       await this.refundPassengerBonusForCancelledRequest(
         tx,
@@ -520,7 +520,7 @@ export class IntercityService {
       DRIVER_ASSIGNED: new Set(["DRIVER_ARRIVED", "CANCELLED"]),
       DRIVER_EN_ROUTE: new Set(["DRIVER_ARRIVED", "CANCELLED"]),
       DRIVER_ARRIVED: new Set(["IN_PROGRESS", "CANCELLED"]),
-      IN_PROGRESS: new Set(["COMPLETED", "CANCELLED"]),
+      IN_PROGRESS: new Set(["COMPLETED"]),
     };
     if (!transitions[current]?.has(target)) {
       throw new BadRequestException(

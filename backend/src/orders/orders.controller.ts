@@ -38,6 +38,18 @@ export class OrdersController {
         return this.ordersService.getActivePassengerOrder(req.user.sub);
     }
 
+    @Get('shared/:token')
+    async sharedTrip(@Param('token') token: string) {
+        return this.ordersService.getSharedTrip(token);
+    }
+
+    @Post(':id/share')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    async shareTrip(@Param('id') id: string, @Request() req) {
+        return this.ordersService.createTripShare(id, req.user.sub);
+    }
+
     @Get(':id')
     @UseGuards(JwtAuthGuard)
     @ApiBearerAuth()

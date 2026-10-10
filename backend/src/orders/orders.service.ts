@@ -1,3 +1,4 @@
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { CardPaymentsService } from '../payments/card-payments.service';
 import { startTripVerification, finishTripVerification } from '../common/trip-verification';
 import { consumeLockedBonus } from '../common/currency';
@@ -377,6 +378,34 @@ export class OrdersService {
         });
     }
 
+    async createTripShare(orderId: string, userId: string) {
+        const order = await this.prisma.order.findUnique({where: {id: orderId}, include: {driver: {select: {userId: true}}}});
+        if (!order || (order.passengerId !== userId && order.driver?.userId !== userId)) throw new ForbiddenException('Нет доступа к поездке');
+        const secret = process.env.JWT_SECRET;
+        if (!secret) throw new BadRequestException('Ссылки на поездки временно недоступны');
+        const payload = Buffer.from(JSON.stringify({id: orderId, expires: Date.now() + 86400000, nonce: randomBytes(16).toString('hex')})).toString('base64url');
+        const signature = createHmac('sha256', secret).update('trip-share:' + payload).digest('base64url');
+        const token = payload + '.' + signature;
+        const base = (process.env.PUBLIC_WEB_URL || 'https://intercity.89-207-255-27.sslip.io').replace(/\/+$/, '');
+        return {token, url: `${base}/#/trip/${token}`};
+    }
+
+    async getSharedTrip(token: string) {
+        const [payload, signature, extra] = token.split('.');
+        const secret = process.env.JWT_SECRET;
+        if (!secret || !payload || !signature || extra) throw new NotFoundException('Ссылка на поездку недействительна');
+        const expected = createHmac('sha256', secret).update('trip-share:' + payload).digest();
+        const provided = Buffer.from(signature, 'base64url');
+        if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) throw new NotFoundException('Ссылка на поездку недействительна');
+        let info: any;
+        try { info = JSON.parse(Buffer.from(payload, 'base64url').toString()); } catch { throw new NotFoundException('Ссылка на поездку недействительна'); }
+        if (!Number.isFinite(info.expires) || info.expires <= Date.now()) throw new NotFoundException('Срок действия ссылки истёк');
+        const order = await this.prisma.order.findUnique({where: {id: info.id}, select: {status: true, fromAddress: true, toAddress: true, fromLat: true, fromLng: true, toLat: true, toLng: true, driver: {select: {carModel: true, carNumber: true, online: {select: {lastLat: true, lastLng: true}}}}}});
+        if (!order) throw new NotFoundException('Поездка не найдена');
+        if (order.driver && ['COMPLETED', 'CANCELLED'].includes(order.status)) order.driver.online = null;
+        return order;
+    }
+
     async getOrder(orderId: string, actor?: { userId: string; role?: string }) {
         const order = await this.prisma.order.findUnique({
             where: { id: orderId },
@@ -731,12 +760,13 @@ export class OrdersService {
 
         if (!order) throw new NotFoundException('Order not found');
         if (order.passengerId !== userId) throw new BadRequestException('Not your order');
+        if (order.status === 'IN_PROGRESS') throw new BadRequestException('Начатую поездку нельзя отменить');
         if (['COMPLETED', 'CANCELLED'].includes(order.status)) {
             throw new BadRequestException('Order already completed or cancelled');
         }
 
         const updated = await this.prisma.$transaction(async (tx) => {
-            const changed = await tx.order.updateMany({ where: { id: orderId, status: { notIn: ['COMPLETED', 'CANCELLED'] } }, data: { status: 'CANCELLED' } });
+            const changed = await tx.order.updateMany({ where: { id: orderId, status: { notIn: ['IN_PROGRESS', 'COMPLETED', 'CANCELLED'] } }, data: { status: 'CANCELLED' } });
             if (changed.count !== 1) throw new BadRequestException('Order already completed or cancelled');
             await tx.tripVerification.updateMany({where:{id:`CITY:${orderId}`,status:'PENDING'},data:{status:'CANCELLED'}});
             if (order.bonusUsedAmount > 0) {
@@ -799,6 +829,7 @@ export class OrdersService {
         if (!this.isKnownOrderStatus(targetStatus)) {
             throw new BadRequestException(`Unsupported status: ${targetStatus}`);
         }
+        if (order.status === 'IN_PROGRESS' && targetStatus === 'CANCELLED') throw new BadRequestException('Начатую поездку нельзя отменить');
         const actorRole = (actor?.role || '').toUpperCase();
         const isAdmin = actorRole === 'ADMIN';
         if (!isAdmin) {

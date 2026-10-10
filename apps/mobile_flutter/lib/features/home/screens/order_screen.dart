@@ -2213,8 +2213,8 @@ class _OrderScreenState extends State<OrderScreen> {
                 ),
                 _mapHomeFareCard(
                   index: 1,
-                  title: 'Такси',
-                  subtitle: 'Водители дают цену',
+                  title: 'Аукцион',
+                  subtitle: 'Цену выбираете вы',
                   icon: Icons.local_taxi_rounded,
                 ),
                 _mapHomeFareCard(
@@ -2418,7 +2418,7 @@ class _OrderScreenState extends State<OrderScreen> {
                     ),
                     _boardEntryCard(
                       title: 'Аукцион',
-                      subtitle: 'Водители дают цену',
+                      subtitle: 'Цену выбираете вы',
                       icon: Icons.gavel_rounded,
                       onTap: () => _selectBoardEntry(
                         modeIndex: 0,

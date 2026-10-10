@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import '../../../core/services/payment_fallback_notifier.dart';
 import 'dart:async';
 import 'dart:math' as math;
@@ -695,7 +696,8 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     final accent = _statusAccent(displayStatus);
     final canCancelOrder = hasActiveOrder &&
         displayStatus.toUpperCase() != 'COMPLETED' &&
-        displayStatus.toUpperCase() != 'CANCELLED';
+        displayStatus.toUpperCase() != 'CANCELLED' &&
+        displayStatus.toUpperCase() != 'IN_PROGRESS';
     final pendingOffers = _pendingOrderOffers(order);
     final showAuctionOffers = pendingOffers.isNotEmpty && !isFinalOrder;
 
@@ -1445,7 +1447,8 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                       ],
                     ),
                     if (order != null &&
-                        !_isFinal((order['status'] ?? '').toString())) ...[
+                        !_isFinal((order['status'] ?? '').toString()) &&
+                        order['status'] != 'IN_PROGRESS') ...[
                       const SizedBox(height: 10),
                       _premiumActionButton(
                         label: _cancelling
@@ -1466,12 +1469,24 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
   }
 
   Future<void> _copyTripShareLink() async {
-    final link = 'https://intercity.app/trip/${widget.orderId}';
-    await Clipboard.setData(ClipboardData(text: link));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Ссылка на поездку скопирована')),
-    );
+    try {
+      final response = await _api.post('/orders/${widget.orderId}/share');
+      final data = response.data as Map;
+      final token = data['token']?.toString();
+      final link = kIsWeb && token != null
+          ? '${Uri.base.origin}/#/trip/$token'
+          : data['url']?.toString();
+      if (link == null || link.isEmpty) throw StateError('Ссылка недоступна');
+      await Clipboard.setData(ClipboardData(text: link));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Ссылка на поездку скопирована')));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(errorMessageRu(e))));
+      }
+    }
   }
 
   Widget _mapLayer(int step) {
