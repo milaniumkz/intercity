@@ -425,7 +425,6 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _cityResolvingTo = false;
   int _cityFromPointRequest = 0;
   int _cityToPointRequest = 0;
-  static bool _automaticWebLocationAttempted = false;
   LocationSession get _locationSession =>
       widget.locationSession ?? sharedLocationSession;
   LatLng? _confirmedCityPoint;
@@ -885,7 +884,11 @@ class _OrderScreenState extends State<OrderScreen> {
     _ensureBoardPickupPoint();
     unawaited(_saveBoardDraft());
     _scheduleAutoBoard();
-    if (index == 0) _goOrderBoard('fixed');
+    if (index == 3) {
+      _selectBoardEntry(modeIndex: 2, route: 'order');
+    } else {
+      _continueMapHomeFare();
+    }
   }
 
   void _continueMapHomeFare() {
@@ -1210,12 +1213,10 @@ class _OrderScreenState extends State<OrderScreen> {
     await _draftReady;
     if (!mounted || _selectedCityPoint != null) return;
     final fix = _locationSession.freshFix;
-    if (fix != null && widget.locationProvider == null) {
+    if (fix != null) {
       await _initMapCenterByLocation(locationOverride: fix);
       return;
     }
-    if (kIsWeb && _automaticWebLocationAttempted) return;
-    if (kIsWeb) _automaticWebLocationAttempted = true;
     await _initMapCenterByLocation();
   }
 
@@ -1469,6 +1470,7 @@ class _OrderScreenState extends State<OrderScreen> {
       return _boardManualAddressScreen();
     }
     if (_passengerMapHomeEnabled &&
+        _orderStep == 0 &&
         !_routeStage('address') &&
         !_routeStage('routeprice') &&
         !_routeStage('class') &&
@@ -2133,7 +2135,6 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Widget _mapHomeBottomSheet(ThemeData theme, {required bool isDark}) {
-    final selected = _mapHomeSelectedIndex;
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
       decoration: BoxDecoration(
@@ -2170,7 +2171,7 @@ class _OrderScreenState extends State<OrderScreen> {
             children: [
               Expanded(
                 child: Text(
-                  selected == null ? 'Выберите тариф' : 'Оформление заказа',
+                  'Выберите режим',
                   style: theme.textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w900,
                     height: 1.05,
@@ -2187,9 +2188,12 @@ class _OrderScreenState extends State<OrderScreen> {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 96,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
+            height: 210,
+            child: GridView.count(
+              crossAxisCount: 2,
+              mainAxisExtent: 96,
+              mainAxisSpacing: 10,
+              physics: const NeverScrollableScrollPhysics(),
               children: [
                 _mapHomeFareCard(
                   index: 0,
@@ -2218,34 +2222,6 @@ class _OrderScreenState extends State<OrderScreen> {
               ],
             ),
           ),
-          if (selected != null) ...[
-            const SizedBox(height: 12),
-            _mapHomeAddressRow(
-              label: 'Откуда',
-              value: _fromAddress.trim().isEmpty
-                  ? 'Моё местоположение'
-                  : _compactAddress(_fromAddress),
-              icon: Icons.radio_button_checked_rounded,
-              onTap: () => _pickBoardAddressOnMap(isFrom: true),
-            ),
-            const SizedBox(height: 8),
-            _mapHomeAddressRow(
-              label: 'Куда',
-              value: _toAddress.trim().isEmpty
-                  ? (selected == 2
-                      ? 'Выберите город и адрес'
-                      : 'Укажите адрес назначения')
-                  : _compactAddress(_toAddress),
-              icon: Icons.location_on_rounded,
-              onTap: _continueMapHomeFare,
-            ),
-            const SizedBox(height: 12),
-            ICGradientButton(
-              label: _toAddress.trim().isEmpty ? 'Указать куда' : 'Продолжить',
-              icon: Icons.arrow_forward_rounded,
-              onPressed: _continueMapHomeFare,
-            ),
-          ],
         ],
       ),
     );
@@ -2346,66 +2322,6 @@ class _OrderScreenState extends State<OrderScreen> {
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _mapHomeAddressRow({
-    required String label,
-    required String value,
-    required IconData icon,
-    required VoidCallback onTap,
-  }) {
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest.withValues(
-            alpha: theme.brightness == Brightness.dark ? 0.20 : 0.54,
-          ),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: AppTheme.primaryColor.withValues(alpha: 0.12),
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: AppTheme.primaryColor, size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: theme.colorScheme.onSurface,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(
-              Icons.chevron_right_rounded,
-              color: AppTheme.primaryColor,
             ),
           ],
         ),
@@ -3211,7 +3127,11 @@ class _OrderScreenState extends State<OrderScreen> {
                   : 16,
               onMapReady: () {
                 _cityMapReady = true;
-                _fitCityBookingMap();
+                // Let TileLayer attach before moving the camera. Moving during
+                // onMapReady can drop its first tile update (notably on web).
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) _fitCityBookingMap();
+                });
               },
               onTap: (_, point) {
                 if (_citySubmitting) return;
@@ -11999,10 +11919,12 @@ class _OrderScreenState extends State<OrderScreen> {
       if (locationOverride != null) {
         location = locationOverride;
       } else if (widget.locationProvider != null) {
-        location = await widget.locationProvider!();
+        location = await _locationSession.locate(widget.locationProvider!,
+            retry: forceCurrentLocation);
       } else if (kIsWeb) {
         // Browser geolocation requests permission once and a fresh high-accuracy fix.
-        location = await getBrowserLocation();
+        location = await _locationSession.locate(getBrowserLocation,
+            retry: forceCurrentLocation);
       } else {
         var permission = await Geolocator.checkPermission()
             .timeout(const Duration(seconds: 3));
@@ -12029,12 +11951,12 @@ class _OrderScreenState extends State<OrderScreen> {
       final point = LatLng(location.latitude, location.longitude);
       final accuracy = location.accuracy;
       final isPrecise = isReliableCurrentLocation(location);
+      if (isPrecise) _locationSession.rememberFix(location);
       if (!mounted ||
           (_selectedCityPoint != selectedAtStart &&
               _selectedCityPoint != null)) {
         return;
       }
-      if (isPrecise) _locationSession.rememberFix(location);
       if (forceCurrentLocation && isPrecise) {
         _locationSession.city = null;
         _confirmedCityPoint = null;
@@ -12062,10 +11984,15 @@ class _OrderScreenState extends State<OrderScreen> {
 
       _moveMap(point, 16.5);
       await _syncSearchCityFromCoords(point);
+      if (!mounted) return;
 
-      if (fillFromIfEmpty && _fromLocation == null) {
+      if (fillFromIfEmpty &&
+          _fromLocation == null &&
+          _fromController.text.trim().isEmpty) {
         _fromLocation = point;
         await _fillAddressByCoords(isFrom: true, point: point);
+        if (!mounted) return;
+        setState(() => _cityMapFieldIsFrom = false);
         await _saveBoardDraft();
         _scheduleAutoBoard();
       }
