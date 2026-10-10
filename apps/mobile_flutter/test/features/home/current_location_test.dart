@@ -92,7 +92,7 @@ void main() {
   }
   for (final entry in {
     'Город': '/order/fixed',
-    'Такси': '/order/auction',
+    'Аукцион': '/order/auction',
     'Межгород': '/order/intercity_start',
     'Доставка': '/order'
   }.entries) {
