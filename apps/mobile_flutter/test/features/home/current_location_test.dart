@@ -264,6 +264,69 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
   testWidgets(
+      'stored city does not suppress default GPS pickup in city booking',
+      (tester) async {
+    await AppPreferences.setOrderCity(
+        {'name': 'Жетекші', 'lat': 52.3, 'lng': 77.0, 'countryCode': 'KZ'});
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    var calls = 0;
+    await tester.pumpWidget(MaterialApp(
+        home: OrderScreen(
+            routeStage: 'fixed',
+            apiClient: _LocationApi(),
+            enableLiveMap: false,
+            locationProvider: () async {
+              calls++;
+              return const BrowserLocation(
+                  latitude: 49.902631, longitude: 82.609936, accuracy: 10);
+            })));
+    await tester.pumpAndSettle();
+    final draft = jsonDecode((await AppPreferences.getOrderDraft())!);
+    expect(calls, 1);
+    expect(draft['fromLat'], 49.902631);
+    expect(draft['fromAddress'], contains('Оралхана Бокея'));
+    expect(await AppPreferences.getOrderCity(), isNull);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets('automatic location preserves an explicitly saved pickup',
+      (tester) async {
+    await AppPreferences.setOrderCity(
+        {'name': 'Омск', 'lat': 54.989, 'lng': 73.368, 'countryCode': 'RU'});
+    await AppPreferences.setOrderDraft(jsonEncode({
+      'modeIndex': 0,
+      'cityModeIndex': 0,
+      'fromLat': 54.99,
+      'fromLng': 73.37,
+      'fromAddress': 'Ленина, 10',
+      'fromText': 'Ленина, 10'
+    }));
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    var calls = 0;
+    await tester.pumpWidget(MaterialApp(
+        home: OrderScreen(
+            routeStage: 'fixed',
+            apiClient: _LocationApi(),
+            enableLiveMap: false,
+            locationProvider: () async {
+              calls++;
+              return const BrowserLocation(
+                  latitude: 49.902631, longitude: 82.609936, accuracy: 10);
+            })));
+    await tester.pumpAndSettle();
+    expect(calls, 0);
+    final draft = jsonDecode((await AppPreferences.getOrderDraft())!);
+    expect(draft['fromLat'], 54.99);
+    expect(draft['fromText'], 'Ленина, 10');
+    expect((await AppPreferences.getOrderCity())?['name'], 'Омск');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets(
       'manual city selection is preserved instead of being replaced by GPS',
       (tester) async {
     await AppPreferences.setOrderCity(

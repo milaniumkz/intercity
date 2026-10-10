@@ -1211,7 +1211,8 @@ class _OrderScreenState extends State<OrderScreen> {
   Future<void> _startAutomaticLocation() async {
     await _cityPreferenceReady;
     await _draftReady;
-    if (!mounted || _selectedCityPoint != null) return;
+    if (!mounted) return;
+    if (_selectedCityPoint != null && !_needsAutomaticCityPickup) return;
     final fix = _locationSession.freshFix;
     if (fix != null) {
       await _initMapCenterByLocation(locationOverride: fix);
@@ -11905,6 +11906,11 @@ class _OrderScreenState extends State<OrderScreen> {
     unawaited(_saveBoardDraft());
   }
 
+  bool get _needsAutomaticCityPickup =>
+      _showCityComposer &&
+      _fromLocation == null &&
+      _fromController.text.trim().isEmpty;
+
   Future<void> _initMapCenterByLocation(
       {bool fillFromIfEmpty = true,
       bool forceCurrentLocation = false,
@@ -11912,7 +11918,11 @@ class _OrderScreenState extends State<OrderScreen> {
     await _cityPreferenceReady;
     if (!mounted || _locating) return;
     final selectedAtStart = _selectedCityPoint;
-    if (_selectedCityPoint != null && !forceCurrentLocation) return;
+    if (_selectedCityPoint != null &&
+        !forceCurrentLocation &&
+        !_needsAutomaticCityPickup) {
+      return;
+    }
     setState(() => _locating = true);
     try {
       BrowserLocation? location;
@@ -11965,6 +11975,19 @@ class _OrderScreenState extends State<OrderScreen> {
         _clearRoute();
         _selectedCityPoint = null;
         _currentCityId = null;
+      }
+
+      // A remembered city is a search preference, not a pickup. Old city
+      // selections must not prevent GPS filling an empty city booking.
+      if (isPrecise &&
+          _selectedCityPoint != null &&
+          _needsAutomaticCityPickup) {
+        await AppPreferences.clearOrderCity();
+        if (!mounted) return;
+        setState(() {
+          _selectedCityPoint = null;
+          _currentCityId = null;
+        });
       }
 
       setState(() {
