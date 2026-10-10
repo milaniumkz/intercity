@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:intercity_mobile/core/utils/browser_location_error.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intercity_mobile/core/utils/location_session.dart';
 import 'package:intercity_mobile/core/utils/browser_location_model.dart';
@@ -23,6 +24,36 @@ void main() {
     expect(session.freshFix?.longitude, 82.6);
     await session.locate(provider);
     expect(calls, 1);
+  });
+  test('transient timeout allows another request; denial does not', () async {
+    final session = LocationSession();
+    var calls = 0;
+    Future<BrowserLocation?> timeout() async {
+      calls++;
+      throw const BrowserLocationException(BrowserLocationFailure.timeout);
+    }
+
+    for (var i = 0; i < 2; i++) {
+      await expectLater(
+          session.locate(timeout), throwsA(isA<BrowserLocationException>()));
+    }
+    expect(calls, 2);
+    Future<BrowserLocation?> denied() async {
+      calls++;
+      throw const BrowserLocationException(
+          BrowserLocationFailure.permissionDenied);
+    }
+
+    await expectLater(
+        session.locate(denied), throwsA(isA<BrowserLocationException>()));
+    await expectLater(
+        session.locate(denied), throwsA(isA<BrowserLocationException>()));
+    expect(calls, 3);
+    final fix = await session.locate(
+        () async => const BrowserLocation(
+            latitude: 49.9, longitude: 82.6, accuracy: 10),
+        retry: true);
+    expect(fix?.latitude, 49.9);
   });
   test('denied auto location does not repeat permission; GPS allows a retry',
       () async {
