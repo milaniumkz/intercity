@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -36,6 +37,7 @@ GoRouter createRouter({
   String initialLocation = '/startup',
   bool disableAuthRedirect = false,
   ApiClient? orderApiClient,
+  TileProvider? mapTileProvider,
 }) =>
     GoRouter(
       initialLocation: initialLocation,
@@ -104,6 +106,7 @@ GoRouter createRouter({
           path: '/order',
           builder: (context, state) => OrderPage(
             apiClient: orderApiClient,
+            mapTileProvider: mapTileProvider,
             key: ValueKey(state.uri.toString()),
             resetToken: state.uri.queryParameters['reset'],
             initialStep: int.tryParse(state.uri.queryParameters['step'] ?? ''),
@@ -113,6 +116,7 @@ GoRouter createRouter({
           path: '/order/:stage',
           builder: (context, state) => OrderPage(
             apiClient: orderApiClient,
+            mapTileProvider: mapTileProvider,
             key: ValueKey(state.uri.toString()),
             resetToken: state.uri.queryParameters['reset'],
             routeStage: state.pathParameters['stage'],
@@ -167,11 +171,13 @@ GoRouter createRouter({
         ),
         GoRoute(
           path: '/driver/home',
-          builder: (context, state) => const DriverHomePage(),
+          builder: (context, state) =>
+              DriverHomePage(mapTileProvider: mapTileProvider),
         ),
         GoRoute(
           path: '/driver/home/:stage',
           builder: (context, state) => DriverHomePage(
+            mapTileProvider: mapTileProvider,
             routeStage: state.pathParameters['stage'],
           ),
         ),

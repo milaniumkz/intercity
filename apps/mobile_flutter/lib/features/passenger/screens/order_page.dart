@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/utils/error_message_ru.dart';
@@ -10,11 +11,13 @@ class OrderPage extends StatefulWidget {
       this.resetToken,
       this.routeStage,
       this.initialStep,
-      this.apiClient});
+      this.apiClient,
+      this.mapTileProvider});
   final String? resetToken;
   final String? routeStage;
   final int? initialStep;
   final ApiClient? apiClient;
+  final TileProvider? mapTileProvider;
   @override
   State<OrderPage> createState() => _OrderPageState();
 }
@@ -85,6 +88,7 @@ class _OrderPageState extends State<OrderPage> {
         resetToken: widget.resetToken,
         routeStage: widget.routeStage,
         initialStep: widget.initialStep,
-        apiClient: _api);
+        apiClient: _api,
+        mapTileProvider: widget.mapTileProvider);
   }
 }

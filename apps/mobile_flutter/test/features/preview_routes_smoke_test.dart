@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import '../support/memory_tile_provider.dart';
 import 'package:intercity_mobile/core/api/api_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -20,6 +21,7 @@ void main() {
       initialLocation: route,
       disableAuthRedirect: true,
       orderApiClient: _NoActiveOrderApi(),
+      mapTileProvider: MemoryTileProvider(),
     );
     await tester.pumpWidget(
       ProviderScope(
@@ -90,13 +92,13 @@ void main() {
     ('/register/driver', 'Регистрация водителя'),
     ('/login', 'Войдите'),
     ('/order/mode', 'Что нужно заказать?'),
-    ('/order/address', 'Куда поедем?'),
-    ('/order/map', 'Выбрать эту точку'),
+    ('/order/address', 'Заказ поездки'),
+    ('/order/map', 'Заказ поездки'),
     ('/order/fixed', 'Заказ поездки'),
-    ('/order/routeprice', 'Ваш маршрут'),
-    ('/order/class', 'Выберите класс'),
-    ('/order/payment', 'Способ оплаты'),
-    ('/order/confirm', 'Подтвердите заказ'),
+    ('/order/routeprice', 'Заказ поездки'),
+    ('/order/class', 'Заказ поездки'),
+    ('/order/payment', 'Заказ поездки'),
+    ('/order/confirm', 'Заказ поездки'),
     ('/order/searching', 'Поиск водителя'),
     ('/order/auction', 'Новый аукцион'),
     ('/order/offers_wait', 'Поиск предложений'),
@@ -107,7 +109,7 @@ void main() {
     ('/order/intercity_manual', 'Укажите адрес вручную'),
     ('/order/intercity_wait', 'Ищем водителей'),
     ('/order/intercity_details', 'Детали поездки'),
-    ('/order/manual', 'Мы не нашли'),
+    ('/order/manual', 'Заказ поездки'),
     ('/order/offline', 'Нет подключения'),
     ('/order/notfound', 'Адрес не найден'),
     ('/profile', 'Профиль'),
@@ -416,19 +418,19 @@ void main() {
       tester,
       startRoute: '/order/offline',
       tapText: 'Продолжить офлайн',
-      expectedText: 'Мы не нашли',
+      expectedText: 'Заказ поездки',
     );
     await tapTextAndExpect(
       tester,
       startRoute: '/order/notfound',
       tapText: 'Выбрать на карте',
-      expectedText: 'Выбрать эту точку',
+      expectedText: 'Заказ поездки',
     );
     await tapTextAndExpect(
       tester,
       startRoute: '/order/notfound',
       tapText: 'Ввести вручную',
-      expectedText: 'Мы не нашли',
+      expectedText: 'Заказ поездки',
     );
   });
 

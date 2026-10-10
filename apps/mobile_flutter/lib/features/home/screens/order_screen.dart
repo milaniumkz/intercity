@@ -1,3 +1,4 @@
+import '../widgets/city_order_composer.dart';
 import '../../../core/services/payment_fallback_notifier.dart';
 import '../../passenger/widgets/saved_payment_cards.dart';
 import '../../../core/utils/current_location.dart';
@@ -381,6 +382,7 @@ class OrderScreen extends StatefulWidget {
     this.apiClient,
     this.locationProvider,
     this.locationSession,
+    this.mapTileProvider,
   });
 
   final String? resetToken;
@@ -391,6 +393,7 @@ class OrderScreen extends StatefulWidget {
   final ApiClient? apiClient;
   final Future<BrowserLocation?> Function()? locationProvider;
   final LocationSession? locationSession;
+  final TileProvider? mapTileProvider;
 
   @override
   State<OrderScreen> createState() => _OrderScreenState();
@@ -411,6 +414,17 @@ class _OrderScreenState extends State<OrderScreen> {
   final TextEditingController _deliveryRecipientController =
       TextEditingController();
   final Distance _distance = const Distance();
+  final MapController _cityMapController = MapController();
+  late final RoadRouteRepository _cityRoadRoutes = RoadRouteRepository(_api);
+  bool _cityMapReady = false;
+  bool _cityMapFieldIsFrom = true;
+  bool _citySubmitting = false;
+  bool _cityCommentExpanded = false;
+  bool _cityCardsExpanded = false;
+  bool _cityResolvingFrom = false;
+  bool _cityResolvingTo = false;
+  int _cityFromPointRequest = 0;
+  int _cityToPointRequest = 0;
   static bool _automaticWebLocationAttempted = false;
   LocationSession get _locationSession =>
       widget.locationSession ?? sharedLocationSession;
@@ -759,6 +773,11 @@ class _OrderScreenState extends State<OrderScreen> {
                             : 0);
         _vehicleClass = (draft['vehicleClass'] ?? _vehicleClass).toString();
         _paymentMethod = (draft['paymentMethod'] ?? _paymentMethod).toString();
+        if (_modeIndex == 0 &&
+            _cityModeIndex == 0 &&
+            _paymentMethod == paymentMethodCardTransfer) {
+          _paymentMethod = paymentMethodCash;
+        }
         _fromAddress = (draft['fromAddress'] ?? '').toString();
         _toAddress = (draft['toAddress'] ?? '').toString();
         _setAddressFieldValue(
@@ -772,6 +791,7 @@ class _OrderScreenState extends State<OrderScreen> {
         if (fromLat != null && fromLng != null) {
           _fromLocation = LatLng(fromLat, fromLng);
         }
+        _cityMapFieldIsFrom = _fromLocation == null;
         if (toLat != null && toLng != null) {
           _toLocation = LatLng(toLat, toLng);
         }
@@ -840,7 +860,7 @@ class _OrderScreenState extends State<OrderScreen> {
     if (route == 'order') {
       return;
     }
-    _goOrderBoard(modeIndex == 0 && cityModeIndex == 0 ? 'class' : route);
+    _goOrderBoard(modeIndex == 0 && cityModeIndex == 0 ? 'fixed' : route);
   }
 
   void _selectMapHomeFare(int index) {
@@ -865,6 +885,7 @@ class _OrderScreenState extends State<OrderScreen> {
     _ensureBoardPickupPoint();
     unawaited(_saveBoardDraft());
     _scheduleAutoBoard();
+    if (index == 0) _goOrderBoard('fixed');
   }
 
   void _continueMapHomeFare() {
@@ -877,7 +898,7 @@ class _OrderScreenState extends State<OrderScreen> {
       _goOrderBoard('auction');
       return;
     }
-    _goOrderBoard('class');
+    _goOrderBoard('fixed');
   }
 
   void _ensureBoardPickupPoint() {
@@ -1198,13 +1219,18 @@ class _OrderScreenState extends State<OrderScreen> {
     await _initMapCenterByLocation();
   }
 
-  Future<void> _syncSearchCityFromCoords(LatLng point) async {
+  Future<void> _syncSearchCityFromCoords(LatLng point,
+      {bool onlyIfPickupMatches = false}) async {
     if (_selectedCityPoint != null) {
       return;
     }
     try {
       final data = await _reversePoint(point);
-      if (!mounted || _selectedCityPoint != null) return;
+      if (!mounted ||
+          _selectedCityPoint != null ||
+          (onlyIfPickupMatches && _fromLocation != point)) {
+        return;
+      }
       if (data['cityResolved'] == false) {
         if (_confirmedCityPoint != null &&
             _distance.as(LengthUnit.Kilometer, point, _confirmedCityPoint!) <
@@ -1228,7 +1254,7 @@ class _OrderScreenState extends State<OrderScreen> {
       if (cityName.isNotEmpty) {
         await AppPreferences.setCurrentCityName(cityName);
       }
-      if (!mounted) return;
+      if (!mounted || (onlyIfPickupMatches && _fromLocation != point)) return;
       _locationSession.city = {
         'id': cityId.isEmpty ? null : cityId,
         'name': cityName,
@@ -1337,6 +1363,7 @@ class _OrderScreenState extends State<OrderScreen> {
     _toSearchDebounce?.cancel();
     _boardDebounce?.cancel();
     _intercityTripsDebounce?.cancel();
+    _cityMapController.dispose();
     _fromController.dispose();
     _toController.dispose();
     _commentController.dispose();
@@ -1348,8 +1375,24 @@ class _OrderScreenState extends State<OrderScreen> {
     super.dispose();
   }
 
+  bool get _showCityComposer =>
+      !const bool.fromEnvironment('INTERCITY_SCREEN_PREVIEW') &&
+      _modeIndex == 0 &&
+      _cityModeIndex == 0 &&
+      const [
+        'fixed',
+        'class',
+        'routeprice',
+        'address',
+        'map',
+        'manual',
+        'payment',
+        'confirm'
+      ].any(_routeStage);
+
   @override
   Widget build(BuildContext context) {
+    if (_showCityComposer) return _cityOrderComposerScreen();
     if (_routeStage('offline')) {
       if (routeHas(context, 'dark=1')) {
         return Theme(
@@ -3050,6 +3093,307 @@ class _OrderScreenState extends State<OrderScreen> {
         ),
       ),
     );
+  }
+
+  Widget _cityOrderComposerScreen() {
+    final suggestions = _cityMapFieldIsFrom ? _fromSuggestions : _toSuggestions;
+    final resolving = _cityResolvingFrom || _cityResolvingTo;
+    final canOrder = _fromLocation != null &&
+        _toLocation != null &&
+        _boardPrice != null &&
+        !resolving &&
+        !_loading;
+    return Scaffold(
+        body: SafeArea(
+            child: CityOrderComposer(
+      map: _cityBookingMap(),
+      fromController: _fromController,
+      toController: _toController,
+      commentController: _commentController,
+      isFrom: _cityMapFieldIsFrom,
+      onFieldSelected: (value) => setState(() => _cityMapFieldIsFrom = value),
+      onAddressChanged: (value, from) {
+        setState(() => _cityMapFieldIsFrom = from);
+        _onAddressChanged(value, isFrom: from);
+      },
+      onAddressSubmitted: (from) =>
+          _searchAndSetAddress(isFrom: from, navigateAfterApply: false),
+      suggestions: suggestions,
+      onSuggestionSelected: (item) async {
+        final from = _cityMapFieldIsFrom;
+        await _applySuggestion(item, isFrom: from);
+        if (mounted && from) {
+          setState(() => _cityMapFieldIsFrom = false);
+        }
+      },
+      searching: resolving ||
+          (_cityMapFieldIsFrom ? _fromAddressSearching : _toAddressSearching),
+      vehicleClass: _vehicleClass,
+      onClassSelected: (value) {
+        if (value == _vehicleClass) return;
+        setState(() {
+          _vehicleClass = value;
+          _boardPrice = null;
+          _boardRequestId++;
+        });
+        unawaited(_saveBoardDraft());
+        _scheduleAutoBoard();
+      },
+      paymentMethod: _paymentMethod,
+      onPaymentSelected: (value) {
+        if (value == paymentMethodCard && !_savedCardReady) {
+          setState(() => _cityCardsExpanded = !_cityCardsExpanded);
+          return;
+        }
+        if (!_paymentMethodEnabled(value)) return;
+        setState(() {
+          _paymentMethod = value;
+          _boardPrice = null;
+          _boardRequestId++;
+        });
+        unawaited(_saveBoardDraft());
+        _scheduleAutoBoard();
+      },
+      cardAvailable: _savedCardReady,
+      currency: _rideCurrency,
+      price: _boardPrice == null ? null : _displayPrice,
+      routeMeta: _displayRouteMeta,
+      busy: _citySubmitting,
+      calculating: _loading || resolving,
+      canOrder: canOrder,
+      onOrder: () async {
+        if (!canOrder || _citySubmitting) return;
+        setState(() => _citySubmitting = true);
+        try {
+          await _create();
+        } finally {
+          if (mounted) setState(() => _citySubmitting = false);
+        }
+      },
+      message: _statusText == 'Стоимость рассчитана автоматически.'
+          ? ''
+          : _statusText,
+      onRetry: _scheduleAutoBoard,
+      commentExpanded: _cityCommentExpanded,
+      onCommentToggle: () =>
+          setState(() => _cityCommentExpanded = !_cityCommentExpanded),
+      cardPanel: _cityCardsExpanded
+          ? SavedPaymentCards(
+              apiClient: _api,
+              onReadyChanged: (ready, last4) {
+                if (mounted) {
+                  setState(() {
+                    _savedCardReady = ready;
+                    _savedCardLast4 = last4;
+                  });
+                }
+              })
+          : null,
+      onBack: () => context.go('/order'),
+    )));
+  }
+
+  Widget _cityBookingMap() {
+    final from = _fromLocation, to = _toLocation;
+    final center = from ?? _userLocation ?? _selectedCityPoint ?? _mapCenter;
+    if (!widget.enableLiveMap) return const IntercityMapFallback();
+    return Stack(children: [
+      const Positioned.fill(child: IntercityMapFallback()),
+      FlutterMap(
+          key: const ValueKey('city-live-map'),
+          mapController: _cityMapController,
+          options: MapOptions(
+              initialCenter: center,
+              initialZoom: from == null &&
+                      _userLocation == null &&
+                      _selectedCityPoint == null
+                  ? 5
+                  : 16,
+              onMapReady: () {
+                _cityMapReady = true;
+                _fitCityBookingMap();
+              },
+              onTap: (_, point) {
+                if (_citySubmitting) return;
+                FocusManager.instance.primaryFocus?.unfocus();
+                _applyCityMapPoint(point, isFrom: _cityMapFieldIsFrom);
+              }),
+          children: [
+            TileLayer(
+                tileProvider: widget.mapTileProvider,
+                urlTemplate: AppConstants.osmTileUrl,
+                subdomains: AppConstants.mapTileSubdomains,
+                userAgentPackageName: 'com.milanium.intercity'),
+            if (from != null && to != null)
+              RoadRouteLayer(
+                  from: from,
+                  to: to,
+                  color: AppTheme.primaryColor,
+                  fitPadding: const EdgeInsets.fromLTRB(42, 56, 42, 60),
+                  repository: _cityRoadRoutes),
+            MarkerLayer(markers: [
+              if (_userLocation != null)
+                Marker(
+                    point: _userLocation!,
+                    width: 20,
+                    height: 20,
+                    child: Container(
+                        decoration: BoxDecoration(
+                            color: Colors.blue,
+                            border: Border.all(color: Colors.white, width: 3),
+                            shape: BoxShape.circle))),
+              if (from != null)
+                Marker(
+                    point: from,
+                    width: 38,
+                    height: 38,
+                    child: _cityPointMarker('А', AppTheme.primaryColor)),
+              if (to != null)
+                Marker(
+                    point: to,
+                    width: 38,
+                    height: 38,
+                    child: _cityPointMarker('Б', const Color(0xFF25213A))),
+            ]),
+            const Padding(
+                padding: EdgeInsets.only(bottom: 48),
+                child: MapDataAttribution()),
+          ]),
+      Positioned(
+          right: 12,
+          top: 10,
+          child: Material(
+              color:
+                  Theme.of(context).colorScheme.surface.withValues(alpha: .95),
+              borderRadius: BorderRadius.circular(14),
+              child: IconButton(
+                  tooltip: 'Подать к моему местоположению',
+                  onPressed: _locating || _citySubmitting
+                      ? null
+                      : () async {
+                          setState(() => _cityMapFieldIsFrom = true);
+                          await _initMapCenterByLocation(
+                              fillFromIfEmpty: false,
+                              forceCurrentLocation: true);
+                          if (!mounted) return;
+                          if (_userLocation == null) {
+                            setState(() => _statusText =
+                                'Местоположение недоступно. Выберите подачу на карте.');
+                            return;
+                          }
+                          await _applyCityMapPoint(_userLocation!,
+                              isFrom: true);
+                        },
+                  icon: const Icon(Icons.my_location_rounded,
+                      color: AppTheme.primaryColor)))),
+    ]);
+  }
+
+  Widget _cityPointMarker(String label, Color color) => Container(
+      decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 3),
+          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)]),
+      alignment: Alignment.center,
+      child: Text(label,
+          style: const TextStyle(
+              color: Colors.white, fontWeight: FontWeight.w900)));
+
+  void _fitCityBookingMap({LatLng? focus, double zoom = 16}) {
+    if (!mounted || !_cityMapReady) return;
+    try {
+      final from = _fromLocation, to = _toLocation;
+      if (from != null &&
+          to != null &&
+          _cityMapController.camera.size.y > 180) {
+        _cityMapController.fitCamera(CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints([from, to]),
+            padding: const EdgeInsets.fromLTRB(42, 56, 42, 60),
+            maxZoom: 16.5));
+      } else {
+        _cityMapController.move(
+            focus ?? from ?? _userLocation ?? _mapCenter, zoom);
+      }
+    } catch (_) {/* Map can detach while changing modes. */}
+  }
+
+  Future<void> _applyCityMapPoint(LatLng point, {required bool isFrom}) async {
+    final request = isFrom ? ++_cityFromPointRequest : ++_cityToPointRequest;
+    (isFrom ? _fromSearchDebounce : _toSearchDebounce)?.cancel();
+    _boardDebounce?.cancel();
+    setState(() {
+      _boardRequestId++;
+      _boardPrice = null;
+      _boardDistance = null;
+      _boardDuration = null;
+      _loading = false;
+      _statusText = '';
+      _mapCenter = point;
+      if (isFrom) {
+        _fromLocation = point;
+        _fromSuggestions = const [];
+        _cityResolvingFrom = true;
+        _fromSuggestionRequestId++;
+      } else {
+        _toLocation = point;
+        _toSuggestions = const [];
+        _cityResolvingTo = true;
+        _toSuggestionRequestId++;
+      }
+      _setAddressFieldValue(isFrom: isFrom, value: 'Определяем адрес…');
+    });
+    bool current() =>
+        mounted &&
+        (isFrom ? _cityFromPointRequest : _cityToPointRequest) == request &&
+        (isFrom ? _fromLocation : _toLocation) == point;
+    try {
+      final data = await _reversePoint(point);
+      if (!current()) return;
+      final address = _resolvedAddressFromReverseData(data, isFrom: isFrom);
+      setState(() {
+        if (isFrom) {
+          _fromAddress = address;
+          _rideCurrency = rideCurrencyCode(data);
+        } else {
+          _toAddress = address;
+        }
+        _setAddressFieldValue(isFrom: isFrom, value: address);
+      });
+      if (isFrom) {
+        await _syncSearchCityFromCoords(point, onlyIfPickupMatches: true);
+      }
+    } catch (_) {
+      if (!current()) return;
+      final address =
+          isFrom ? 'Точка подачи выбрана' : 'Точка назначения выбрана';
+      setState(() {
+        if (isFrom) {
+          _fromAddress = address;
+        } else {
+          _toAddress = address;
+        }
+        _setAddressFieldValue(isFrom: isFrom, value: address);
+      });
+    } finally {
+      if (mounted &&
+          (isFrom ? _cityFromPointRequest : _cityToPointRequest) == request) {
+        setState(() {
+          if (isFrom) {
+            _cityResolvingFrom = false;
+          } else {
+            _cityResolvingTo = false;
+          }
+        });
+      }
+    }
+    if (!current()) return;
+    if (isFrom && _cityMapFieldIsFrom) {
+      setState(() => _cityMapFieldIsFrom = false);
+    }
+    await _saveBoardDraft();
+    _scheduleAutoBoard();
+    _fitCityBookingMap(focus: point);
   }
 
   Widget _boardCityFixedOrderScreen() {
@@ -11592,6 +11936,14 @@ class _OrderScreenState extends State<OrderScreen> {
       _toSuggestionRequestId++;
     }
     setState(() {
+      _loading = false;
+      if (isFrom) {
+        _cityFromPointRequest++;
+        _cityResolvingFrom = false;
+      } else {
+        _cityToPointRequest++;
+        _cityResolvingTo = false;
+      }
       if (isFrom) {
         _fromLocation = null;
         _fromAddress = '';
@@ -11735,6 +12087,11 @@ class _OrderScreenState extends State<OrderScreen> {
 
   void _moveMap(LatLng point, double zoom) {
     _mapCenter = point;
+    if (_cityMapReady) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _fitCityBookingMap(focus: point, zoom: zoom);
+      });
+    }
   }
 
   String _locationAccuracyText(double accuracy) {
@@ -12853,6 +13210,13 @@ class _OrderScreenState extends State<OrderScreen> {
     final compactAddress = _compactAddress(displayName);
     setState(() {
       if (isFrom) {
+        _cityFromPointRequest++;
+        _cityResolvingFrom = false;
+      } else {
+        _cityToPointRequest++;
+        _cityResolvingTo = false;
+      }
+      if (isFrom) {
         _fromLocation = point;
         _fromAddress = compactAddress;
         _setAddressFieldValue(isFrom: true, value: compactAddress);
@@ -13178,7 +13542,9 @@ class _OrderScreenState extends State<OrderScreen> {
         _statusText = errorMessage(e);
       });
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && _boardRequestId == boardId) {
+        setState(() => _loading = false);
+      }
     }
   }
 
