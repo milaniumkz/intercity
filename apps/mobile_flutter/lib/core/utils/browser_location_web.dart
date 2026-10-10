@@ -20,6 +20,28 @@ Future<BrowserLocation?> getBrowserLocation() async {
     }
   });
   try {
+    // Ask for an already available accurate position while GPS warms up.
+    // Both paths use the same age/accuracy checks and never accept a coarse fix.
+    geolocation.getCurrentPosition(
+      ((web.GeolocationPosition position) {
+        if (completer.isCompleted) return;
+        final fix = BrowserLocation(
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+            timestamp: DateTime.fromMillisecondsSinceEpoch(
+                position.timestamp.toInt()));
+        if (isReliableCurrentLocation(fix)) completer.complete(fix);
+      }).toJS,
+      ((web.GeolocationPositionError error) {
+        if (!completer.isCompleted && error.code == 1) {
+          completer.completeError(const BrowserLocationException(
+              BrowserLocationFailure.permissionDenied));
+        }
+      }).toJS,
+      web.PositionOptions(
+          enableHighAccuracy: false, maximumAge: 15000, timeout: 1500),
+    );
     // Keep listening if the first fix is coarse: mobile browsers often refine
     // Wi-Fi coordinates only after the GPS receiver acquires a position.
     watch = geolocation.watchPosition(

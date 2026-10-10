@@ -12041,16 +12041,22 @@ class _OrderScreenState extends State<OrderScreen> {
         await _applyCityMapPoint(point, isFrom: true);
         return;
       }
-      await _syncSearchCityFromCoords(point);
-      if (!mounted) return;
-
-      if (fillFromIfEmpty &&
+      final fillPickup = fillFromIfEmpty &&
           _fromLocation == null &&
-          _fromController.text.trim().isEmpty) {
-        _fromLocation = point;
-        await _fillAddressByCoords(isFrom: true, point: point);
-        if (!mounted) return;
-        setState(() => _cityMapFieldIsFrom = false);
+          _fromController.text.trim().isEmpty;
+      if (fillPickup) {
+        setState(() {
+          _fromLocation = point;
+          _fromAddress = 'Моё местоположение';
+          _setAddressFieldValue(isFrom: true, value: _fromAddress);
+          _cityMapFieldIsFrom = false;
+        });
+      }
+      await Future.wait([
+        _syncSearchCityFromCoords(point, onlyIfPickupMatches: fillPickup),
+        if (fillPickup) _fillAddressByCoords(isFrom: true, point: point),
+      ]);
+      if (mounted && fillPickup && _fromLocation == point) {
         await _saveBoardDraft();
         _scheduleAutoBoard();
       }
@@ -12315,15 +12321,12 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
-  Future<Map<String, dynamic>> _reversePoint(LatLng point) async {
-    final cached = _locationSession.reverse(point);
-    if (cached != null) return cached;
-    final res = await _api.get('/geo/reverse',
-        queryParameters: {'lat': point.latitude, 'lng': point.longitude});
-    final data = Map<String, dynamic>.from(res.data as Map);
-    _locationSession.rememberReverse(point, data);
-    return data;
-  }
+  Future<Map<String, dynamic>> _reversePoint(LatLng point) =>
+      _locationSession.resolveReverse(point, () async {
+        final res = await _api.get('/geo/reverse',
+            queryParameters: {'lat': point.latitude, 'lng': point.longitude});
+        return Map<String, dynamic>.from(res.data as Map);
+      });
 
   Future<void> _fillAddressByCoords({
     required bool isFrom,
@@ -12335,7 +12338,7 @@ class _OrderScreenState extends State<OrderScreen> {
         data,
         isFrom: isFrom,
       );
-      if (!mounted) return;
+      if (!mounted || (isFrom ? _fromLocation : _toLocation) != point) return;
       setState(() {
         if (isFrom) {
           _fromAddress = compactAddress;
@@ -12351,7 +12354,7 @@ class _OrderScreenState extends State<OrderScreen> {
       });
       unawaited(_saveBoardDraft());
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || (isFrom ? _fromLocation : _toLocation) != point) return;
       setState(() {
         if (isFrom) {
           _fromAddress = 'Точка подачи выбрана';
