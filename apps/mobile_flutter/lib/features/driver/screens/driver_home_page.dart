@@ -841,7 +841,14 @@ class _DriverHomePageState extends State<DriverHomePage>
                     },
                     onTick: (seconds) {
                       if (!completed && context.mounted) {
-                        update(() => secondsLeft = seconds);
+                        update(() {
+                          secondsLeft = seconds;
+                          order = _nearby
+                                  .where((item) =>
+                                      '${item['id'] ?? ''}' == orderId)
+                                  .firstOrNull ??
+                              order;
+                        });
                       }
                     },
                     onExpired: () {

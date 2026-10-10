@@ -120,6 +120,30 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     super.dispose();
   }
 
+  bool _increasingPrice = false;
+  Future<void> _increaseAuctionPrice() async {
+    if (_increasingPrice) return;
+    setState(() => _increasingPrice = true);
+    try {
+      await _api.post('/orders/${widget.orderId}/increase-price');
+      await _loadOrder();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(errorMessageRu(e))));
+      }
+    } finally {
+      if (mounted) setState(() => _increasingPrice = false);
+    }
+  }
+
+  Widget _auctionPriceIncreaseButton() => _premiumActionButton(
+      label:
+          'Цена ${_order?['price'] ?? ''} ${rideCurrencySymbol(_order ?? {})} · +100',
+      icon: Icons.add_rounded,
+      filled: true,
+      onPressed: _increasingPrice ? null : _increaseAuctionPrice);
+
   Future<void> _cancelOrder() async {
     final order = _order;
     if (order == null || _cancelling) return;
@@ -894,6 +918,11 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                             ],
                           ],
                         ),
+                        if (_order?['requestType'] == 'CITY_AUCTION' &&
+                            canCancelOrder) ...[
+                          const SizedBox(height: 10),
+                          _auctionPriceIncreaseButton(),
+                        ],
                         if (canCancelOrder) ...[
                           const SizedBox(height: 10),
                           SizedBox(
@@ -919,11 +948,15 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                     bottom: 16,
                     left: 16,
                     right: 16,
-                    child: _premiumActionButton(
-                        label: 'Отменить заказ',
-                        icon: Icons.close_rounded,
-                        danger: true,
-                        onPressed: _cancelling ? null : _cancelOrder)),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      _auctionPriceIncreaseButton(),
+                      const SizedBox(height: 8),
+                      _premiumActionButton(
+                          label: 'Отменить заказ',
+                          icon: Icons.close_rounded,
+                          danger: true,
+                          onPressed: _cancelling ? null : _cancelOrder),
+                    ])),
               Positioned(
                 top: 12,
                 left: 14,
@@ -1010,11 +1043,15 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                   left: 16,
                   right: 16,
                   bottom: 24,
-                  child: _premiumActionButton(
-                      label: 'Отменить заказ',
-                      icon: Icons.close_rounded,
-                      danger: true,
-                      onPressed: _cancelling ? null : _cancelOrder)),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    _auctionPriceIncreaseButton(),
+                    const SizedBox(height: 8),
+                    _premiumActionButton(
+                        label: 'Отменить заказ',
+                        icon: Icons.close_rounded,
+                        danger: true,
+                        onPressed: _cancelling ? null : _cancelOrder),
+                  ])),
             if (!showOffers)
               Positioned(
                 left: 16,
@@ -1082,6 +1119,11 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                       const SizedBox(height: 16),
                       _boardRouteLine(from, to),
                       const SizedBox(height: 16),
+                      if (_order?['requestType'] == 'CITY_AUCTION' &&
+                          canCancel) ...[
+                        _auctionPriceIncreaseButton(),
+                        const SizedBox(height: 10),
+                      ],
                       _premiumActionButton(
                         label: 'Отменить заказ',
                         icon: Icons.close_rounded,

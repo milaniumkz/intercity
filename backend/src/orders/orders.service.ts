@@ -479,6 +479,21 @@ export class OrdersService {
         };
     }
 
+    async increaseAuctionPrice(orderId: string, passengerId: string) {
+        const updated = await this.prisma.$transaction(async tx => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302091)`;
+            const order = await tx.order.findUnique({where: {id: orderId}});
+            if (!order || order.passengerId !== passengerId) throw new ForbiddenException('Нет доступа к заказу');
+            if (order.requestType !== 'CITY_AUCTION' || order.status !== 'SEARCHING_DRIVER' || order.driverId || order.price + 100 > 10000000) throw new BadRequestException('Цена этого заказа уже не может быть изменена');
+            await tx.orderOffer.updateMany({where: {orderId, status: 'PENDING'}, data: {status: 'EXPIRED'}});
+            await tx.orderAuctionInvitation.deleteMany({where: {orderId}});
+            return tx.order.update({where: {id: orderId}, data: {price: {increment: 100}, dispatchRetryAt: null}});
+        });
+        this.realtimeService.publish({type: 'order.price.updated', entity: 'order', entityId: orderId, at: new Date().toISOString(), payload: {orderId, price: updated.price}});
+        await this.autoDispatchService.assignCityOrder(orderId).catch(() => null);
+        return updated;
+    }
+
     async createOrderOffer(
         orderId: string,
         driverUserId: string,
