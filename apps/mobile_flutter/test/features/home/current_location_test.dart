@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:async';
+import 'package:go_router/go_router.dart';
 import 'package:intercity_mobile/core/utils/location_session.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -87,6 +89,90 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
   }
+  for (final entry in {
+    'Город': '/order/fixed',
+    'Такси': '/order/auction',
+    'Межгород': '/order/intercity_start',
+    'Доставка': '/order'
+  }.entries) {
+    testWidgets('home only chooses mode and opens ${entry.key}',
+        (tester) async {
+      tester.view.physicalSize = const Size(360, 740);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final api = _LocationApi()..mapHomeEnabled = true;
+      final router = GoRouter(initialLocation: '/order', routes: [
+        GoRoute(
+            path: '/order',
+            builder: (c, s) => OrderScreen(
+                apiClient: api,
+                enableLiveMap: false,
+                autoLocateOnStart: false)),
+        GoRoute(
+            path: '/order/:stage',
+            builder: (c, s) => OrderScreen(
+                routeStage: s.pathParameters['stage'],
+                apiClient: api,
+                enableLiveMap: false,
+                autoLocateOnStart: false)),
+      ]);
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpAndSettle();
+      expect(find.text('Выберите режим'), findsOneWidget);
+      expect(find.text('Указать куда'), findsNothing);
+      expect(find.text('Моё местоположение'), findsNothing);
+      await tester.tap(find.text(entry.key));
+      await tester.pumpAndSettle();
+      expect(router.routeInformationProvider.value.uri.path, entry.value);
+      expect(find.text('Выберите режим'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      router.dispose();
+    });
+  }
+  testWidgets('GPS completing after navigation fills the new booking pickup',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final fix = Completer<BrowserLocation?>();
+    final session = LocationSession();
+    var calls = 0;
+    Future<BrowserLocation?> provider() {
+      calls++;
+      return fix.future;
+    }
+
+    final api = _LocationApi()..mapHomeEnabled = true;
+    await tester.pumpWidget(MaterialApp(
+        home: OrderScreen(
+            key: const ValueKey('home'),
+            apiClient: api,
+            enableLiveMap: false,
+            locationSession: session,
+            locationProvider: provider)));
+    await tester.pump();
+    await tester.pump();
+    await tester.pumpWidget(MaterialApp(
+        home: OrderScreen(
+            key: const ValueKey('booking'),
+            routeStage: 'fixed',
+            apiClient: api,
+            enableLiveMap: false,
+            locationSession: session,
+            locationProvider: provider)));
+    await tester.pump();
+    await tester.pump();
+    fix.complete(const BrowserLocation(
+        latitude: 49.902631, longitude: 82.609936, accuracy: 10));
+    await tester.pumpAndSettle();
+    final draft = jsonDecode((await AppPreferences.getOrderDraft())!);
+    expect(draft['fromLat'], 49.902631);
+    expect(draft['fromAddress'], contains('Оралхана Бокея'));
+    expect(calls, 1);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
   test('old, invalid and inaccurate fixes are not precise pickup coordinates',
       () {
     final now = DateTime(2026, 10, 6);
