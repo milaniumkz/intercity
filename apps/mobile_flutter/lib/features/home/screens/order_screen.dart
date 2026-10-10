@@ -3105,96 +3105,92 @@ class _OrderScreenState extends State<OrderScreen> {
         !_loading;
     return Scaffold(
         body: SafeArea(
-            bottom: false,
             child: CityOrderComposer(
-              map: _cityBookingMap(),
-              fromController: _fromController,
-              toController: _toController,
-              commentController: _commentController,
-              isFrom: _cityMapFieldIsFrom,
-              onFieldSelected: (value) =>
-                  setState(() => _cityMapFieldIsFrom = value),
-              onAddressChanged: (value, from) {
-                setState(() => _cityMapFieldIsFrom = from);
-                _onAddressChanged(value, isFrom: from);
-              },
-              onAddressSubmitted: (from) =>
-                  _searchAndSetAddress(isFrom: from, navigateAfterApply: false),
-              suggestions: suggestions,
-              onSuggestionSelected: (item) async {
-                final from = _cityMapFieldIsFrom;
-                await _applySuggestion(item, isFrom: from);
-                if (mounted && from) {
-                  setState(() => _cityMapFieldIsFrom = false);
+      map: _cityBookingMap(),
+      fromController: _fromController,
+      toController: _toController,
+      commentController: _commentController,
+      isFrom: _cityMapFieldIsFrom,
+      onFieldSelected: (value) => setState(() => _cityMapFieldIsFrom = value),
+      onAddressChanged: (value, from) {
+        setState(() => _cityMapFieldIsFrom = from);
+        _onAddressChanged(value, isFrom: from);
+      },
+      onAddressSubmitted: (from) =>
+          _searchAndSetAddress(isFrom: from, navigateAfterApply: false),
+      suggestions: suggestions,
+      onSuggestionSelected: (item) async {
+        final from = _cityMapFieldIsFrom;
+        await _applySuggestion(item, isFrom: from);
+        if (mounted && from) {
+          setState(() => _cityMapFieldIsFrom = false);
+        }
+      },
+      searching: resolving ||
+          (_cityMapFieldIsFrom ? _fromAddressSearching : _toAddressSearching),
+      vehicleClass: _vehicleClass,
+      onClassSelected: (value) {
+        if (value == _vehicleClass) return;
+        setState(() {
+          _vehicleClass = value;
+          _boardPrice = null;
+          _boardRequestId++;
+        });
+        unawaited(_saveBoardDraft());
+        _scheduleAutoBoard();
+      },
+      paymentMethod: _paymentMethod,
+      onPaymentSelected: (value) {
+        if (value == paymentMethodCard && !_savedCardReady) {
+          setState(() => _cityCardsExpanded = !_cityCardsExpanded);
+          return;
+        }
+        if (!_paymentMethodEnabled(value)) return;
+        setState(() {
+          _paymentMethod = value;
+          _boardPrice = null;
+          _boardRequestId++;
+        });
+        unawaited(_saveBoardDraft());
+        _scheduleAutoBoard();
+      },
+      cardAvailable: _savedCardReady,
+      currency: _rideCurrency,
+      price: _boardPrice == null ? null : _displayPrice,
+      routeMeta: _displayRouteMeta,
+      busy: _citySubmitting,
+      calculating: _loading || resolving,
+      canOrder: canOrder,
+      onOrder: () async {
+        if (!canOrder || _citySubmitting) return;
+        setState(() => _citySubmitting = true);
+        try {
+          await _create();
+        } finally {
+          if (mounted) setState(() => _citySubmitting = false);
+        }
+      },
+      message: _statusText == 'Стоимость рассчитана автоматически.'
+          ? ''
+          : _statusText,
+      onRetry: _scheduleAutoBoard,
+      commentExpanded: _cityCommentExpanded,
+      onCommentToggle: () =>
+          setState(() => _cityCommentExpanded = !_cityCommentExpanded),
+      cardPanel: _cityCardsExpanded
+          ? SavedPaymentCards(
+              apiClient: _api,
+              onReadyChanged: (ready, last4) {
+                if (mounted) {
+                  setState(() {
+                    _savedCardReady = ready;
+                    _savedCardLast4 = last4;
+                  });
                 }
-              },
-              searching: resolving ||
-                  (_cityMapFieldIsFrom
-                      ? _fromAddressSearching
-                      : _toAddressSearching),
-              vehicleClass: _vehicleClass,
-              onClassSelected: (value) {
-                if (value == _vehicleClass) return;
-                setState(() {
-                  _vehicleClass = value;
-                  _boardPrice = null;
-                  _boardRequestId++;
-                });
-                unawaited(_saveBoardDraft());
-                _scheduleAutoBoard();
-              },
-              paymentMethod: _paymentMethod,
-              onPaymentSelected: (value) {
-                if (value == paymentMethodCard && !_savedCardReady) {
-                  setState(() => _cityCardsExpanded = !_cityCardsExpanded);
-                  return;
-                }
-                if (!_paymentMethodEnabled(value)) return;
-                setState(() {
-                  _paymentMethod = value;
-                  _boardPrice = null;
-                  _boardRequestId++;
-                });
-                unawaited(_saveBoardDraft());
-                _scheduleAutoBoard();
-              },
-              cardAvailable: _savedCardReady,
-              currency: _rideCurrency,
-              price: _boardPrice == null ? null : _displayPrice,
-              routeMeta: _displayRouteMeta,
-              busy: _citySubmitting,
-              calculating: _loading || resolving,
-              canOrder: canOrder,
-              onOrder: () async {
-                if (!canOrder || _citySubmitting) return;
-                setState(() => _citySubmitting = true);
-                try {
-                  await _create();
-                } finally {
-                  if (mounted) setState(() => _citySubmitting = false);
-                }
-              },
-              message: _statusText == 'Стоимость рассчитана автоматически.'
-                  ? ''
-                  : _statusText,
-              onRetry: _scheduleAutoBoard,
-              commentExpanded: _cityCommentExpanded,
-              onCommentToggle: () =>
-                  setState(() => _cityCommentExpanded = !_cityCommentExpanded),
-              cardPanel: _cityCardsExpanded
-                  ? SavedPaymentCards(
-                      apiClient: _api,
-                      onReadyChanged: (ready, last4) {
-                        if (mounted) {
-                          setState(() {
-                            _savedCardReady = ready;
-                            _savedCardLast4 = last4;
-                          });
-                        }
-                      })
-                  : null,
-              onBack: () => context.go('/order'),
-            )));
+              })
+          : null,
+      onBack: () => context.go('/order'),
+    )));
   }
 
   Widget _cityBookingMap() {

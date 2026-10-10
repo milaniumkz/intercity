@@ -186,8 +186,12 @@ void main() {
   testWidgets(
       'small screen keeps map, payment and order button visible; typed edits invalidate the price',
       (tester) async {
+    tester.view.padding = const FakeViewPadding(bottom: 24);
     final api = _FlowApi();
     await _open(tester, api, size: const Size(320, 568));
+    expect(
+        tester.getRect(find.byKey(const ValueKey('city-order-submit'))).bottom,
+        lessThanOrEqualTo(544));
     expect(tester.takeException(), isNull);
     expect(find.byKey(const ValueKey('city-payment-CASH')).hitTestable(),
         findsOneWidget);
