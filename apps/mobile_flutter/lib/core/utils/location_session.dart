@@ -1,12 +1,14 @@
 import 'package:latlong2/latlong.dart';
 import 'browser_location_model.dart';
 import 'current_location.dart';
+import 'browser_location_error.dart';
 
 // Confirmed trip context survives screen changes, without treating it as GPS.
 class LocationSession {
   BrowserLocation? _fix;
   Future<BrowserLocation?>? _pendingFix;
   bool _automaticAttempted = false;
+  BrowserLocationException? _permissionError;
 
   // Keep the request alive across home -> booking navigation, including denial.
   Future<BrowserLocation?> locate(
@@ -16,7 +18,9 @@ class LocationSession {
     if (_pendingFix != null) return _pendingFix;
     final cached = freshFix;
     if (!retry && cached != null) return cached;
+    if (!retry && _permissionError != null) throw _permissionError!;
     if (!retry && _automaticAttempted) return null;
+    if (retry) _permissionError = null;
     _automaticAttempted = true;
     final request = provider();
     _pendingFix = request;
@@ -24,6 +28,13 @@ class LocationSession {
       final fix = await request;
       if (fix != null) rememberFix(fix);
       return fix;
+    } on BrowserLocationException catch (error) {
+      if (error.reason == BrowserLocationFailure.permissionDenied) {
+        _permissionError = error;
+      } else {
+        _automaticAttempted = false;
+      }
+      rethrow;
     } finally {
       if (identical(_pendingFix, request)) _pendingFix = null;
     }
@@ -36,6 +47,7 @@ class LocationSession {
   void rememberFix(BrowserLocation fix) {
     if (!isReliableCurrentLocation(fix)) return;
     _automaticAttempted = false;
+    _permissionError = null;
     _fix = BrowserLocation(
         latitude: fix.latitude,
         longitude: fix.longitude,
@@ -66,6 +78,7 @@ class LocationSession {
   void clear() {
     _fix = null;
     _automaticAttempted = false;
+    _permissionError = null;
     city = null;
     _reverse.clear();
   }

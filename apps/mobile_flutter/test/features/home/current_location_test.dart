@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
+import 'package:intercity_mobile/core/utils/browser_location_error.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intercity_mobile/core/utils/location_session.dart';
 import 'package:dio/dio.dart';
@@ -170,6 +171,52 @@ void main() {
     expect(draft['fromLat'], 49.902631);
     expect(draft['fromAddress'], contains('Оралхана Бокея'));
     expect(calls, 1);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets(
+      'GPS error retry requests location again and preserves destination',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await AppPreferences.setOrderDraft(jsonEncode({
+      'modeIndex': 0,
+      'cityModeIndex': 0,
+      'toLat': 49.95,
+      'toLng': 82.65,
+      'toAddress': 'Сатпаева, 10',
+      'toText': 'Сатпаева, 10'
+    }));
+    var calls = 0;
+    await tester.pumpWidget(MaterialApp(
+        home: OrderScreen(
+            routeStage: 'fixed',
+            apiClient: _LocationApi(),
+            enableLiveMap: false,
+            locationProvider: () async {
+              calls++;
+              if (calls == 1) {
+                throw const BrowserLocationException(
+                    BrowserLocationFailure.permissionDenied);
+              }
+              return const BrowserLocation(
+                  latitude: 49.902631, longitude: 82.609936, accuracy: 10);
+            })));
+    await tester.pumpAndSettle();
+    final message = find.textContaining('Браузер запретил местоположение');
+    await tester.ensureVisible(message);
+    await tester.pumpAndSettle();
+    expect(message, findsOneWidget);
+    final retry = find.byIcon(Icons.refresh_rounded);
+    await tester.ensureVisible(retry);
+    await tester.tap(retry);
+    await tester.pumpAndSettle();
+    expect(calls, 2);
+    final draft = jsonDecode((await AppPreferences.getOrderDraft())!);
+    expect(draft['fromLat'], 49.902631);
+    expect(draft['toLat'], 49.95);
+    expect(draft['toAddress'], 'Сатпаева, 10');
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });

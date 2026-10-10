@@ -2,6 +2,7 @@ import '../widgets/city_order_composer.dart';
 import '../../../core/services/payment_fallback_notifier.dart';
 import '../../passenger/widgets/saved_payment_cards.dart';
 import '../../../core/utils/current_location.dart';
+import '../../../core/utils/browser_location_error.dart';
 import '../../../core/utils/location_session.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -3090,7 +3091,9 @@ class _OrderScreenState extends State<OrderScreen> {
       message: _statusText == 'Стоимость рассчитана автоматически.'
           ? ''
           : _statusText,
-      onRetry: _scheduleAutoBoard,
+      onRetry: _fromLocation == null
+          ? () => _initMapCenterByLocation(forceCurrentLocation: true)
+          : _scheduleAutoBoard,
       commentExpanded: _cityCommentExpanded,
       onCommentToggle: () =>
           setState(() => _cityCommentExpanded = !_cityCommentExpanded),
@@ -11923,7 +11926,10 @@ class _OrderScreenState extends State<OrderScreen> {
         !_needsAutomaticCityPickup) {
       return;
     }
-    setState(() => _locating = true);
+    setState(() {
+      _locating = true;
+      _statusText = '';
+    });
     try {
       BrowserLocation? location;
       if (locationOverride != null) {
@@ -11972,7 +11978,9 @@ class _OrderScreenState extends State<OrderScreen> {
         _confirmedCityPoint = null;
         await AppPreferences.clearOrderCity();
         if (!mounted) return;
-        _clearRoute();
+        // A GPS retry must preserve a destination already selected on the
+        // unified booking screen.
+        if (!_showCityComposer) _clearRoute();
         _selectedCityPoint = null;
         _currentCityId = null;
       }
@@ -12006,6 +12014,10 @@ class _OrderScreenState extends State<OrderScreen> {
       }
 
       _moveMap(point, 16.5);
+      if (forceCurrentLocation && _showCityComposer) {
+        await _applyCityMapPoint(point, isFrom: true);
+        return;
+      }
       await _syncSearchCityFromCoords(point);
       if (!mounted) return;
 
@@ -12026,8 +12038,9 @@ class _OrderScreenState extends State<OrderScreen> {
           if (fallback != null) {
             _mapCenter = fallback;
           }
-          _statusText =
-              'Не удалось определить GPS. Введите адрес или выберите точку на карте.';
+          _statusText = e is BrowserLocationException
+              ? e.userMessage
+              : 'Не удалось определить GPS. Введите адрес или выберите точку на карте.';
         });
       }
     } finally {
