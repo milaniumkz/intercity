@@ -35,6 +35,7 @@ class LocationSession {
       _fix != null && isReliableCurrentLocation(_fix!) ? _fix : null;
   void rememberFix(BrowserLocation fix) {
     if (!isReliableCurrentLocation(fix)) return;
+    _automaticAttempted = false;
     _fix = BrowserLocation(
         latitude: fix.latitude,
         longitude: fix.longitude,
