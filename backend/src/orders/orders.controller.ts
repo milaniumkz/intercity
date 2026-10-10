@@ -72,6 +72,13 @@ export class OrdersController {
         );
     }
 
+    @Post(':id/increase-price')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    async increaseAuctionPrice(@Param('id') id: string, @Request() req) {
+        return this.ordersService.increaseAuctionPrice(id, req.user.sub);
+    }
+
     @Post(':id/offers')
     @UseGuards(JwtAuthGuard)
     @ApiBearerAuth()

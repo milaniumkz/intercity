@@ -167,6 +167,15 @@ export class AutoDispatchService implements OnModuleInit, OnModuleDestroy {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302091)`;
             const order = await tx.order.findUnique({where: {id: orderId}});
             if (!order || !order.cityId || order.driverId || order.status !== 'SEARCHING_DRIVER') return [];
+            const previousInvites = await tx.orderAuctionInvitation.findMany({where: {orderId}});
+            if (previousInvites.length && !previousInvites.some(item => item.status === 'PENDING')) {
+                const roundStartedAt = new Date(Math.min(...previousInvites.map(item => item.createdAt.getTime())));
+                const roundOffers = await tx.orderOffer.findMany({where: {orderId, updatedAt: {gte: roundStartedAt}}});
+                const lastChange = Math.max(...previousInvites.map(item => item.createdAt.getTime()), ...roundOffers.map(item => item.updatedAt.getTime()));
+                if (roundOffers.length && roundOffers.every(item => item.status === 'REJECTED') && Date.now() - lastChange >= 60_000) {
+                    await tx.orderAuctionInvitation.deleteMany({where: {orderId}});
+                }
+            }
             const drivers = await this.findEligibleDrivers(order.cityId, order.fromLat, order.fromLng,
                 settings.searchRadiusKm, settings.minDriverLocationFreshSec,
                 order.currency === 'RUB' ? settings.driverMinOnlineBalanceRub : settings.driverMinOnlineBalance, order.currency, tx);

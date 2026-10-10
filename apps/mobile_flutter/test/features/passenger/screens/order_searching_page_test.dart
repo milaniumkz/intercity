@@ -49,6 +49,29 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets('passenger increases auction price immediately while waiting',
+      (tester) async {
+    final api = _FakeApiClient()..auction = true;
+    await tester.pumpWidget(MaterialApp(
+        home: OrderSearchingPage(
+            orderId: 'order-1',
+            apiClient: api,
+            enableLiveMap: false,
+            realtimeConnector: (String path,
+                    {Map<String, dynamic>? queryParameters}) async =>
+                null)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    final button = find.text('Цена 1500 ₸ · +100');
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(api.priceIncreases, 1);
+    expect(find.text('Цена 1600 ₸ · +100'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets(
       'pickup ETA and route update from the moving driver, then hide on arrival',
       (tester) async {
@@ -294,6 +317,15 @@ class _FakeApiClient extends ApiClient {
           baseUrl: 'https://api.intercity.invalid/api',
         );
 
+  bool auction = false;
+  int priceIncreases = 0;
+  @override
+  Future<Response<dynamic>> post(String path,
+      {dynamic data, Options? options}) async {
+    if (path.endsWith('/increase-price')) priceIncreases++;
+    return Response(requestOptions: RequestOptions(path: path), data: {});
+  }
+
   List<Map<String, dynamic>> offers = [];
   int getCalls = 0;
   final String currency;
@@ -343,7 +375,8 @@ class _FakeApiClient extends ApiClient {
             'user': {'name': 'Тестовый водитель', 'phone': '+70000000001'}
           },
         'currency': currency,
-        'price': 1500,
+        'price': 1500 + priceIncreases * 100,
+        'requestType': auction ? 'CITY_AUCTION' : 'CITY_FIXED',
         'fromAddress': 'Точка A',
         'toAddress': 'Точка B',
         'fromLat': 43.238949,

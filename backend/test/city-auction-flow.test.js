@@ -21,6 +21,16 @@ test('taxi broadcast, passenger confirmation, 30s expiry and activity accounting
   const expired=await service.createOrderOffer(order.id,drivers[1].userId,{price:800});await p.orderOffer.update({where:{id:expired.id},data:{expiresAt:new Date(Date.now()-1000)}});await assert.rejects(service.acceptOrderOffer(expired.id,passenger.id));
   await driverApi.rejectOrder(drivers[2].userId,order.id);assert.equal(await score(drivers[2]),79);
   await p.orderAuctionInvitation.updateMany({where:{orderId:order.id,driverId:drivers[3].id},data:{expiresAt:new Date(Date.now()-1000)}});await dispatch.processQueue();assert.equal((await p.orderOffer.findUnique({where:{id:expired.id}})).status,'EXPIRED');assert.equal(await score(drivers[1]),82);assert.equal(await score(drivers[3]),79);await dispatch.processQueue();assert.equal(await score(drivers[3]),79);
+  await p.orderOffer.updateMany({where:{orderId:order.id},data:{status:'REJECTED'}});
+  const beforeRound=pushes.length;await dispatch.assignCityOrder(order.id);assert.equal(pushes.length,beforeRound);
+  await p.orderAuctionInvitation.updateMany({where:{orderId:order.id},data:{createdAt:new Date(Date.now()-120000)}});
+  await p.orderOffer.updateMany({where:{orderId:order.id},data:{updatedAt:new Date(Date.now()-61000)}});
+  await dispatch.assignCityOrder(order.id);assert.equal(pushes.length,beforeRound+3);
+  assert.equal(await p.orderAuctionInvitation.count({where:{orderId:order.id,status:'PENDING'}}),3);
+  assert.equal(await score(drivers[0]),82);assert.equal(await score(drivers[1]),82);
+  const newPrice=await service.increaseAuctionPrice(order.id,passenger.id);assert.equal(newPrice.price,800);
+  assert.equal(pushes.length,beforeRound+6);assert.equal(await score(drivers[0]),82);
+  await assert.rejects(service.increaseAuctionPrice(order.id,drivers[0].userId));
   await p.order.update({where:{id:order.id},data:{status:'CANCELLED'}});await p.driverOnline.updateMany({where:{driverId:{in:drivers.map(d=>d.id)}},data:{isOnline:true,lastLocationAt:new Date()}});
   const second=await create();const a=await service.createOrderOffer(second.id,drivers[0].userId,{price:700});const b=await service.createOrderOffer(second.id,drivers[1].userId,{price:900});const result=await Promise.allSettled([service.acceptOrderOffer(a.id,passenger.id),service.acceptOrderOffer(b.id,passenger.id)]);assert.equal(result.filter(x=>x.status==='fulfilled').length,1);
   const trip=await p.order.findUnique({where:{id:second.id}});assert.equal(trip.status,'DRIVER_EN_ROUTE');assert.ok([700,900].includes(trip.price));assert.equal(await p.orderAuctionInvitation.count({where:{orderId:second.id,status:'PENDING'}}),0);await assert.rejects(service.rejectOrderOffer(trip.selectedOfferId,passenger.id));assert.equal(await score({id:trip.driverId}),85);
