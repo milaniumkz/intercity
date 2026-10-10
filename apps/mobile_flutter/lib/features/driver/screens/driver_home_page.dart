@@ -45,10 +45,12 @@ const bool kIntercityScreenBoard = bool.fromEnvironment(
 );
 
 class DriverHomePage extends StatefulWidget {
-  const DriverHomePage({super.key, this.routeStage, this.apiClient});
+  const DriverHomePage(
+      {super.key, this.routeStage, this.apiClient, this.mapTileProvider});
 
   final String? routeStage;
   final ApiClient? apiClient;
+  final TileProvider? mapTileProvider;
 
   @override
   State<DriverHomePage> createState() => _DriverHomePageState();
@@ -3985,93 +3987,94 @@ class _DriverHomePageState extends State<DriverHomePage>
   Widget _boardDriverHomeScreen() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final bg = isDark ? AppTheme.darkBackground : AppTheme.lightBackground;
-    final text = isDark ? Colors.white : const Color(0xFF15162C);
     final displayOnline = _pendingOnlineValue ?? _isOnline;
-    final muted = isDark ? Colors.white60 : const Color(0xFF77768A);
-
     return Scaffold(
-      backgroundColor: bg,
-      bottomNavigationBar: _boardDriverBottomNav(isDark, 0),
-      body: SafeArea(
-        child: Padding(
+      extendBody: true,
+      bottomNavigationBar: SafeArea(
+          top: false,
+          child: ClipRRect(
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(24)),
+              child: _boardDriverBottomNav(isDark, 0))),
+      body: Stack(fit: StackFit.expand, children: [
+        Positioned.fill(child: _boardDriverSoftMap(isDark)),
+        SafeArea(
+            child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text(
-                    _switchBusy
-                        ? (displayOnline ? 'Подключение…' : 'Отключение…')
-                        : (_isOnline ? 'Вы онлайн' : 'Вы офлайн'),
-                    style: TextStyle(
-                      color: text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 14,
-                    ),
-                  ),
-                  const Spacer(),
-                  Builder(
-                      builder: (anchorContext) => IconButton(
-                            key:
-                                const ValueKey('driver-metrics-popover-button'),
-                            tooltip: 'Показатели водителя',
-                            icon: const Icon(Icons.dashboard_outlined),
-                            color: AppTheme.primaryColor,
-                            onPressed: () =>
-                                _showDashboardPopover(anchorContext),
-                          )),
-                  const SizedBox(width: 8),
-                  InkWell(
-                    onTap: _switchBusy ? null : () => _setOnline(!_isOnline),
-                    borderRadius: BorderRadius.circular(999),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 180),
-                      width: 48,
-                      height: 28,
-                      padding: const EdgeInsets.all(3),
-                      decoration: BoxDecoration(
-                        color: displayOnline
-                            ? AppTheme.primaryColor
-                            : muted.withValues(alpha: 0.35),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Align(
-                        alignment: displayOnline
-                            ? Alignment.centerRight
-                            : Alignment.centerLeft,
-                        child: CircleAvatar(
-                          radius: 11,
-                          backgroundColor: Colors.white,
-                          child: _switchBusy
-                              ? const SizedBox(
-                                  width: 13,
-                                  height: 13,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2))
-                              : null,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              DriverDailyBonusCard(
-                  bonus: _driverProfile?['dailyBonus'] is Map
-                      ? Map<String, dynamic>.from(
-                          _driverProfile!['dailyBonus'] as Map)
-                      : null),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Row(children: [
               Expanded(
-                  child: ClipRRect(
-                borderRadius: BorderRadius.circular(18),
-                child: _boardDriverSoftMap(isDark),
+                  child: Material(
+                color: displayOnline
+                    ? AppTheme.primaryColor
+                    : theme.colorScheme.surface,
+                elevation: 4,
+                shadowColor: Colors.black12,
+                borderRadius: BorderRadius.circular(28),
+                child: InkWell(
+                  key: const ValueKey('driver-online-toggle'),
+                  borderRadius: BorderRadius.circular(28),
+                  onTap: _switchBusy ? null : () => _setOnline(!_isOnline),
+                  child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 18, vertical: 16),
+                      child: Row(children: [
+                        Icon(Icons.circle,
+                            size: 10,
+                            color: displayOnline
+                                ? Colors.white
+                                : theme.colorScheme.onSurfaceVariant),
+                        const SizedBox(width: 10),
+                        Expanded(
+                            child: Text(
+                                displayOnline ? 'На линии' : 'Выйти на линию',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 15,
+                                    color: displayOnline
+                                        ? Colors.white
+                                        : theme.colorScheme.onSurface))),
+                        if (_switchBusy)
+                          SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: displayOnline
+                                      ? Colors.white
+                                      : AppTheme.primaryColor))
+                        else
+                          Icon(Icons.power_settings_new_rounded,
+                              color: displayOnline
+                                  ? Colors.white
+                                  : theme.colorScheme.onSurface),
+                      ])),
+                ),
               )),
-            ],
-          ),
-        ),
-      ),
+              const SizedBox(width: 10),
+              Material(
+                color: theme.colorScheme.surface,
+                shape: const CircleBorder(),
+                elevation: 4,
+                shadowColor: Colors.black12,
+                child: Builder(
+                    builder: (anchorContext) => IconButton(
+                        key: const ValueKey('driver-metrics-popover-button'),
+                        tooltip: 'Показатели водителя',
+                        padding: const EdgeInsets.all(14),
+                        icon: const Icon(Icons.dashboard_outlined),
+                        onPressed: () => _showDashboardPopover(anchorContext))),
+              ),
+            ]),
+            const SizedBox(height: 12),
+            DriverDailyBonusCard(
+                bonus: _driverProfile?['dailyBonus'] is Map
+                    ? Map<String, dynamic>.from(
+                        _driverProfile!['dailyBonus'] as Map)
+                    : null),
+          ]),
+        )),
+      ]),
     );
   }
 
@@ -4176,12 +4179,15 @@ class _DriverHomePageState extends State<DriverHomePage>
             ),
             children: [
               TileLayer(
+                tileProvider: widget.mapTileProvider,
                 urlTemplate: AppConstants.osmTileUrl,
                 subdomains: AppConstants.mapTileSubdomains,
                 userAgentPackageName: 'com.milanium.intercity',
                 retinaMode: true,
               ),
-              const MapDataAttribution(),
+              const Padding(
+                  padding: EdgeInsets.only(bottom: 90),
+                  child: MapDataAttribution()),
               MarkerLayer(
                 markers: [
                   Marker(
@@ -4196,17 +4202,18 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
         ),
         Positioned.fill(
-          child: DecoratedBox(
+          child: IgnorePointer(
+              child: DecoratedBox(
             decoration: BoxDecoration(
               color: isDark
                   ? const Color(0xFF080812).withValues(alpha: 0.20)
                   : Colors.white.withValues(alpha: 0.08),
             ),
-          ),
+          )),
         ),
         Positioned(
           right: 12,
-          top: 12,
+          bottom: 110,
           child: _driverMapRoundButton(
             icon: Icons.my_location_rounded,
             onTap: _updatingLocation
