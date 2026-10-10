@@ -407,7 +407,7 @@ export class OrdersService {
         const isAdmin = actorRole === 'ADMIN';
         const isPassengerOwner = actor?.userId && order.passengerId === actor.userId;
         const isAssignedDriver = actor?.userId && order.driver?.userId === actor.userId;
-        const isOfferDriver = actorRole === 'DRIVER' && actor?.userId && (order.offers || []).some(
+        const isOfferDriver = actor?.userId && (order.offers || []).some(
             (offer: any) => offer.driver?.userId === actor.userId
         );
         if (!isAdmin && !isPassengerOwner && !isAssignedDriver && !isOfferDriver) {

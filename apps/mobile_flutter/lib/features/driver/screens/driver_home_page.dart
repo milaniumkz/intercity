@@ -47,11 +47,16 @@ const bool kIntercityScreenBoard = bool.fromEnvironment(
 
 class DriverHomePage extends StatefulWidget {
   const DriverHomePage(
-      {super.key, this.routeStage, this.apiClient, this.mapTileProvider});
+      {super.key,
+      this.routeStage,
+      this.apiClient,
+      this.mapTileProvider,
+      this.realtimeConnector = SseService.connect});
 
   final String? routeStage;
   final ApiClient? apiClient;
   final TileProvider? mapTileProvider;
+  final Future<SseConnection?> Function(String path) realtimeConnector;
 
   @override
   State<DriverHomePage> createState() => _DriverHomePageState();
@@ -2296,7 +2301,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   Future<void> _connectDriverRealtime() async {
     await _disconnectDriverRealtime();
-    final conn = await SseService.connect('/realtime/driver/me/stream');
+    final conn = await widget.realtimeConnector('/realtime/driver/me/stream');
     if (!mounted) {
       await conn?.close();
       return;
@@ -2310,6 +2315,28 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (raw is! Map) return;
       final data = Map<String, dynamic>.from(raw);
       final type = (data['type'] ?? '').toString().toLowerCase();
+      final payload = data['payload'] is Map
+          ? Map<String, dynamic>.from(data['payload'] as Map)
+          : <String, dynamic>{};
+      if (_waitingAuctionOrderId != null &&
+          '${payload['orderId'] ?? data['entityId'] ?? ''}' ==
+              _waitingAuctionOrderId) {
+        final sameOffer = _waitingAuctionOfferId == null ||
+            '${payload['offerId'] ?? ''}' == _waitingAuctionOfferId;
+        if (sameOffer &&
+            (type == 'order.offer.rejected' || type == 'order.offer.expired')) {
+          _finishAuctionOfferWait(type == 'order.offer.rejected'
+              ? 'Пассажир отклонил предложение. Вы снова на линии.'
+              : 'Время предложения истекло. Вы снова на линии.');
+          return;
+        }
+        if (type == 'order.status.changed' ||
+            type == 'order.price.updated' ||
+            type == 'order.offer.accepted') {
+          unawaited(_checkAuctionOfferWait());
+          return;
+        }
+      }
       if (type == 'driver.rating.updated' ||
           type == 'driver.activity.updated' ||
           type == 'driver.bonus.updated' ||
@@ -2791,7 +2818,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     final offerId = _waitingAuctionOfferId;
     try {
       final res = await _api.get('/orders/$orderId');
-      if (!mounted) return;
+      if (!mounted ||
+          _waitingAuctionOrderId != orderId ||
+          _waitingAuctionOfferId != offerId) {
+        return;
+      }
       final order = Map<String, dynamic>.from(res.data as Map);
       final status = (order['status'] ?? '').toString().toUpperCase();
       if (const ['CANCELLED', 'COMPLETED'].contains(status)) {
@@ -2844,6 +2875,12 @@ class _DriverHomePageState extends State<DriverHomePage>
         );
       }
     } catch (e) {
+      if (!mounted ||
+          _waitingAuctionOrderId != orderId ||
+          _waitingAuctionOfferId != offerId) {
+        return;
+      }
+
       final text = e.toString().toLowerCase();
       if (text.contains('404') ||
           text.contains('not found') ||
@@ -3465,7 +3502,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                 ),
                 const SizedBox(height: 14),
                 const Text(
-                  'Пока пассажир выбирает предложение, новые заказы вам не приходят. Если пассажир не ответит за минуту, вы автоматически вернётесь на линию.',
+                  'Пока пассажир выбирает предложение, новые заказы вам не приходят. Если пассажир не ответит за 30 секунд, вы автоматически вернётесь на линию.',
                   style: TextStyle(color: Colors.white70, height: 1.35),
                 ),
                 const SizedBox(height: 14),

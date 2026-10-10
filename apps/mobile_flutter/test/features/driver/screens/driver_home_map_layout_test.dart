@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:intercity_mobile/core/services/sse_service.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -37,6 +39,54 @@ class _HomeApi extends ApiClient {
 }
 
 void main() {
+  testWidgets(
+      'passenger rejection closes price wait immediately despite a stale poll',
+      (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    final api = _WaitingApi();
+    await tester.pumpWidget(MaterialApp(
+        home: DriverHomePage(
+            apiClient: api,
+            mapTileProvider: MemoryTileProvider(),
+            realtimeConnector: (_) async =>
+                SseConnection(stream: events.stream, close: () async {}))));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Ждём подтверждения пассажира'), findsOneWidget);
+    expect(events.hasListener, isTrue);
+    events.add({
+      'event': 'order-event',
+      'data': {
+        'type': 'order.offer.rejected',
+        'entityId': 'auction',
+        'payload': {
+          'orderId': 'auction',
+          'offerId': 'price-offer',
+          'driverId': 'driver'
+        }
+      }
+    });
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Ждём подтверждения пассажира'), findsNothing);
+    api.pending.complete(Response(
+        requestOptions: RequestOptions(path: '/orders/auction'),
+        data: {
+          'id': 'auction',
+          'status': 'SEARCHING_DRIVER',
+          'offers': [
+            {'id': 'price-offer', 'status': 'PENDING'}
+          ]
+        }));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Ждём подтверждения пассажира'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await events.close();
+  });
+
   for (final size in [const Size(360, 740), const Size(320, 568)]) {
     testWidgets(
         'full screen driver map and anchored metrics remain usable at $size',
@@ -97,5 +147,25 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
     });
+  }
+}
+
+class _WaitingApi extends _HomeApi {
+  final pending = Completer<Response<dynamic>>();
+  @override
+  Future<Response<dynamic>> get(String path,
+      {Map<String, dynamic>? queryParameters, Options? options}) async {
+    if (path == '/orders/auction') return pending.future;
+    final response = await super
+        .get(path, queryParameters: queryParameters, options: options);
+    if (path == '/driver/profile') {
+      response.data['pendingAuctionOffer'] = {
+        'id': 'price-offer',
+        'orderId': 'auction',
+        'expiresAt':
+            DateTime.now().add(const Duration(seconds: 30)).toIso8601String()
+      };
+    }
+    return response;
   }
 }
