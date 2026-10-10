@@ -57,6 +57,30 @@ class _LocationApi extends ApiClient {
 }
 
 void main() {
+  testWidgets(
+      'GPS pickup appears before reverse lookup finishes and is fetched once',
+      (tester) async {
+    final api = _SlowLocationApi();
+    await tester.pumpWidget(MaterialApp(
+        home: OrderScreen(
+            routeStage: 'fixed',
+            apiClient: api,
+            enableLiveMap: false,
+            locationSession: LocationSession(),
+            locationProvider: () async => const BrowserLocation(
+                latitude: 49.902631, longitude: 82.609936, accuracy: 10))));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Моё местоположение'), findsOneWidget);
+    expect(api.reverseCalls, 1);
+    api.ready.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('улица Оралхана Бокея, 24'), findsOneWidget);
+    expect(api.reverseCalls, 1);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
     sharedLocationSession.clear();
@@ -397,4 +421,16 @@ void main() {
     expect(find.text('Город: Омск · ₽'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+}
+
+class _SlowLocationApi extends _LocationApi {
+  final ready = Completer<void>();
+  @override
+  Future<Response<dynamic>> get(String path,
+      {Map<String, dynamic>? queryParameters, Options? options}) async {
+    final response = await super
+        .get(path, queryParameters: queryParameters, options: options);
+    if (path == '/geo/reverse') await ready.future;
+    return response;
+  }
 }

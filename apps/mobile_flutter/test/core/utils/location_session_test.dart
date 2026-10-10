@@ -1,3 +1,4 @@
+import 'package:latlong2/latlong.dart';
 import 'dart:async';
 import 'package:intercity_mobile/core/utils/browser_location_error.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +6,29 @@ import 'package:intercity_mobile/core/utils/location_session.dart';
 import 'package:intercity_mobile/core/utils/browser_location_model.dart';
 
 void main() {
+  test('concurrent city and pickup lookups share one reverse request',
+      () async {
+    final session = LocationSession();
+    final result = Completer<Map<String, dynamic>>();
+    var calls = 0;
+    Future<Map<String, dynamic>> provider() {
+      calls++;
+      return result.future;
+    }
+
+    const point = LatLng(49.9, 82.6);
+    final city = session.resolveReverse(point, provider);
+    final address = session.resolveReverse(point, provider);
+    result.complete({
+      'address': 'Шакарима 10',
+      'cityResolved': true,
+      'addressResolved': true
+    });
+    expect(await city, await address);
+    await session.resolveReverse(point, provider);
+    expect(calls, 1);
+  });
+
   test('home and booking share an in-flight fix and retain it after navigation',
       () async {
     final session = LocationSession();

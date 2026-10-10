@@ -15,9 +15,9 @@ class LocationSession {
     Future<BrowserLocation?> Function() provider, {
     bool retry = false,
   }) async {
-    if (_pendingFix != null) return _pendingFix;
     final cached = freshFix;
     if (!retry && cached != null) return cached;
+    if (_pendingFix != null) return _pendingFix;
     if (!retry && _permissionError != null) throw _permissionError!;
     if (!retry && _automaticAttempted) return null;
     if (retry) _permissionError = null;
@@ -53,6 +53,24 @@ class LocationSession {
         longitude: fix.longitude,
         accuracy: fix.accuracy,
         timestamp: fix.timestamp ?? DateTime.now());
+  }
+
+  final _reversePending = <String, Future<Map<String, dynamic>>>{};
+  Future<Map<String, dynamic>> resolveReverse(
+      LatLng point, Future<Map<String, dynamic>> Function() provider) async {
+    final cached = reverse(point);
+    if (cached != null) return cached;
+    final key = _key(point);
+    if (_reversePending[key] != null) return _reversePending[key]!;
+    final request = provider();
+    _reversePending[key] = request;
+    try {
+      final data = await request;
+      rememberReverse(point, data);
+      return data;
+    } finally {
+      if (identical(_reversePending[key], request)) _reversePending.remove(key);
+    }
   }
 
   String _key(LatLng p) => '${p.latitude}:${p.longitude}';
