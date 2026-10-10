@@ -13,6 +13,13 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateOrderDto {
+    @ApiPropertyOptional({ description: 'Passenger suggested price for CITY_AUCTION' })
+    @IsOptional()
+    @IsNumber()
+    @Min(1)
+    @Max(10000000)
+    desiredPrice?: number;
+
     @ApiProperty()
     @IsNumber()
     fromLat: number;
@@ -73,9 +80,9 @@ export class CreateOrderDto {
     @IsBoolean()
     useBonus?: boolean;
 
-    @ApiPropertyOptional({ enum: ['CASH', 'CARD_TRANSFER', 'BONUSES'] })
+    @ApiPropertyOptional({ enum: ['CASH', 'CARD', 'CARD_TRANSFER', 'BONUS', 'BONUSES'] })
     @IsOptional()
-    @IsIn(['CASH', 'CARD_TRANSFER', 'BONUSES'])
+    @IsIn(['CASH', 'CARD', 'CARD_TRANSFER', 'BONUS', 'BONUSES'])
     paymentMethod?: string;
 
     @ApiPropertyOptional({ enum: ['ECONOMY', 'OPTIMAL', 'COMFORT', 'BUSINESS'] })

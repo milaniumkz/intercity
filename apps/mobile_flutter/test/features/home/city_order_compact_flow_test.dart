@@ -95,7 +95,8 @@ Future<GoRouter> _open(WidgetTester tester, _FlowApi api,
     {bool destination = true,
     bool live = false,
     Size size = const Size(360, 740),
-    String payment = 'CASH'}) async {
+    String payment = 'CASH',
+    bool auction = false}) async {
   FlutterSecureStorage.setMockInitialValues({});
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -111,22 +112,26 @@ Future<GoRouter> _open(WidgetTester tester, _FlowApi api,
       'boardPrice': 700
     },
     'rideCurrency': 'KZT',
+    'cityModeIndex': auction ? 1 : 0,
+    'modeIndex': 0,
     'paymentMethod': payment,
   }));
-  final router = GoRouter(initialLocation: '/order/fixed', routes: [
-    GoRoute(
-        path: '/order/searching/:id',
-        builder: (_, __) => const Scaffold(body: Text('Поиск водителя'))),
-    GoRoute(
-        path: '/order/:stage',
-        builder: (_, state) => OrderScreen(
-            routeStage: state.pathParameters['stage'],
-            apiClient: api,
-            enableLiveMap: live,
-            autoLocateOnStart: false,
-            mapTileProvider: MemoryTileProvider(),
-            locationSession: LocationSession())),
-  ]);
+  final router = GoRouter(
+      initialLocation: auction ? '/order/auction' : '/order/fixed',
+      routes: [
+        GoRoute(
+            path: '/order/searching/:id',
+            builder: (_, __) => const Scaffold(body: Text('Поиск водителя'))),
+        GoRoute(
+            path: '/order/:stage',
+            builder: (_, state) => OrderScreen(
+                routeStage: state.pathParameters['stage'],
+                apiClient: api,
+                enableLiveMap: live,
+                autoLocateOnStart: false,
+                mapTileProvider: MemoryTileProvider(),
+                locationSession: LocationSession())),
+      ]);
   addTearDown(router.dispose);
   await tester.pumpWidget(MaterialApp.router(routerConfig: router));
   await tester.pumpAndSettle();
@@ -134,6 +139,31 @@ Future<GoRouter> _open(WidgetTester tester, _FlowApi api,
 }
 
 void main() {
+  testWidgets(
+      'taxi uses one booking screen and sends passenger price without a fare preview',
+      (tester) async {
+    final api = _FlowApi();
+    await _open(tester, api, auction: true);
+    expect(find.byKey(const ValueKey('taxi-passenger-price')), findsOneWidget);
+    expect(api.previews, isEmpty);
+    final button = find.byKey(const ValueKey('city-order-submit'));
+    expect(tester.widget<FilledButton>(button).onPressed, isNull);
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('taxi-passenger-price')));
+    await tester.enterText(
+        find.byKey(const ValueKey('taxi-passenger-price')), '725');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(api.previews, isEmpty);
+    expect(api.orders.single['requestType'], 'CITY_AUCTION');
+    expect(api.orders.single['desiredPrice'], 725);
+    expect(api.orders.single['vehicleClass'], 'ECONOMY');
+    expect(find.text('Поиск водителя'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets(
       'default economy prices the selected destination on the same screen',
       (tester) async {

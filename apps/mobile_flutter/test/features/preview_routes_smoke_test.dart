@@ -100,7 +100,7 @@ void main() {
     ('/order/payment', 'Заказ поездки'),
     ('/order/confirm', 'Заказ поездки'),
     ('/order/searching', 'Поиск водителя'),
-    ('/order/auction', 'Новый аукцион'),
+    ('/order/auction', 'Заказ поездки'),
     ('/order/offers_wait', 'Поиск предложений'),
     ('/order/offers_list', 'Выберите лучшее'),
     ('/order/offer_confirm', 'Подтвердите выбор'),

@@ -11,6 +11,44 @@ import 'package:intercity_mobile/core/services/sse_service.dart';
 import 'package:intercity_mobile/features/passenger/screens/order_searching_page.dart';
 
 void main() {
+  testWidgets('auction offers stay at the top and leave the map visible',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final api = _FakeApiClient()
+      ..offers = [
+        {
+          'id': 'offer-1',
+          'status': 'PENDING',
+          'price': 1500,
+          'driver': {
+            'user': {'name': 'Алексей'},
+            'carModel': 'Toyota',
+            'rating': {'ratingAvg': 4.9}
+          }
+        }
+      ];
+    await tester.pumpWidget(MaterialApp(
+        home: OrderSearchingPage(
+      orderId: 'order-1',
+      apiClient: api,
+      enableLiveMap: false,
+      realtimeConnector:
+          (String path, {Map<String, dynamic>? queryParameters}) async => null,
+    )));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    final panel = tester
+        .getRect(find.byKey(const ValueKey('passenger-top-auction-offers')));
+    expect(panel.top, lessThan(30));
+    expect(panel.bottom, lessThan(844 * .5));
+    expect(find.text('Алексей'), findsOneWidget);
+    expect(find.text('Принять'), findsOneWidget);
+    expect(find.text('Отклонить'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets(
       'pickup ETA and route update from the moving driver, then hide on arrival',
       (tester) async {
@@ -256,6 +294,7 @@ class _FakeApiClient extends ApiClient {
           baseUrl: 'https://api.intercity.invalid/api',
         );
 
+  List<Map<String, dynamic>> offers = [];
   int getCalls = 0;
   final String currency;
   String status;
@@ -289,6 +328,7 @@ class _FakeApiClient extends ApiClient {
       requestOptions: RequestOptions(path: path),
       data: <String, dynamic>{
         'id': 'order-1',
+        'offers': offers,
         'status': status,
         if (status != 'SEARCHING_DRIVER' && status != 'CANCELLED')
           'driver': {

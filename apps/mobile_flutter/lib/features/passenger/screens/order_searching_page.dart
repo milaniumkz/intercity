@@ -62,6 +62,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
   bool _refreshing = false;
   bool _cancelling = false;
   Timer? _pollTimer;
+  Timer? _offerTickTimer;
   SseConnection? _orderSse;
   StreamSubscription<Map<String, dynamic>>? _orderSseSub;
   DateTime? _lastSseRefreshAt;
@@ -98,6 +99,11 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
       _driverPoint = const LatLng(43.2850, 76.9200);
       return;
     }
+    _offerTickTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && (_order?['offers'] as List? ?? []).isNotEmpty) {
+        setState(() {});
+      }
+    });
     _loadOrder();
     _startPollingFallback();
     unawaited(_connectOrderStream());
@@ -106,6 +112,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _offerTickTimer?.cancel();
     _orderSseSub?.cancel();
     _orderSse?.close();
     _mapController.dispose();
@@ -416,6 +423,14 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     return s == 'COMPLETED' || s == 'CANCELLED';
   }
 
+  int _offerSecondsRemaining(Map<String, dynamic> offer) {
+    final until = DateTime.tryParse('${offer['expiresAt'] ?? ''}');
+    if (until == null) return 30;
+    return (until.difference(DateTime.now()).inMilliseconds / 1000)
+        .ceil()
+        .clamp(0, 30);
+  }
+
   List<Map<String, dynamic>> _pendingOrderOffers(Map<String, dynamic>? order) {
     final offers = order?['offers'];
     if (offers is! List) return const [];
@@ -424,7 +439,8 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
         .map((item) => Map<String, dynamic>.from(item))
         .where(
           (offer) =>
-              (offer['status'] ?? '').toString().toUpperCase() == 'PENDING',
+              (offer['status'] ?? '').toString().toUpperCase() == 'PENDING' &&
+              _offerSecondsRemaining(offer) > 0,
         )
         .toList()
       ..sort((a, b) {
@@ -591,7 +607,24 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     }
   }
 
-  void _fitMap() {
+  EdgeInsets get _orderMapPadding {
+    final count = _pendingOrderOffers(_order).length;
+    if (count == 0) return const EdgeInsets.fromLTRB(36, 76, 36, 36);
+    final height =
+        math.min(MediaQuery.sizeOf(context).height * .45, count * 200.0 + 66);
+    return EdgeInsets.fromLTRB(36, height + 28, 36, 100);
+  }
+
+  Future<void> _fitMap() async {
+    List<LatLng>? roadPoints;
+    if (_statusStep('${_order?['status'] ?? ''}') == 0 &&
+        _fromPoint != null &&
+        _toPoint != null) {
+      try {
+        roadPoints = await _roadRoutes.route(_fromPoint!, _toPoint!);
+      } catch (_) {}
+    }
+    if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final step = _statusStep((_order?['status'] ?? '').toString());
@@ -608,8 +641,9 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
       if (points.isEmpty) return;
       try {
         _mapController.fitCamera(CameraFit.bounds(
-          bounds: LatLngBounds.fromPoints(points),
-          padding: const EdgeInsets.fromLTRB(36, 76, 36, 36),
+          bounds: LatLngBounds.fromPoints(
+              step == 0 ? (roadPoints ?? points) : points),
+          padding: _orderMapPadding,
           maxZoom: 16,
         ));
       } catch (_) {}
@@ -641,7 +675,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     final pendingOffers = _pendingOrderOffers(order);
     final showAuctionOffers = pendingOffers.isNotEmpty && !isFinalOrder;
 
-    if (_useBoardDesign && !showAuctionOffers) {
+    if (_useBoardDesign) {
       if (order != null && _statusStep(displayStatus) >= 1) {
         return _boardActiveTripScreen();
       }
@@ -879,8 +913,24 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                   ),
                 ),
               ),
-            ] else
-              Positioned.fill(child: _auctionOffersFullScreen(pendingOffers)),
+            ] else ...[
+              if (canCancelOrder)
+                Positioned(
+                    bottom: 16,
+                    left: 16,
+                    right: 16,
+                    child: _premiumActionButton(
+                        label: 'Отменить заказ',
+                        icon: Icons.close_rounded,
+                        danger: true,
+                        onPressed: _cancelling ? null : _cancelOrder)),
+              Positioned(
+                top: 12,
+                left: 14,
+                right: 14,
+                child: _auctionOffersOverlay(pendingOffers),
+              ),
+            ],
           ],
         ),
       ),
@@ -891,6 +941,8 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final order = _order;
+    final offers = _pendingOrderOffers(order);
+    final showOffers = offers.isNotEmpty;
     final from = order == null
         ? 'Адрес подачи не указан'
         : _compactAddress((order['fromAddress'] ?? '-').toString());
@@ -913,106 +965,134 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
-                      colors: isDark
+                      colors: showOffers
                           ? [
-                              const Color(0xFF080612).withValues(alpha: 0.10),
-                              const Color(0xFF080612).withValues(alpha: 0.36),
-                              const Color(0xFF080612).withValues(alpha: 0.96),
+                              Colors.black.withValues(alpha: .08),
+                              Colors.transparent,
+                              Colors.black.withValues(alpha: .20)
                             ]
-                          : [
-                              Colors.white.withValues(alpha: 0.10),
-                              Colors.white.withValues(alpha: 0.24),
-                              Colors.white.withValues(alpha: 0.96),
-                            ],
+                          : isDark
+                              ? [
+                                  const Color(0xFF080612)
+                                      .withValues(alpha: 0.10),
+                                  const Color(0xFF080612)
+                                      .withValues(alpha: 0.36),
+                                  const Color(0xFF080612)
+                                      .withValues(alpha: 0.96),
+                                ]
+                              : [
+                                  Colors.white.withValues(alpha: 0.10),
+                                  Colors.white.withValues(alpha: 0.24),
+                                  Colors.white.withValues(alpha: 0.96),
+                                ],
                     ),
                   ),
                 ),
               ),
             ),
-            Positioned(
-              top: 12,
-              left: 16,
-              child: _roundActionButton(
-                icon: Icons.arrow_back_rounded,
-                onTap: () => goBackOr(context, fallback: '/order'),
-              ),
-            ),
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 24,
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF11101D) : Colors.white,
-                  borderRadius: BorderRadius.circular(28),
-                  border: Border.all(
-                    color: AppTheme.primaryColor.withValues(alpha: 0.16),
-                  ),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x302C174C),
-                      blurRadius: 30,
-                      offset: Offset(0, 14),
-                    ),
-                  ],
+            if (showOffers)
+              Positioned(
+                  top: 12,
+                  left: 14,
+                  right: 14,
+                  child: _auctionOffersOverlay(offers)),
+            if (!showOffers)
+              Positioned(
+                top: 12,
+                left: 16,
+                child: _roundActionButton(
+                  icon: Icons.arrow_back_rounded,
+                  onTap: () => goBackOr(context, fallback: '/order'),
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        SizedBox(
-                          width: 44,
-                          height: 44,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 4,
-                            valueColor: const AlwaysStoppedAnimation<Color>(
-                              AppTheme.primaryColor,
-                            ),
-                            backgroundColor: AppTheme.primaryColor.withValues(
-                              alpha: 0.12,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Поиск водителя...',
-                                style: theme.textTheme.titleLarge?.copyWith(
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Обычно это занимает до 1 минуты',
-                                style: TextStyle(
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    _boardRouteLine(from, to),
-                    const SizedBox(height: 16),
-                    _premiumActionButton(
+              ),
+            if (showOffers && canCancel)
+              Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 24,
+                  child: _premiumActionButton(
                       label: 'Отменить заказ',
                       icon: Icons.close_rounded,
-                      onPressed:
-                          canCancel ? _cancelOrder : () => context.go('/order'),
+                      danger: true,
+                      onPressed: _cancelling ? null : _cancelOrder)),
+            if (!showOffers)
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 24,
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF11101D) : Colors.white,
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(
+                      color: AppTheme.primaryColor.withValues(alpha: 0.16),
                     ),
-                  ],
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x302C174C),
+                        blurRadius: 30,
+                        offset: Offset(0, 14),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          SizedBox(
+                            width: 44,
+                            height: 44,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 4,
+                              valueColor: const AlwaysStoppedAnimation<Color>(
+                                AppTheme.primaryColor,
+                              ),
+                              backgroundColor: AppTheme.primaryColor.withValues(
+                                alpha: 0.12,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Поиск водителя...',
+                                  style: theme.textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Обычно это занимает до 1 минуты',
+                                  style: TextStyle(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      _boardRouteLine(from, to),
+                      const SizedBox(height: 16),
+                      _premiumActionButton(
+                        label: 'Отменить заказ',
+                        icon: Icons.close_rounded,
+                        onPressed: canCancel
+                            ? _cancelOrder
+                            : () => context.go('/order'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
           ],
         ),
       ),
@@ -1356,6 +1436,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     if (!widget.enableLiveMap) {
       return const SizedBox.expand();
     }
+    if (_fromPoint == null) return const IntercityMapFallback();
     return Stack(
       children: [
         const Positioned.fill(child: IntercityMapFallback()),
@@ -1364,15 +1445,14 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
           options: MapOptions(
             initialCenter: _fromPoint ?? const LatLng(43.2220, 76.8512),
             initialZoom: 14,
-            onMapReady: _fitMap,
+            onMapReady: () {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _fitMap();
+              });
+            },
           ),
           children: [
-            TileLayer(
-              tileProvider: widget.mapTileProvider,
-              urlTemplate: AppConstants.osmTileUrl,
-              subdomains: AppConstants.mapTileSubdomains,
-              userAgentPackageName: 'com.milanium.intercity',
-            ),
+            _PassengerMapTiles(tileProvider: widget.mapTileProvider),
             const MapDataAttribution(),
             if (_fromPoint != null)
               MarkerLayer(
@@ -1431,7 +1511,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                   strokeWidth: 4,
                   color: Colors.orange,
                   repository: _roadRoutes,
-                  fitPadding: const EdgeInsets.fromLTRB(36, 76, 36, 36),
+                  fitPadding: _orderMapPadding,
                   onDurationResolved: (minutes) {
                     if (!mounted) return;
                     setState(() => _pickupEtaMinutes = minutes);
@@ -1445,7 +1525,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                   strokeWidth: 4,
                   color: AppTheme.primaryColor,
                   repository: _roadRoutes,
-                  fitPadding: const EdgeInsets.fromLTRB(36, 76, 36, 36)),
+                  fitPadding: _orderMapPadding),
           ],
         ),
       ],
@@ -2193,11 +2273,12 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
 
   Widget _auctionOffersOverlay(List<Map<String, dynamic>> offers) {
     final screenHeight = MediaQuery.sizeOf(context).height;
-    final visibleHeight = (offers.length.clamp(1, 6) * 104.0) + 66;
-    final maxHeight = math.min(screenHeight * 0.72, visibleHeight);
+    final visibleHeight = (offers.length.clamp(1, 6) * 200.0) + 66;
+    final maxHeight = math.min(screenHeight * 0.45, visibleHeight);
     return ConstrainedBox(
       constraints: BoxConstraints(maxHeight: maxHeight.clamp(190, 690)),
       child: Container(
+        key: const ValueKey('passenger-top-auction-offers'),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
@@ -2250,7 +2331,9 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                         ),
                       ),
                       Text(
-                        'Видно ${offers.length.clamp(1, 6)} из ${offers.length}. Можно прокрутить.',
+                        offers.length == 1
+                            ? 'Выберите водителя для поездки'
+                            : '${offers.length} предложений · прокрутите для выбора',
                         style: const TextStyle(
                           color: Colors.white60,
                           fontSize: 12,
@@ -2273,73 +2356,6 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _auctionOffersFullScreen(List<Map<String, dynamic>> offers) {
-    return Material(
-      color: Colors.black.withValues(alpha: 0.62),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0E0A1B),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: AppTheme.primaryColor.withValues(alpha: 0.36),
-                        ),
-                      ),
-                      child: const Row(
-                        children: [
-                          Icon(
-                            Icons.local_offer_rounded,
-                            color: AppTheme.secondaryColor,
-                          ),
-                          SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              'Водители предложили цену',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  _roundActionButton(
-                    icon: Icons.refresh_rounded,
-                    onTap: _loadOrder,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: _auctionOffersOverlay(offers),
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -2371,65 +2387,59 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
       ),
       child: Column(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [AppTheme.secondaryColor, AppTheme.primaryColor],
-                  ),
-                ),
-                child: const Icon(
-                  Icons.local_taxi_rounded,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
+          Row(children: [
+            const CircleAvatar(
+                radius: 20, child: Icon(Icons.local_taxi_rounded)),
+            const SizedBox(width: 10),
+            Expanded(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: [
-                        _offerDetailChip(Icons.directions_car_rounded, car),
-                        if (carNumber.isNotEmpty)
-                          _offerDetailChip(
-                            Icons.confirmation_number_rounded,
-                            carNumber,
-                          ),
-                        _offerDetailChip(Icons.star_rounded, ratingText),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              Text(
-                '${price.toStringAsFixed(0)} ${rideCurrencySymbol(_order)}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  Text(car,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 12)),
+                  Text('$carNumber · ★ $ratingText',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 12)),
+                ])),
+            const SizedBox(width: 8),
+            ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 105),
+                child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                        '${price.toStringAsFixed(0)} ${rideCurrencySymbol(_order)}',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900)))),
+          ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            const Icon(Icons.timer_outlined, size: 15, color: Colors.white70),
+            const SizedBox(width: 6),
+            Text('Ответьте за ${_offerSecondsRemaining(offer)} сек.',
+                style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          ]),
+          const SizedBox(height: 6),
+          LinearProgressIndicator(
+              value: _offerSecondsRemaining(offer) / 30,
+              minHeight: 3,
+              color: AppTheme.primaryColor,
+              backgroundColor: Colors.white12),
+          const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
@@ -2452,32 +2462,6 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                 ),
               ),
             ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _offerDetailChip(IconData icon, String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: Colors.white70, size: 15),
-          const SizedBox(width: 5),
-          Text(
-            text,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-            ),
           ),
         ],
       ),
@@ -2850,4 +2834,28 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
       ],
     );
   }
+}
+
+// Keep the tile layer stable while the proposal countdown updates each second.
+class _PassengerMapTiles extends StatefulWidget {
+  const _PassengerMapTiles({this.tileProvider});
+  final TileProvider? tileProvider;
+  @override
+  State<_PassengerMapTiles> createState() => _PassengerMapTilesState();
+}
+
+class _PassengerMapTilesState extends State<_PassengerMapTiles> {
+  late final tiles = TileLayer(
+      tileProvider: widget.tileProvider ?? _PassengerRasterProvider(),
+      urlTemplate: AppConstants.osmTileUrl,
+      subdomains: AppConstants.mapTileSubdomains,
+      userAgentPackageName: 'com.milanium.intercity');
+  @override
+  Widget build(BuildContext context) => tiles;
+}
+
+class _PassengerRasterProvider extends TileProvider {
+  @override
+  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) =>
+      NetworkImage(getTileUrl(coordinates, options), headers: headers);
 }

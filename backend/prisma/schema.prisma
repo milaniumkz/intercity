@@ -286,6 +286,7 @@ model DriverProfile {
   intercityRoutes      DriverIntercityRoute[]
   orders               Order[]                 @relation("DriverOrders")
   orderOffers          OrderOffer[]
+  auctionInvitations   OrderAuctionInvitation[]
   vehicles             Vehicle[]
   complaints           Complaint[]             @relation("ComplaintDriver")
   createdAt            DateTime                @default(now())
@@ -435,6 +436,7 @@ model Order {
   chatMessages       OrderChatMessage[]
   selectedOfferId    String?
   offers             OrderOffer[]
+  auctionInvitations OrderAuctionInvitation[]
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
   completedAt        DateTime?
@@ -454,10 +456,12 @@ model OrderOffer {
   price     Float
   comment   String?
   status    String        @default("PENDING")
+  expiresAt DateTime      @default(dbgenerated("(now() + interval '30 seconds')"))
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
   @@unique([orderId, driverId])
+  @@index([status, expiresAt])
   @@index([orderId, status, createdAt])
   @@index([driverId, status, createdAt])
 }
@@ -861,4 +865,18 @@ model WalletTransaction {
   @@index([intercityRequestId, createdAt])
   @@index([idempotencyKey])
   currency String @default("KZT")
+}
+
+model OrderAuctionInvitation {
+  id String @id @default(uuid())
+  orderId String
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  driverId String
+  driver DriverProfile @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  status String @default("PENDING")
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@unique([orderId, driverId])
+  @@index([status, expiresAt])
+  @@index([driverId, status])
 }

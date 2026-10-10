@@ -405,6 +405,13 @@ class _OrderScreenState extends State<OrderScreen> {
   final TextEditingController _fromController = TextEditingController();
   final TextEditingController _toController = TextEditingController();
   final TextEditingController _commentController = TextEditingController();
+  final _auctionPriceController = TextEditingController();
+  double? get _passengerAuctionPrice {
+    final value =
+        double.tryParse(_auctionPriceController.text.replaceAll(",", "."));
+    return value != null && value.isFinite && value > 0 ? value : null;
+  }
+
   final TextEditingController _manualAddressController =
       TextEditingController();
   final TextEditingController _deliveryItemController = TextEditingController();
@@ -708,6 +715,7 @@ class _OrderScreenState extends State<OrderScreen> {
     final to = _toLocation;
     final draft = <String, dynamic>{
       'vehicleClass': _vehicleClass,
+      'auctionPrice': _auctionPriceController.text,
       'paymentMethod': _paymentMethod,
       'mapHomeSelectedIndex': _mapHomeSelectedIndex,
       'modeIndex': _modeIndex,
@@ -772,10 +780,9 @@ class _OrderScreenState extends State<OrderScreen> {
                             ? 1
                             : 0);
         _vehicleClass = (draft['vehicleClass'] ?? _vehicleClass).toString();
+        _auctionPriceController.text = (draft['auctionPrice'] ?? '').toString();
         _paymentMethod = (draft['paymentMethod'] ?? _paymentMethod).toString();
-        if (_modeIndex == 0 &&
-            _cityModeIndex == 0 &&
-            _paymentMethod == paymentMethodCardTransfer) {
+        if (_modeIndex == 0 && _paymentMethod == paymentMethodCardTransfer) {
           _paymentMethod = paymentMethodCash;
         }
         _fromAddress = (draft['fromAddress'] ?? '').toString();
@@ -1370,6 +1377,7 @@ class _OrderScreenState extends State<OrderScreen> {
     _fromController.dispose();
     _toController.dispose();
     _commentController.dispose();
+    _auctionPriceController.dispose();
     _manualAddressController.dispose();
     _deliveryItemController.dispose();
     _deliveryWeightController.dispose();
@@ -1381,9 +1389,9 @@ class _OrderScreenState extends State<OrderScreen> {
   bool get _showCityComposer =>
       !const bool.fromEnvironment('INTERCITY_SCREEN_PREVIEW') &&
       _modeIndex == 0 &&
-      _cityModeIndex == 0 &&
       const [
         'fixed',
+        'auction',
         'class',
         'routeprice',
         'address',
@@ -3018,13 +3026,21 @@ class _OrderScreenState extends State<OrderScreen> {
     final resolving = _cityResolvingFrom || _cityResolvingTo;
     final canOrder = _fromLocation != null &&
         _toLocation != null &&
-        _boardPrice != null &&
+        (_cityModeIndex == 1
+            ? _passengerAuctionPrice != null
+            : _boardPrice != null) &&
         !resolving &&
         !_loading;
     return Scaffold(
         body: SafeArea(
             child: CityOrderComposer(
       map: _cityBookingMap(),
+      auctionPriceController:
+          _cityModeIndex == 1 ? _auctionPriceController : null,
+      onAuctionPriceChanged: (_) {
+        setState(() {});
+        unawaited(_saveBoardDraft());
+      },
       fromController: _fromController,
       toController: _toController,
       commentController: _commentController,
@@ -3074,7 +3090,13 @@ class _OrderScreenState extends State<OrderScreen> {
       },
       cardAvailable: _savedCardReady,
       currency: _rideCurrency,
-      price: _boardPrice == null ? null : _displayPrice,
+      price: _cityModeIndex == 1
+          ? (_passengerAuctionPrice == null
+              ? null
+              : '${_passengerAuctionPrice!.toStringAsFixed(0)} ${rideCurrencySymbol({
+                      'currency': _rideCurrency
+                    })}')
+          : (_boardPrice == null ? null : _displayPrice),
       routeMeta: _displayRouteMeta,
       busy: _citySubmitting,
       calculating: _loading || resolving,
@@ -11786,6 +11808,7 @@ class _OrderScreenState extends State<OrderScreen> {
   bool get _supportsVehicleClass =>
       supportsVehicleClassForRequestType(_requestType());
   bool get _isMarketRequest =>
+      _requestType() != requestTypeCityAuction &&
       isMarketRequestType(_effectiveCreateRequestType());
 
   String _effectiveCreateRequestType() {
@@ -13376,6 +13399,17 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   bool _validateBeforeCreate() {
+    if (_requestType() == requestTypeCityAuction) {
+      if (_fromLocation == null || _toLocation == null) {
+        _statusText = 'Выберите адреса или обе точки на карте.';
+        return false;
+      }
+      if (_passengerAuctionPrice == null) {
+        _statusText = 'Укажите желаемую цену поездки.';
+        return false;
+      }
+      return true;
+    }
     if (_requestType() == requestTypeCityFixed) {
       if ((_fromLocation == null ||
               _toLocation == null ||
@@ -13429,11 +13463,19 @@ class _OrderScreenState extends State<OrderScreen> {
     setState(() => _loading = true);
     try {
       if (!_supportsSystemPrice) {
-        final route = _distance.as(
-          LengthUnit.Kilometer,
-          fromSnapshot,
-          toSnapshot,
-        );
+        Map<String, dynamic>? taxiRoute;
+        if (requestTypeSnapshot == requestTypeCityAuction) {
+          final response = await _api.get('/route', queryParameters: {
+            'fromLat': fromSnapshot.latitude,
+            'fromLng': fromSnapshot.longitude,
+            'toLat': toSnapshot.latitude,
+            'toLng': toSnapshot.longitude,
+          });
+          taxiRoute = Map<String, dynamic>.from(response.data as Map);
+        }
+        final route = taxiRoute != null
+            ? (taxiRoute['distance'] as num?)?.toDouble()
+            : _distance.as(LengthUnit.Kilometer, fromSnapshot, toSnapshot);
         if (!mounted) return;
         if (_boardRequestId != boardId ||
             _fromLocation != fromSnapshot ||
@@ -13445,15 +13487,14 @@ class _OrderScreenState extends State<OrderScreen> {
         final marketDateText = _formatIntercityDate(_intercityTripDate);
         setState(() {
           _boardDistance = route;
-          _boardDuration = null;
+          _boardDuration = (taxiRoute?['duration'] as num?)?.toInt();
           _boardPrice = null;
           if (requestTypeSnapshot == requestTypeIntercity) {
             _statusText = _intercityWholeCabin
                 ? 'Маршрут подтверждён на $marketDateText. Весь салон выбран. После публикации заявки начнётся аукцион предложений от водителей.'
                 : 'Маршрут подтверждён на $marketDateText. Вы выбрали $_intercitySeats мест(а). После публикации заявки начнётся аукцион предложений от водителей.';
           } else if (requestTypeSnapshot == requestTypeCityAuction) {
-            _statusText =
-                'Маршрут подтверждён. Это городской аукцион: цену предложат водители.';
+            _statusText = '';
           } else {
             _statusText =
                 'Маршрут доставки подтверждён на $marketDateText. После публикации заявки исполнители увидят способ оплаты и предложат условия.';
@@ -13560,6 +13601,8 @@ class _OrderScreenState extends State<OrderScreen> {
             'toAddress': _toAddress,
             'mode': _mode(),
             'requestType': _requestType(),
+            if (_requestType() == requestTypeCityAuction)
+              'desiredPrice': _passengerAuctionPrice,
             'paymentMethod': _paymentMethod,
             'vehicleClass': _vehicleClass,
             'comment': _commentController.text.trim().isEmpty
