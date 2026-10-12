@@ -39,6 +39,7 @@ void main() {
     await tester.pump();
     expect(api.leavingCalls, 1);
     expect(find.text('Водитель уведомлён: выхожу'), findsOneWidget);
+    api.staleLeavingRead = true;
     await tester.pump(const Duration(seconds: 1));
     await tester.pump();
     expect(
