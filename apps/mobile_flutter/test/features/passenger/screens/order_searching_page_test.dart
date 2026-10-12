@@ -11,6 +11,50 @@ import 'package:intercity_mobile/core/services/sse_service.dart';
 import 'package:intercity_mobile/features/passenger/screens/order_searching_page.dart';
 
 void main() {
+  testWidgets('leaving action appears only after arrival and survives refresh',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final api = _FakeApiClient(status: 'DRIVER_EN_ROUTE');
+    await tester.pumpWidget(MaterialApp(
+        home: OrderSearchingPage(
+            orderId: 'order-1',
+            apiClient: api,
+            enableLiveMap: false,
+            pollingInterval: const Duration(seconds: 1),
+            realtimeConnector: (String path,
+                    {Map<String, dynamic>? queryParameters}) async =>
+                null)));
+    await tester.pump();
+    expect(find.text('Выхожу'), findsNothing);
+    api.status = 'DRIVER_ARRIVED';
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(find.text('Выхожу'), findsOneWidget);
+    final statusPanel = tester
+        .widget<Container>(find.byKey(const ValueKey('passenger-trip-status')));
+    expect((statusPanel.decoration as BoxDecoration).color!.a, 1);
+    await tester.tap(find.text('Выхожу'));
+    await tester.pump();
+    expect(api.leavingCalls, 1);
+    expect(find.text('Водитель уведомлён: выхожу'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(
+        tester
+            .widget<FilledButton>(
+                find.byKey(const ValueKey('passenger-leaving')))
+            .onPressed,
+        isNull);
+    api.status = 'IN_PROGRESS';
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('passenger-leaving')), findsNothing);
+    expect(find.text('Отменить заказ'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('auction offers stay at the top and leave the map visible',
       (tester) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -319,11 +363,19 @@ class _FakeApiClient extends ApiClient {
 
   bool auction = false;
   int priceIncreases = 0;
+  int leavingCalls = 0;
+  String? passengerLeavingAt;
   @override
   Future<Response<dynamic>> post(String path,
       {dynamic data, Options? options}) async {
     if (path.endsWith('/increase-price')) priceIncreases++;
-    return Response(requestOptions: RequestOptions(path: path), data: {});
+    if (path.endsWith('/passenger-leaving')) {
+      leavingCalls++;
+      passengerLeavingAt = '2026-10-12T08:00:00Z';
+    }
+    return Response(
+        requestOptions: RequestOptions(path: path),
+        data: {'passengerLeavingAt': passengerLeavingAt});
   }
 
   List<Map<String, dynamic>> offers = [];
@@ -362,6 +414,7 @@ class _FakeApiClient extends ApiClient {
         'id': 'order-1',
         'offers': offers,
         'status': status,
+        'passengerLeavingAt': passengerLeavingAt,
         if (status != 'SEARCHING_DRIVER' && status != 'CANCELLED')
           'driver': {
             'online': {'lastLat': driverLat, 'lastLng': 76.889},

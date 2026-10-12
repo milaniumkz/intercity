@@ -48,8 +48,17 @@ export class PushService {
                 type: 'order_status',
                 orderId,
                 status: status.toUpperCase(),
+                route: `/order/searching/${orderId}`,
             },
         });
+    }
+
+    async sendIntercityStatusToPassenger(requestId: string, status: string): Promise<boolean> {
+        const request = await this.prisma.intercityRequest.findUnique({where:{id:requestId}});
+        if (!request) return false;
+        const message = this.orderStatusMessage(status);
+        if (!message) return false;
+        return this.sendToUser(request.passengerId, {...message, data:{type:'order_status',orderId:requestId,status:status.toUpperCase(),isIntercity:true,route:`/intercity/request/${requestId}`}});
     }
 
     private orderStatusMessage(status: string, driverName?: string | null): { title: string; body: string } | null {

@@ -1,3 +1,6 @@
+import { passengerLeaving } from '../common/passenger-leaving';
+import { RealtimeService } from '../realtime/realtime.service';
+import { PushService } from '../notifications/push.service';
 import { CardPaymentsService } from '../payments/card-payments.service';
 import { startTripVerification, finishTripVerification } from '../common/trip-verification';
 import { consumeLockedBonus } from '../common/currency';
@@ -19,7 +22,11 @@ import { clientUserSelect } from "../common/public-user-select";
 
 @Injectable()
 export class IntercityService {
-  constructor(private prisma: PrismaService, private geoService: GeoService, private cardPayments: CardPaymentsService) {}
+  constructor(private prisma: PrismaService, private geoService: GeoService, private cardPayments: CardPaymentsService, private realtime: RealtimeService, private push: PushService) {}
+
+  async passengerLeaving(requestId: string, userId: string) {
+    return passengerLeaving(this.prisma, 'INTERCITY', requestId, userId, this.realtime, this.push);
+  }
 
   private normalizePhoneDigits(value?: string | null) {
     let digits = (value || "").replace(/\D/g, "");
@@ -392,7 +399,7 @@ export class IntercityService {
       throw new BadRequestException("Request is no longer open");
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const freshOffer = await tx.intercityOffer.findUnique({
         where: { id: offerId },
         include: { request: true },
@@ -449,6 +456,10 @@ export class IntercityService {
       if (profile) await applyDriverActivity(tx, profile.id, `accept:intercity:${freshOffer.requestId}:${profile.id}`, DRIVER_ACTIVITY_RULES.acceptReward);
       return { success: true };
     });
+    if (!('alreadyAccepted' in result)) {
+      void this.push?.sendIntercityStatusToPassenger(offer.requestId, 'DRIVER_ASSIGNED').catch(() => false);
+    }
+    return result;
   }
 
   async cancelRequest(passengerId: string, requestId: string) {
@@ -553,7 +564,7 @@ export class IntercityService {
       });
     }
 
-    return this.prisma.$transaction(async tx => {
+    const updated = await this.prisma.$transaction(async tx => {
       const changed = await tx.intercityRequest.updateMany({ where: { id: requestId, status: current }, data: { status: target } });
       if (changed.count !== 1) throw new BadRequestException('Request status changed. Refresh the request.');
       if (target === 'IN_PROGRESS') {
@@ -568,6 +579,8 @@ export class IntercityService {
       if (target === 'CANCELLED') await tx.tripVerification.updateMany({where:{id:`INTERCITY:${requestId}`,status:'PENDING'},data:{status:'CANCELLED'}});
       return tx.intercityRequest.findUniqueOrThrow({where:{id:requestId}});
     });
+    void this.push?.sendIntercityStatusToPassenger(requestId, target).catch(() => false);
+    return updated;
   }
 
   private async chargeDriverForCompletedIntercityRequest(

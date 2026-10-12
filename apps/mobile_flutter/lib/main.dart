@@ -1,3 +1,4 @@
+import 'core/services/trip_status_sound.dart';
 import 'features/passenger/screens/shared_trip_page.dart';
 import 'dart:async';
 
@@ -295,9 +296,12 @@ class _IntercityAppState extends ConsumerState<IntercityApp> {
         final mediaQuery = MediaQuery.of(context);
         return MediaQuery(
           data: mediaQuery.copyWith(textScaler: TextScaler.noScaling),
-          child: _ModeSwitcherOverlay(
-            router: _router,
-            child: child ?? const SizedBox.shrink(),
+          child: Listener(
+            onPointerDown: (_) => unawaited(TripStatusSound.prepare()),
+            child: _ModeSwitcherOverlay(
+              router: _router,
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
         );
       },

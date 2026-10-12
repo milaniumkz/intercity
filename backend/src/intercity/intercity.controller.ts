@@ -24,6 +24,13 @@ export class IntercityController {
     return this.intercityService.createRequest(req.user.sub, body);
   }
 
+  @Post('requests/:id/passenger-leaving')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async passengerLeaving(@Param('id') id: string, @Request() req) {
+    return this.intercityService.passengerLeaving(id, req.user.sub);
+  }
+
   @Get("requests/open")
   @ApiOperation({ summary: "Get open intercity requests" })
   async getOpenRequests() {

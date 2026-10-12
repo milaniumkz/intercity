@@ -379,6 +379,7 @@ model DriverPartnerFuelBonus {
 
 model Order {
   id                 String         @id @default(uuid())
+  passengerLeavingAt DateTime?
   passengerId        String
   passenger          User           @relation("PassengerOrders", fields: [passengerId], references: [id])
   driverId           String?
@@ -669,6 +670,7 @@ model TariffDelivery {
 
 model IntercityRequest {
   id          String           @id @default(uuid())
+  passengerLeavingAt DateTime?
   passengerId String
   requestType String           @default("INTERCITY")
   fromCity    String

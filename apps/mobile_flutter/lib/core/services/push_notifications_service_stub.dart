@@ -29,5 +29,6 @@ class PushNotificationsService {
     required String title,
     required String body,
     int? notificationId,
+    Map<String, dynamic>? data,
   }) async {}
 }

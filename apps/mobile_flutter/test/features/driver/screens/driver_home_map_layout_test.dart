@@ -40,6 +40,42 @@ class _HomeApi extends ApiClient {
 
 void main() {
   testWidgets(
+      'passenger leaving reaches driver immediately and polling does not repeat it',
+      (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    final api = _ArrivedApi();
+    await tester.pumpWidget(MaterialApp(
+        home: DriverHomePage(
+            apiClient: api,
+            mapTileProvider: MemoryTileProvider(),
+            realtimeConnector: (_) async =>
+                SseConnection(stream: events.stream, close: () async {}))));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(events.hasListener, isTrue);
+    expect(find.text('Пассажир выходит к машине'), findsNothing);
+    api.leaving = '2026-10-12T08:00:00Z';
+    final event = {
+      'event': 'driver-event',
+      'data': {
+        'type': 'driver.passenger.leaving',
+        'payload': {'tripId': 'arrived', 'passengerLeavingAt': api.leaving}
+      }
+    };
+    events.add(event);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Пассажир выходит к машине'), findsOneWidget);
+    events.add(event);
+    await tester.pump(const Duration(seconds: 9));
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Пассажир выходит к машине'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await events.close();
+  });
+  testWidgets(
       'passenger rejection closes price wait immediately despite a stale poll',
       (tester) async {
     FlutterSecureStorage.setMockInitialValues({});
@@ -167,5 +203,35 @@ class _WaitingApi extends _HomeApi {
       };
     }
     return response;
+  }
+}
+
+class _ArrivedApi extends _HomeApi {
+  String? leaving;
+  @override
+  Future<Response<dynamic>> get(String path,
+      {Map<String, dynamic>? queryParameters, Options? options}) async {
+    final order = {
+      'id': 'arrived',
+      'status': 'DRIVER_ARRIVED',
+      'passengerLeavingAt': leaving,
+      'fromLat': 49.95,
+      'fromLng': 82.6,
+      'toLat': 49.96,
+      'toLng': 82.61,
+      'fromAddress': 'A',
+      'toAddress': 'B',
+      'price': 700,
+      'currency': 'KZT',
+      'passenger': {'name': 'Passenger', 'phone': '+70000000000'}
+    };
+    if (path == '/orders/my') {
+      return Response(
+          requestOptions: RequestOptions(path: path), data: [order]);
+    }
+    if (path == '/orders/arrived') {
+      return Response(requestOptions: RequestOptions(path: path), data: order);
+    }
+    return super.get(path, queryParameters: queryParameters, options: options);
   }
 }

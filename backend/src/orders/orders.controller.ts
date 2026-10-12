@@ -43,6 +43,13 @@ export class OrdersController {
         return this.ordersService.getSharedTrip(token);
     }
 
+    @Post(':id/passenger-leaving')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    async passengerLeaving(@Param('id') id: string, @Request() req) {
+        return this.ordersService.passengerLeaving(id, req.user.sub);
+    }
+
     @Post(':id/share')
     @UseGuards(JwtAuthGuard)
     @ApiBearerAuth()
