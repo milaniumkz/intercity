@@ -280,8 +280,9 @@ class _IntercityApi extends _HomeApi {
       (res.data as Map)['acceptIntercity'] = true;
       return res;
     }
-    if (path == '/ridesharing/trips/my')
+    if (path == '/ridesharing/trips/my') {
       return Response(requestOptions: RequestOptions(path: path), data: []);
+    }
     if (path == '/driver/intercity/active') {
       return Response(requestOptions: RequestOptions(path: path), data: [
         {
