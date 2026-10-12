@@ -86,6 +86,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     try {
       final res = await _api.get('/intercity/requests/${widget.requestId}');
       final request = Map<String, dynamic>.from(res.data as Map);
+      request['passengerLeavingAt'] ??= _request?['passengerLeavingAt'];
       final fromLat = request['fromLat'];
       final fromLng = request['fromLng'];
       final toLat = request['toLat'];

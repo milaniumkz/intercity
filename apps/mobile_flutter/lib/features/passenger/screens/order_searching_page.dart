@@ -300,6 +300,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     try {
       final res = await _api.get('/orders/${widget.orderId}');
       final order = Map<String, dynamic>.from(res.data as Map);
+      order['passengerLeavingAt'] ??= _order?['passengerLeavingAt'];
       final status = _effectiveStatus(
         order,
         (order['status'] ?? '').toString(),

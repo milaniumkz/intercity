@@ -1950,6 +1950,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   final Set<String> _leavingNotices = {};
 
   void _notifyPassengerLeaving(Map<String, dynamic> trip) {
+    if (!mounted) return;
     final id = trip['id']?.toString();
     if (id == null ||
         trip['status'] != 'DRIVER_ARRIVED' ||

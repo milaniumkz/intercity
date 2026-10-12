@@ -364,6 +364,7 @@ class _FakeApiClient extends ApiClient {
   bool auction = false;
   int priceIncreases = 0;
   int leavingCalls = 0;
+  bool staleLeavingRead = false;
   String? passengerLeavingAt;
   @override
   Future<Response<dynamic>> post(String path,
@@ -414,7 +415,7 @@ class _FakeApiClient extends ApiClient {
         'id': 'order-1',
         'offers': offers,
         'status': status,
-        'passengerLeavingAt': passengerLeavingAt,
+        'passengerLeavingAt': staleLeavingRead ? null : passengerLeavingAt,
         if (status != 'SEARCHING_DRIVER' && status != 'CANCELLED')
           'driver': {
             'online': {'lastLat': driverLat, 'lastLng': 76.889},
