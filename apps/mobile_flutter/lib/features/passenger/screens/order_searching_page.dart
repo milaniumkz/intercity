@@ -13,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/services/push_notifications_service.dart';
+import '../../../core/services/trip_status_sound.dart';
 import '../../../core/services/sse_service.dart';
 import '../../../core/theme/theme_controller.dart';
 import '../../../core/utils/error_message_ru.dart';
@@ -62,6 +63,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
   bool _loading = true;
   bool _refreshing = false;
   bool _cancelling = false;
+  bool _leavingBusy = false;
   Timer? _pollTimer;
   Timer? _offerTickTimer;
   SseConnection? _orderSse;
@@ -298,6 +300,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     try {
       final res = await _api.get('/orders/${widget.orderId}');
       final order = Map<String, dynamic>.from(res.data as Map);
+      order['passengerLeavingAt'] ??= _order?['passengerLeavingAt'];
       final status = _effectiveStatus(
         order,
         (order['status'] ?? '').toString(),
@@ -566,13 +569,17 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
 
     final notice = _passengerStatusNotice(order, normalized);
     if (notice == null) return;
-    unawaited(_playStatusMelody());
+    unawaited(TripStatusSound.playOnce(widget.orderId, normalized));
     unawaited(
       PushNotificationsService.instance.showOrderStatusNotification(
         orderId: (order['id'] ?? widget.orderId).toString(),
         title: notice.$1,
         body: notice.$2,
         notificationId: Object.hash(widget.orderId, normalized),
+        data: {
+          'status': normalized,
+          'route': '/order/searching/${widget.orderId}'
+        },
       ),
     );
   }
@@ -593,7 +600,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
       case 'DRIVER_EN_ROUTE':
         return ('Водитель назначен', '$name принял заказ и едет к вам.');
       case 'DRIVER_ARRIVED':
-        return ('Водитель приехал', '$name уже на месте подачи.');
+        return ('Водитель прибыл', '$name уже на месте подачи.');
       case 'IN_PROGRESS':
         return ('Поездка началась', 'Хорошей поездки.');
       default:
@@ -601,14 +608,26 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     }
   }
 
-  Future<void> _playStatusMelody() async {
-    for (var i = 0; i < 3; i++) {
-      try {
-        await SystemSound.play(SystemSoundType.alert);
-      } catch (_) {
-        return;
+  Future<void> _passengerLeaving() async {
+    if (_leavingBusy || _order?['passengerLeavingAt'] != null) return;
+    unawaited(TripStatusSound.prepare());
+    unawaited(PushNotificationsService.instance.enableDriverNotifications());
+    setState(() => _leavingBusy = true);
+    try {
+      final response =
+          await _api.post('/orders/${widget.orderId}/passenger-leaving');
+      if (!mounted) return;
+      setState(() => _order = {
+            ...?_order,
+            'passengerLeavingAt': response.data['passengerLeavingAt']
+          });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(errorMessageRu(e))));
       }
-      await Future<void>.delayed(const Duration(milliseconds: 450));
+    } finally {
+      if (mounted) setState(() => _leavingBusy = false);
     }
   }
 
@@ -1273,14 +1292,25 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                       onTap: () => goBackOr(context, fallback: '/order'),
                     ),
                     Expanded(
-                      child: Text(
-                        _statusShort(status),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 16,
-                          height: 1.05,
+                      child: Container(
+                        key: const ValueKey('passenger-trip-status'),
+                        margin: const EdgeInsets.symmetric(horizontal: 10),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.surface,
+                          borderRadius: BorderRadius.circular(18),
+                          boxShadow: const [
+                            BoxShadow(color: Color(0x242C174C), blurRadius: 16)
+                          ],
                         ),
+                        child: Text(_statusShort(status),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: theme.colorScheme.onSurface,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 16,
+                                height: 1.15)),
                       ),
                     ),
                     const SizedBox(width: 46),
@@ -1446,6 +1476,29 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                         )),
                       ],
                     ),
+                    if (status == 'DRIVER_ARRIVED') ...[
+                      const SizedBox(height: 10),
+                      SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            key: const ValueKey('passenger-leaving'),
+                            onPressed: _leavingBusy ||
+                                    order?['passengerLeavingAt'] != null
+                                ? null
+                                : _passengerLeaving,
+                            icon: Icon(order?['passengerLeavingAt'] != null
+                                ? Icons.check_rounded
+                                : Icons.directions_walk_rounded),
+                            label: Text(_leavingBusy
+                                ? 'Отправляем...'
+                                : order?['passengerLeavingAt'] != null
+                                    ? 'Водитель уведомлён: выхожу'
+                                    : 'Выхожу'),
+                            style: FilledButton.styleFrom(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14)),
+                          )),
+                    ],
                     if (order != null &&
                         !_isFinal((order['status'] ?? '').toString()) &&
                         order['status'] != 'IN_PROGRESS') ...[

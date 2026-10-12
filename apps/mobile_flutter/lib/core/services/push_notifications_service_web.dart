@@ -7,6 +7,7 @@ import 'package:web/web.dart' as web;
 
 import '../api/api_client.dart';
 import 'push_notification_payloads.dart';
+import 'trip_status_sound.dart';
 import 'push_notifications_startup_policy.dart';
 
 class PushNotificationsService {
@@ -24,6 +25,7 @@ class PushNotificationsService {
   final Map<String, web.Notification> _activeNotifications =
       <String, web.Notification>{};
 
+  final Set<String> _shownTripNotices = {};
   bool _initialized = false;
   bool _firebaseReady = false;
 
@@ -171,76 +173,95 @@ class PushNotificationsService {
     required String title,
     required String body,
     int? notificationId,
+    Map<String, dynamic>? data,
   }) async {
     if (!_isPermissionGranted) {
       await _requestPermissionIfNeeded();
     }
     if (!_isPermissionGranted) return;
 
-    final tag = 'order-status-${notificationId ?? Object.hash(orderId, title)}';
+    final payload = <String, dynamic>{
+      'type': 'order_status',
+      'orderId': orderId,
+      ...?data
+    };
+    await _showBrowserNotification(
+        title,
+        body,
+        'order-status-${notificationId ?? Object.hash(orderId, title)}',
+        payload);
+  }
+
+  Future<void> _showBrowserNotification(String title, String body, String tag,
+      Map<String, dynamic> payload) async {
+    if (!_isPermissionGranted) return;
+    if (payload['type'] == 'order_status' ||
+        payload['type'] == 'passenger_leaving') {
+      final key = '${payload['orderId']}:$title';
+      if (!_shownTripNotices.add(key)) return;
+      if (_shownTripNotices.length > 200) {
+        _shownTripNotices.remove(_shownTripNotices.first);
+      }
+    }
     _activeNotifications.remove(tag)?.close();
-    final notification = web.Notification(
-      title,
-      web.NotificationOptions(
-        body: body,
-        icon: 'icons/Icon-192.png',
-        badge: 'icons/Icon-maskable-192.png',
-        tag: tag,
-        renotify: true,
-        requireInteraction: false,
-      ),
-    );
-    _activeNotifications[tag] = notification;
-    notification.onclick = ((web.Event _) {
-      notification.close();
-      _activeNotifications.remove(tag);
-      _focusCurrentWindow();
-      _payloadStreamController.add({
-        'type': 'order_status',
-        'orderId': orderId,
-      });
-    }).toJS;
-    notification.onclose = ((web.Event _) {
-      _activeNotifications.remove(tag);
-    }).toJS;
+    try {
+      final registration = await web.window.navigator.serviceWorker.ready.toDart
+          .timeout(const Duration(seconds: 2));
+      await registration
+          .showNotification(
+              title,
+              web.NotificationOptions(
+                body: body,
+                icon: '/icons/Icon-192.png',
+                tag: tag,
+                renotify: true,
+                data: payload.jsify(),
+              ))
+          .toDart;
+      return;
+    } catch (_) {}
+    try {
+      final notification = web.Notification(
+          title,
+          web.NotificationOptions(
+              body: body,
+              icon: '/icons/Icon-192.png',
+              tag: tag,
+              data: payload.jsify()));
+      _activeNotifications[tag] = notification;
+      notification.onclick = ((web.Event _) {
+        notification.close();
+        _activeNotifications.remove(tag);
+        _focusCurrentWindow();
+        _payloadStreamController.add(payload);
+      }).toJS;
+      notification.onclose =
+          ((web.Event _) => _activeNotifications.remove(tag)).toJS;
+    } catch (_) {
+      // Unsupported notifications must not interrupt the trip screen.
+    }
   }
 
   Future<void> _onForegroundMessage(RemoteMessage message) async {
     _payloadStreamController.add(Map<String, dynamic>.from(message.data));
+    final tripId = message.data['orderId']?.toString();
+    final status = message.data['type'] == 'passenger_leaving'
+        ? 'passenger_leaving'
+        : message.data['status']?.toString();
+    if (tripId != null && status != null) {
+      unawaited(TripStatusSound.playOnce(tripId, status));
+    }
     final notification = message.notification;
     if (notification == null) return;
-    if (!_isPermissionGranted) return;
-
     final payload = <String, dynamic>{
       ...message.data,
-      'route': message.data['route']?.toString() ?? '/profile',
+      'route': message.data['route']?.toString() ?? '/profile'
     };
-    final tag = 'remote-${message.messageId ?? notification.hashCode}';
-    _activeNotifications.remove(tag)?.close();
-
-    final browserNotification = web.Notification(
-      notification.title ?? 'INTERCITY',
-      web.NotificationOptions(
-        body: notification.body ?? '',
-        icon: notification.apple?.imageUrl ??
-            notification.android?.imageUrl ??
-            notification.web?.image ??
-            'icons/Icon-192.png',
-        badge: 'icons/Icon-maskable-192.png',
-        tag: tag,
-      ),
-    );
-
-    _activeNotifications[tag] = browserNotification;
-    browserNotification.onclick = ((web.Event _) {
-      browserNotification.close();
-      _activeNotifications.remove(tag);
-      _focusCurrentWindow();
-      _payloadStreamController.add(payload);
-    }).toJS;
-    browserNotification.onclose = ((web.Event _) {
-      _activeNotifications.remove(tag);
-    }).toJS;
+    await _showBrowserNotification(
+        notification.title ?? 'INTERCITY',
+        notification.body ?? '',
+        'remote-${message.messageId ?? notification.hashCode}',
+        payload);
   }
 
   void _bindServiceWorkerClicks() {

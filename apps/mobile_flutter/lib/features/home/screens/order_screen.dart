@@ -1,3 +1,5 @@
+import '../../../core/services/trip_status_sound.dart';
+import '../../../core/services/push_notifications_service.dart';
 import '../widgets/city_order_composer.dart';
 import '../../../core/services/payment_fallback_notifier.dart';
 import '../../passenger/widgets/saved_payment_cards.dart';
@@ -13562,6 +13564,9 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Future<void> _create() async {
+    // Start from the order button's user gesture, before the HTTP request.
+    unawaited(TripStatusSound.prepare());
+    unawaited(PushNotificationsService.instance.enableDriverNotifications());
     unawaited(PaymentFallbackNotifier.prime());
     if (_loading) return;
     setState(() => _loading = true);

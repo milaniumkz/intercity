@@ -1,3 +1,4 @@
+import '../../../core/services/trip_status_sound.dart';
 import '../../../core/services/payment_fallback_notifier.dart';
 import '../../../core/services/text_to_speech_service.dart';
 import '../../../core/utils/localization_service.dart';
@@ -697,6 +698,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         _activeIntercityRequests = active;
         _myIntercityTrips = trips;
       });
+      for (final request in active) {
+        _notifyPassengerLeaving(request);
+      }
     } catch (_) {
       // Межгородний блок вспомогательный, не мешаем основному экрану.
     }
@@ -1946,6 +1950,32 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  final Set<String> _leavingNotices = {};
+
+  void _notifyPassengerLeaving(Map<String, dynamic> trip) {
+    if (!mounted) return;
+    final id = trip['id']?.toString();
+    if (id == null ||
+        trip['status'] != 'DRIVER_ARRIVED' ||
+        trip['passengerLeavingAt'] == null ||
+        !_leavingNotices.add(id)) {
+      return;
+    }
+    unawaited(TripStatusSound.playOnce(id, 'passenger_leaving'));
+    unawaited(PushNotificationsService.instance.showOrderStatusNotification(
+      orderId: id,
+      title: 'Пассажир выходит',
+      body: 'Пассажир сообщил, что выходит к машине.',
+      data: {'type': 'passenger_leaving', 'route': '/driver/home'},
+    ));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Пассажир выходит к машине'),
+        duration: Duration(seconds: 8),
+      ));
+    }
+  }
+
   Future<void> _loadOrderById(String id) async {
     try {
       final res = await _api.get('/orders/$id');
@@ -1954,6 +1984,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final status = (order['status'] ?? '').toString().toUpperCase();
       unawaited(_paymentNotifier.notify(context, order, 'DRIVER'));
       setState(() => _activeOrder = order);
+      _notifyPassengerLeaving(order);
       await _syncActiveRoutePolyline(order);
       if (const ['COMPLETED', 'CANCELLED'].contains(status)) {
         _activeOrderPollTimer?.cancel();
@@ -2000,6 +2031,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       unawaited(_paymentNotifier.notify(context, request, 'DRIVER'));
       setState(() => _activeOrder = request);
+      _notifyPassengerLeaving(request);
       await _syncActiveRoutePolyline(request);
     } catch (e) {
       if (!mounted) return;
@@ -2150,7 +2182,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     _activeOrderPollTimer = Timer.periodic(const Duration(seconds: 3), (
       _,
     ) async {
-      await _loadOrderById(id);
+      if (_activeOrderIsIntercity) {
+        await _loadActiveIntercityById(id);
+      } else {
+        await _loadOrderById(id);
+      }
       final status = (_activeOrder?['status'] ?? '').toString().toUpperCase();
       if (const ['COMPLETED', 'CANCELLED'].contains(status)) {
         _activeOrderPollTimer?.cancel();
@@ -2318,6 +2354,23 @@ class _DriverHomePageState extends State<DriverHomePage>
       final payload = data['payload'] is Map
           ? Map<String, dynamic>.from(data['payload'] as Map)
           : <String, dynamic>{};
+      if (type == 'driver.passenger.leaving') {
+        final id = '${payload['tripId'] ?? ''}';
+        if (_activeOrder?['id'] == id) {
+          _notifyPassengerLeaving({
+            ...?_activeOrder,
+            'passengerLeavingAt': payload['passengerLeavingAt']
+          });
+          if (_activeOrderIsIntercity) {
+            unawaited(_loadActiveIntercityById(id));
+          } else {
+            unawaited(_loadOrderById(id));
+          }
+        } else if (payload['isIntercity'] == true) {
+          unawaited(_loadIntercityMainState());
+        }
+        return;
+      }
       if (_waitingAuctionOrderId != null &&
           '${payload['orderId'] ?? data['entityId'] ?? ''}' ==
               _waitingAuctionOrderId) {
@@ -3738,6 +3791,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           _activeOrder = request;
           _message = 'Межгородняя поездка открыта.';
         });
+        _notifyPassengerLeaving(request);
+        _startActiveOrderPolling('${request['id']}');
         await _syncActiveRoutePolyline(request);
       },
     );

@@ -8,6 +8,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../api/api_client.dart';
 import 'push_notification_payloads.dart';
+import 'trip_status_sound.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -140,6 +141,13 @@ class PushNotificationsService {
   }
 
   Future<void> _onForegroundMessage(RemoteMessage message) async {
+    final tripId = message.data['orderId']?.toString();
+    final status = message.data['type'] == 'passenger_leaving'
+        ? 'passenger_leaving'
+        : message.data['status']?.toString();
+    if (tripId != null && status != null) {
+      unawaited(TripStatusSound.playOnce(tripId, status));
+    }
     _payloadStreamController.add(Map<String, dynamic>.from(message.data));
     final notification = message.notification;
     if (notification == null) return;
@@ -218,6 +226,7 @@ class PushNotificationsService {
     required String title,
     required String body,
     int? notificationId,
+    Map<String, dynamic>? data,
   }) async {
     await _localNotifications.show(
       notificationId ?? Object.hash(orderId, title),
@@ -237,6 +246,7 @@ class PushNotificationsService {
       payload: encodePushPayload({
         'type': 'order_status',
         'orderId': orderId,
+        ...?data,
       }),
     );
   }

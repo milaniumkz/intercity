@@ -1,3 +1,5 @@
+import '../../../core/services/trip_status_sound.dart';
+import '../../../core/services/push_notifications_service.dart';
 import '../../../core/services/payment_fallback_notifier.dart';
 import 'dart:async';
 
@@ -48,6 +50,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
   Map<String, dynamic>? _request;
   bool _loading = true;
   bool _actionBusy = false;
+  bool _leavingBusy = false;
+  String? _lastNotifiedStatus;
   String _message = 'Ищем отклики исполнителей на вашу заявку...';
   Timer? _pollTimer;
   LatLng? _fromPoint;
@@ -82,6 +86,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     try {
       final res = await _api.get('/intercity/requests/${widget.requestId}');
       final request = Map<String, dynamic>.from(res.data as Map);
+      request['passengerLeavingAt'] ??= _request?['passengerLeavingAt'];
       final fromLat = request['fromLat'];
       final fromLng = request['fromLng'];
       final toLat = request['toLat'];
@@ -90,6 +95,33 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
 
       if (!mounted) return;
       unawaited(_paymentNotifier.notify(context, request, 'PASSENGER'));
+      final status = '${request['status'] ?? ''}';
+      final notices = <String, (String, String)>{
+        'DRIVER_ASSIGNED': (
+          'Водитель назначен',
+          'Водитель принял заказ и едет к вам.'
+        ),
+        'DRIVER_EN_ROUTE': (
+          'Водитель назначен',
+          'Водитель принял заказ и едет к вам.'
+        ),
+        'DRIVER_ARRIVED': ('Водитель прибыл', 'Водитель уже на месте подачи.'),
+        'IN_PROGRESS': ('Поездка началась', 'Хорошей поездки.'),
+      };
+      if (status != _lastNotifiedStatus && notices.containsKey(status)) {
+        unawaited(TripStatusSound.playOnce(widget.requestId, status));
+        final notice = notices[status]!;
+        unawaited(PushNotificationsService.instance.showOrderStatusNotification(
+          orderId: widget.requestId,
+          title: notice.$1,
+          body: notice.$2,
+          data: {
+            'isIntercity': true,
+            'route': '/intercity/request/${widget.requestId}'
+          },
+        ));
+      }
+      _lastNotifiedStatus = status;
       setState(() {
         _request = request;
         _loading = false;
@@ -117,6 +149,44 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
       });
     }
   }
+
+  Future<void> _passengerLeaving() async {
+    if (_leavingBusy || _request?['passengerLeavingAt'] != null) return;
+    unawaited(TripStatusSound.prepare());
+    unawaited(PushNotificationsService.instance.enableDriverNotifications());
+    setState(() => _leavingBusy = true);
+    try {
+      final res = await _api
+          .post('/intercity/requests/${widget.requestId}/passenger-leaving');
+      if (mounted) {
+        setState(() => _request = {
+              ...?_request,
+              'passengerLeavingAt': res.data['passengerLeavingAt']
+            });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(errorMessageRu(e))));
+      }
+    } finally {
+      if (mounted) setState(() => _leavingBusy = false);
+    }
+  }
+
+  Widget _leavingButton() => SizedBox(
+      width: double.infinity,
+      child: FilledButton.icon(
+        onPressed: _leavingBusy || _request?['passengerLeavingAt'] != null
+            ? null
+            : _passengerLeaving,
+        icon: const Icon(Icons.directions_walk_rounded),
+        label: Text(_leavingBusy
+            ? 'Отправляем...'
+            : _request?['passengerLeavingAt'] != null
+                ? 'Водитель уведомлён: выхожу'
+                : 'Выхожу'),
+      ));
 
   void _startPolling() {
     if (_pollTimer?.isActive == true) return;
@@ -1795,6 +1865,10 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                                   (offer['id'] ?? '').toString(),
                         ),
                       ),
+                      if (status == 'DRIVER_ARRIVED') ...[
+                        const SizedBox(height: 10),
+                        _leavingButton()
+                      ],
                       const SizedBox(height: 10),
                       Row(
                         children: [
@@ -1887,17 +1961,23 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                     Icons.arrow_back_rounded,
                     onTap: () => goBackOr(context, fallback: '/orders-history'),
                   ),
-                  const Expanded(
+                  Expanded(
+                      child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 10),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                        color: theme.colorScheme.surface,
+                        borderRadius: BorderRadius.circular(18)),
                     child: Text(
-                      'Поездка\nв пути',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16,
-                        height: 1.05,
-                      ),
-                    ),
-                  ),
+                        _request?['status'] == 'DRIVER_ARRIVED'
+                            ? 'Водитель на месте'
+                            : 'Поездка в пути',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            color: theme.colorScheme.onSurface,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 16)),
+                  )),
                   const SizedBox(width: 46),
                 ],
               ),
@@ -1962,6 +2042,10 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                         alpha: 0.12,
                       ),
                     ),
+                    if (request?['status'] == 'DRIVER_ARRIVED') ...[
+                      const SizedBox(height: 10),
+                      _leavingButton()
+                    ],
                     const SizedBox(height: 12),
                     Row(
                       children: [

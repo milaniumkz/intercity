@@ -1,3 +1,4 @@
+import { passengerLeaving } from '../common/passenger-leaving';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { CardPaymentsService } from '../payments/card-payments.service';
 import { startTripVerification, finishTripVerification } from '../common/trip-verification';
@@ -376,6 +377,10 @@ export class OrdersService {
                 },
             },
         });
+    }
+
+    async passengerLeaving(orderId: string, userId: string) {
+        return passengerLeaving(this.prisma, 'CITY', orderId, userId, this.realtimeService, this.pushService);
     }
 
     async createTripShare(orderId: string, userId: string) {
