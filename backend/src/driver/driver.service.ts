@@ -773,17 +773,13 @@ export class DriverService {
         const uploadRoot = process.env.UPLOAD_DIR || join(process.cwd(), 'uploads');
         const targetPath = join(uploadRoot, relativeName);
 
-        await fs.mkdir(join(uploadRoot, profile.id), { recursive: true });
-        await fs.writeFile(targetPath, file.buffer);
-
         const url = `/uploads/${relativeName}`;
-        await this.prisma.driverProfile.update({
-            where: { userId: driverUserId },
-            data: {
-                [updateField]: url,
-                status: 'PENDING',
-                rejectionReason: null,
-            },
+        await this.prisma.$transaction(async tx => {
+            await tx.$executeRaw`SELECT id FROM "User" WHERE id=${driverUserId} FOR UPDATE`;
+            if (!await tx.user.findUnique({where: {id: driverUserId}}) || !await tx.driverProfile.findUnique({where: {id: profile.id}})) throw new NotFoundException('Аккаунт удалён');
+            await fs.mkdir(join(uploadRoot, profile.id), {recursive: true});
+            await fs.writeFile(targetPath, file.buffer);
+            await tx.driverProfile.update({where: {id: profile.id}, data: {[updateField]: url, status: 'PENDING', rejectionReason: null}});
         });
 
         return { ok: true, docType, url };

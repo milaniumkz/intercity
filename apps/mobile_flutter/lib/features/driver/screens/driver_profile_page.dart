@@ -1,3 +1,5 @@
+import '../../../core/utils/localization_service.dart';
+import '../../../core/widgets/account_deletion_dialog.dart';
 import '../../referral/widgets/referral_profile_card.dart';
 import 'dart:async';
 import 'package:dio/dio.dart';
@@ -797,6 +799,15 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                     _openAboutInfo,
                   ),
                   _boardProfileRow(
+                      Icons.delete_forever_rounded,
+                      LocalizationService.translate(
+                          'Удалить аккаунт', 'Аккаунтты жою'),
+                      LocalizationService.translate(
+                          'Удалить профиль и личные данные',
+                          'Профиль мен жеке деректерді жою'),
+                      () => showAccountDeletion(context, _api),
+                      danger: true),
+                  _boardProfileRow(
                     Icons.logout_rounded,
                     'Выйти из аккаунта',
                     'Завершить текущую сессию',
@@ -1441,6 +1452,15 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
             subtitle: 'Что настраивается в профиле водителя',
             onTap: _openAboutInfo,
           ),
+          _quickAction(
+              icon: Icons.delete_forever_rounded,
+              title: LocalizationService.translate(
+                  'Удалить аккаунт', 'Аккаунтты жою'),
+              subtitle: LocalizationService.translate(
+                  'Удалить профиль и личные данные',
+                  'Профиль мен жеке деректерді жою'),
+              danger: true,
+              onTap: () => showAccountDeletion(context, _api)),
           _quickAction(
             icon: Icons.logout_rounded,
             title: 'Выйти',

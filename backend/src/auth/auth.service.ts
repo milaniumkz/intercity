@@ -193,7 +193,7 @@ export class AuthService {
             where: { id: userId },
             include: { wallet: true, city: true, driverProfile: true },
         });
-        if (!user) return null;
+        if (!user || user.phone.startsWith('erased:')) return null;
         const { password, ...safeUser } = user;
         return { ...safeUser, refLink: this.buildReferralLink(user.refCode) };
     }

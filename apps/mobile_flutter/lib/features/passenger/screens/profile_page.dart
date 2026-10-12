@@ -1,3 +1,4 @@
+import '../../../core/widgets/account_deletion_dialog.dart';
 import '../../referral/widgets/referral_profile_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,9 +22,10 @@ import '../../../core/widgets/theme_settings_card.dart';
 import '../widgets/passenger_bottom_nav.dart';
 
 class ProfilePage extends ConsumerStatefulWidget {
-  const ProfilePage({super.key, this.routeStage});
+  const ProfilePage({super.key, this.routeStage, this.apiClient});
 
   final String? routeStage;
+  final ApiClient? apiClient;
 
   @override
   ConsumerState<ProfilePage> createState() => _ProfilePageState();
@@ -31,6 +33,7 @@ class ProfilePage extends ConsumerStatefulWidget {
 
 class _ProfilePageState extends ConsumerState<ProfilePage>
     with WidgetsBindingObserver {
+  late final _api = widget.apiClient ?? ApiClient();
   Map<String, dynamic>? _user;
   Map<String, dynamic>? _driverProfile;
   String _message = '';
@@ -117,7 +120,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
       setState(() => _loading = true);
     }
     try {
-      final api = ApiClient();
+      final api = _api;
       final meRes = await api.get('/me');
       Map<String, dynamic>? driverProfile;
       try {
@@ -169,7 +172,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
 
   Future<void> _loadCities() async {
     try {
-      final res = await ApiClient().get('/geo/cities');
+      final res = await _api.get('/geo/cities');
       if (!mounted) return;
       setState(() {
         _cities = List<Map<String, dynamic>>.from(
@@ -187,7 +190,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
     if (!mounted) return;
     setState(() => _cityLoading = true);
     try {
-      final res = await ApiClient().patch(
+      final res = await _api.patch(
         '/auth/me/city',
         data: <String, dynamic>{'cityId': cityId},
       );
@@ -227,7 +230,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
           accuracy: LocationAccuracy.high,
         ),
       );
-      final reverse = await ApiClient().get(
+      final reverse = await _api.get(
         '/geo/reverse',
         queryParameters: {
           'lat': position.latitude,
@@ -530,7 +533,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
 
   Future<void> _logout() async {
     await AppModeManager.rememberPassengerMode();
-    await ApiClient().clearTokens();
+    await _api.clearTokens();
     if (!mounted) return;
     context.go('/login');
   }
@@ -648,7 +651,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
   Future<void> _switchToDriverMode() async {
     setState(() => _driverSwitchLoading = true);
     try {
-      final res = await ApiClient().get('/driver/profile');
+      final res = await _api.get('/driver/profile');
       final profile =
           res.data is Map ? Map<String, dynamic>.from(res.data as Map) : null;
       final status = profile?['status']?.toString();
@@ -1776,6 +1779,15 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
                           onTap: _openAboutInfo,
                         ),
                         _profileActionTile(
+                            icon: Icons.delete_forever_rounded,
+                            title: LocalizationService.translate(
+                                'Удалить аккаунт', 'Аккаунтты жою'),
+                            subtitle: LocalizationService.translate(
+                                'Удалить профиль и личные данные',
+                                'Профиль мен жеке деректерді жою'),
+                            onTap: () => showAccountDeletion(context, _api),
+                            danger: true),
+                        _profileActionTile(
                           icon: Icons.logout_rounded,
                           title: LocalizationService.translate(
                             'Выйти из аккаунта',
@@ -2289,6 +2301,13 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
                 value: 'Версия 2.4.1',
                 onTap: _openAboutInfo,
               ),
+              TextButton.icon(
+                  onPressed: () => showAccountDeletion(context, _api),
+                  icon: const Icon(Icons.delete_forever_rounded),
+                  label: Text(LocalizationService.translate(
+                      'Удалить аккаунт', 'Аккаунтты жою')),
+                  style:
+                      TextButton.styleFrom(foregroundColor: Colors.redAccent)),
               const SizedBox(height: 28),
               TextButton(
                 onPressed: _logout,
