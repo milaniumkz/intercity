@@ -880,3 +880,9 @@ model OrderAuctionInvitation {
   @@index([status, expiresAt])
   @@index([driverId, status])
 }
+
+model AccountDeletionFileJob {
+  id String @id @default(uuid())
+  directory String
+  createdAt DateTime @default(now())
+}

@@ -1,3 +1,4 @@
+import { AccountDeletionService } from './account-deletion.service';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -24,7 +25,7 @@ import { GeoModule } from '../geo/geo.module';
         GeoModule,
     ],
     controllers: [AuthController, MeController],
-    providers: [AuthService, JwtStrategy],
+    providers: [AuthService, JwtStrategy, AccountDeletionService],
     exports: [AuthService],
 })
 export class AuthModule { }

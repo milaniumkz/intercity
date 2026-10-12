@@ -1,3 +1,6 @@
+import { AccountDeletionService } from './account-deletion.service';
+import { IsString, MinLength } from 'class-validator';
+class DeleteOwnAccountDto { @IsString() @MinLength(1) password: string; }
 import { Controller, Post, Body, Get, UseGuards, Request, Patch } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
@@ -7,7 +10,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-    constructor(private authService: AuthService) { }
+    constructor(private authService: AuthService, private accountDeletion: AccountDeletionService) { }
 
     @Post('register')
     @ApiOperation({ summary: 'Register new user' })
@@ -31,6 +34,13 @@ export class AuthController {
     @ApiOperation({ summary: 'Reset password by phone' })
     async resetPassword(@Body() dto: ResetPasswordDto) {
         return this.authService.resetPassword(dto);
+    }
+
+    @Post('delete-account')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    async deleteAccount(@Request() req, @Body() dto: DeleteOwnAccountDto) {
+        return this.accountDeletion.deleteOwnAccount(req.user.sub, dto.password);
     }
 
     @Get('me')

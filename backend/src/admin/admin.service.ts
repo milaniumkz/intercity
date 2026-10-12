@@ -2249,7 +2249,7 @@ export class AdminService {
         const skip = Math.max(skipRaw, 0);
         const search = (params.search ?? '').trim();
         const role = (params.role ?? '').trim().toUpperCase();
-        const where: Prisma.UserWhereInput = {};
+        const where: Prisma.UserWhereInput = {NOT: {phone: {startsWith: 'erased:'}}};
         if (search) {
             where.OR = [
                 { id: { contains: search, mode: 'insensitive' } },
@@ -2322,7 +2322,7 @@ export class AdminService {
 
     async getSystemOverview() {
         const [users, drivers, orders, cities, topupsPending, payoutsPending] = await Promise.all([
-            this.prisma.user.count(),
+            this.prisma.user.count({where: {NOT: {phone: {startsWith: 'erased:'}}}}),
             this.prisma.driverProfile.count(),
             this.prisma.order.count(),
             this.prisma.city.count(),

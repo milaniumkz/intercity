@@ -70,7 +70,11 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
         const phone=await this.customer(userId);
         const pending=await this.prisma.cardBinding.findFirst({where:{userId,status:'PENDING',createdAt:{gte:new Date(Date.now()-60000)}}});
         if (pending) throw new BadRequestException('Привязка уже запущена. Вернитесь к форме Kassa24 или обновите список карт.');
-        const binding=await this.prisma.cardBinding.create({data:{userId,phone,acquiringId:config.acquiringId,demo:this.demo}});
+        const binding=await this.prisma.$transaction(async tx=>{
+            await tx.$executeRaw`SELECT id FROM "User" WHERE id=${userId} FOR UPDATE`;
+            if (!await tx.user.findUnique({where:{id:userId}})) throw new BadRequestException('Аккаунт удалён');
+            return tx.cardBinding.create({data:{userId,phone,acquiringId:config.acquiringId,demo:this.demo}});
+        });
         try {
             const returnBase=this.webUrl();
             if (!returnBase.startsWith('https://')) throw new BadRequestException('Оплата картой пока недоступна');
@@ -94,6 +98,7 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
         if (!Array.isArray(tokens)) throw new BadRequestException('Не удалось обновить список карт');
         await this.prisma.$transaction(async tx=>{
             await tx.$executeRaw`SELECT id FROM "User" WHERE id=${userId} FOR UPDATE`;
+            if (!await tx.user.findUnique({where:{id:userId}})) throw new BadRequestException('Аккаунт удалён');
             const current=await tx.savedPaymentCard.findMany({where:{userId,active:true,demo:this.demo}});
             let hasDefault=current.some(c=>c.isDefault);
             const hashes:string[]=[];
@@ -118,6 +123,7 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
     async selectCard(userId:string,id:string) {
         await this.prisma.$transaction(async tx=>{
             await tx.$executeRaw`SELECT id FROM "User" WHERE id=${userId} FOR UPDATE`;
+            if (!await tx.user.findUnique({where:{id:userId}})) throw new BadRequestException('Аккаунт удалён');
             const card=await tx.savedPaymentCard.findFirst({where:{id,userId,active:true,demo:this.demo}});
             if (!card) throw new NotFoundException('Карта не найдена');
             await tx.savedPaymentCard.updateMany({where:{userId},data:{isDefault:false}});

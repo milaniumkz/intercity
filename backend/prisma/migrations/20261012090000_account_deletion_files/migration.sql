@@ -1,0 +1,1 @@
+CREATE TABLE "AccountDeletionFileJob" ("id" TEXT NOT NULL, "directory" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "AccountDeletionFileJob_pkey" PRIMARY KEY ("id"));

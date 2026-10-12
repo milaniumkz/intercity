@@ -66,6 +66,12 @@ class AppPreferences {
     await _storage.delete(key);
   }
 
+  static Future<void> clearDeletedAccountState() async {
+    await clearLastAppMode();
+    await _storage.delete(_appModeUserKey);
+    await _storage.delete('payment_fallback_notices');
+  }
+
   static Future<void> setThemeMode(String mode) {
     return _storage.write(AppConstants.themeKey, mode);
   }
