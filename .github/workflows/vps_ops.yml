@@ -29,6 +29,26 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
+      - name: Check notification credential readiness
+        if: inputs.action == 'status' && inputs.target == 'notifications'
+        env:
+          WEB_VAPID: ${{ secrets.INTERCITY_FIREBASE_WEB_VAPID_KEY }}
+          FIREBASE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          node <<'JS'
+          const crypto = require('node:crypto');
+          let vapidValid = false, accountValid = false;
+          try {
+            const key = Buffer.from((process.env.WEB_VAPID || '').trim(), 'base64url');
+            crypto.ECDH.convertKey(key, 'prime256v1');
+            vapidValid = key.length === 65 && key[0] === 4;
+          } catch (_) {}
+          try {
+            const account = JSON.parse(process.env.FIREBASE_ACCOUNT || '');
+            accountValid = account.project_id === 'inter-city-pkzpps' && !!account.client_email && !!account.private_key;
+          } catch (_) {}
+          console.log(JSON.stringify({webVapidPresent:!!process.env.WEB_VAPID,webVapidValid:vapidValid,firebaseAccountPresent:!!process.env.FIREBASE_ACCOUNT,firebaseAccountValid:accountValid}));
+          JS
       - name: Configure SSH
         env:
           VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}

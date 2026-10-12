@@ -12,6 +12,15 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "notifications" ]]; then
+      docker exec -i intercity-backend node <<'JSNOTIFICATIONS'
+const raw=process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+let valid=false;
+try {const a=JSON.parse(raw || ''); valid=a.project_id==='inter-city-pkzpps' && !!a.client_email && !!a.private_key;} catch (_) {}
+console.log(JSON.stringify({serverFirebaseAccountPresent:!!raw,serverFirebaseAccountValid:valid}));
+JSNOTIFICATIONS
+      exit 0
+    fi
     if [[ "$TARGET" == "payment-config" ]]; then
       docker exec -i intercity-backend node <<'JSPAYMENTCONFIG'
 (async () => {
