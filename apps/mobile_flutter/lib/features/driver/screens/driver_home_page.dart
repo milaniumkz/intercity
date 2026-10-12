@@ -698,6 +698,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         _activeIntercityRequests = active;
         _myIntercityTrips = trips;
       });
+      for (final request in active) {
+        _notifyPassengerLeaving(request);
+      }
     } catch (_) {
       // Межгородний блок вспомогательный, не мешаем основному экрану.
     }
@@ -2179,7 +2182,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     _activeOrderPollTimer = Timer.periodic(const Duration(seconds: 3), (
       _,
     ) async {
-      await _loadOrderById(id);
+      if (_activeOrderIsIntercity) {
+        await _loadActiveIntercityById(id);
+      } else {
+        await _loadOrderById(id);
+      }
       final status = (_activeOrder?['status'] ?? '').toString().toUpperCase();
       if (const ['COMPLETED', 'CANCELLED'].contains(status)) {
         _activeOrderPollTimer?.cancel();
@@ -2359,6 +2366,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           } else {
             unawaited(_loadOrderById(id));
           }
+        } else if (payload['isIntercity'] == true) {
+          unawaited(_loadIntercityMainState());
         }
         return;
       }
@@ -3782,6 +3791,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           _activeOrder = request;
           _message = 'Межгородняя поездка открыта.';
         });
+        _notifyPassengerLeaving(request);
+        _startActiveOrderPolling('${request['id']}');
         await _syncActiveRoutePolyline(request);
       },
     );
