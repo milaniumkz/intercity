@@ -9,6 +9,7 @@ import {
 import { PrismaService } from '../prisma.service';
 import { TopupRequestDto, PayoutRequestDto } from './dto/wallet.dto';
 import { TaxService } from '../tax/tax.service';
+import { lockIncomeAccounting } from '../tax/tax-ledger';
 
 @Injectable()
 export class WalletService {
@@ -302,6 +303,7 @@ export class WalletService {
         try {
             localPayout = await this.prisma.$transaction(async (tx) => {
                 if (referral) {
+                    await lockIncomeAccounting(tx);
                     await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
                     const verified = await tx.taxProfile.findUnique({ where: { userId } });
                     if (verified?.countryCode !== 'KZ' || verified.status !== 'VERIFIED') throw new BadRequestException('Налоговый статус требует проверки');

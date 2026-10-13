@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { bonusField } from './currency';
-import { recordTaxIncome } from '../tax/tax-ledger';
+import { lockIncomeAccounting, recordTaxIncome } from '../tax/tax-ledger';
 
 export async function creditRideReferrals(tx: Prisma.TransactionClient, ride: {
     id: string; currency: string; commissionAmount: number;
@@ -13,6 +13,7 @@ export async function creditRideReferrals(tx: Prisma.TransactionClient, ride: {
         !Number.isFinite(ride.commissionAmount) || ride.commissionAmount <= 0) return;
     const amount = Math.round(ride.commissionAmount * percent) / 100;
     if (amount <= 0) return;
+    if ((await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true') await lockIncomeAccounting(tx);
     const invited = await tx.user.findMany({
         where: { id: { in: [ride.passengerId, ride.driverUserId].filter(Boolean) } },
         select: { id: true, referredBy: true },

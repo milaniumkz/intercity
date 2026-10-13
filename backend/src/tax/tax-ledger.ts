@@ -3,6 +3,13 @@ import { COMPONENTS, kazakhstanPeriod, money, POLICY_VERSION, socialIncrement } 
 
 export const TAX_SETTINGS = ['kzTaxEnabled', 'kzTaxOperatorReference', 'kzTaxReferralContractReference',
     'referralMinPayoutKzt'];
+
+// Same transaction lock as account erasure/dispatch. Acquire it before any user
+// or wallet locks: completion, card settlement, debt collection and a referral
+// payout must not take those rows in opposite orders.
+export async function lockIncomeAccounting(tx: Prisma.TransactionClient) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302091)`;
+}
 export async function taxSettings(tx: Prisma.TransactionClient) {
     const rows = await tx.appSettings.findMany({ where: { key: { in: TAX_SETTINGS } } });
     const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
@@ -19,6 +26,7 @@ export type IncomeEvent = { key: string; userId: string; sourceKind: 'CITY' | 'I
 // common lock for driver/referral income and profile verification, including months.
 export async function recordTaxIncome(tx: Prisma.TransactionClient, input: IncomeEvent) {
     if ((await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value !== 'true') return null;
+    await lockIncomeAccounting(tx);
     await tx.$queryRaw`SELECT key FROM "AppSettings" WHERE key = 'kzTaxEnabled' FOR SHARE`;
     if ((await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value !== 'true') return null;
     await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${input.userId} FOR UPDATE`;
@@ -109,6 +117,7 @@ async function calculateEntry(tx: Prisma.TransactionClient, input: IncomeEvent, 
 // Entitlements awaiting status/operator setup are released exactly once. Driver
 // income keeps its original settlement month; referral income arises on release.
 export async function releasePendingIncome(tx: Prisma.TransactionClient, userId: string, now = new Date()) {
+    await lockIncomeAccounting(tx);
     await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
     const profile = await tx.taxProfile.findUnique({ where: { userId } });
     const pending = await tx.taxIncomeEntry.findMany({ where: { ownerKey: userId, status: 'REVIEW', currency: 'KZT' }, orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }], take: 100 });

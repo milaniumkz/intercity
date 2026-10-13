@@ -1,4 +1,4 @@
-import { recordTaxIncome } from '../tax/tax-ledger';
+import { lockIncomeAccounting, recordTaxIncome } from '../tax/tax-ledger';
 import { Injectable, BadRequestException, NotFoundException, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma.service';
@@ -245,6 +245,7 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
     }
     private async creditEarnings(payment:any) {
         await this.prisma.$transaction(async tx=>{
+            await lockIncomeAccounting(tx);
             await tx.$executeRaw`SELECT id FROM "TripCardPayment" WHERE id=${payment.id} FOR UPDATE`;
             const current=await tx.tripCardPayment.findUniqueOrThrow({where:{id:payment.id}});
             if (current.status!=='PAID' || current.earningsCredited || current.refundedAt) return;

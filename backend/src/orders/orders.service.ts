@@ -1,4 +1,4 @@
-import { recordCashDriverIncome } from '../tax/tax-ledger';
+import { lockIncomeAccounting, recordCashDriverIncome } from '../tax/tax-ledger';
 import { CITY_TARIFF_DEFAULTS } from '../common/city-tariff-defaults';
 import { passengerLeaving } from '../common/passenger-leaving';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -879,6 +879,7 @@ export class OrdersService {
         }
 
         const updatedOrder = await this.prisma.$transaction(async tx => {
+            if (targetStatus === 'COMPLETED') await lockIncomeAccounting(tx);
             const changed = await tx.order.updateMany({ where: { id: orderId, status: order.status }, data: updateData });
             if (changed.count !== 1) throw new BadRequestException('Order status changed. Refresh the order.');
             if (targetStatus === 'IN_PROGRESS' && order.driver) {

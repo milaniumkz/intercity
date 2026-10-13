@@ -7,6 +7,7 @@ const { TaxService, validIin } = require('../dist/src/tax/tax.service');
 const { recordTaxIncome, releasePendingIncome } = require('../dist/src/tax/tax-ledger');
 const { WalletService } = require('../dist/src/wallet/wallet.service');
 const { AdminService } = require('../dist/src/admin/admin.service');
+const { IntercityService } = require('../dist/src/intercity/intercity.service');
 
 test('social payments use cumulative rounding, Kazakhstan calendar, SO cap and verified exemptions', () => {
   assert.equal(socialIncrement(0, 10000, 85000).total.toString(), '400');
@@ -24,7 +25,7 @@ const database = process.env.DISPATCH_TEST_DATABASE_URL;
 test('KZ monetary referrals: verified status, no duplicate money, caps, IP, currency review, payouts and refunds', { skip: !database }, async () => {
   const url = new URL(database); assert.equal(url.hostname, '127.0.0.1'); assert.equal(url.pathname, '/dispatch_test');
   const p = new PrismaClient({ datasources: { db: { url: database } } });
-  const tax = new TaxService(p), key = `tax-test:${randomUUID()}`, owners = [];
+  const tax = new TaxService(p), key = `tax-test:${randomUUID()}`, owners = [], driverProfiles = [], requests = [];
   const settingKeys = ['kzTaxEnabled','kzTaxOperatorReference','kzTaxReferralContractReference','referralMinPayoutKzt',`kzTaxPolicy${new Date().getUTCFullYear()}`];
   const previous = await p.appSettings.findMany({where:{key:{in:settingKeys}}});
   const oldKey = process.env.TAX_ID_ENCRYPTION_KEY;
@@ -104,12 +105,34 @@ test('KZ monetary referrals: verified status, no duplicate money, caps, IP, curr
     const registry=await tax.registry(period,'SELF_EMPLOYED'); const row=registry.rows.find(r=>r.ownerKey===u.id);
     assert.equal(row.withheld.toString(),'400');assert.equal(row.paid.toString(),'100');assert.equal(row.payable.toString(),'300');
     assert.equal(JSON.stringify(registry).includes('iinEncrypted'),false);
+    // Real completion debits commission before posting cash income. It races
+    // with debt collection/payouts on the same wallet; neither may deadlock or
+    // collect a social payment twice.
+    const driver = await user();
+    await p.user.update({where:{id:driver.id},data:{role:'DRIVER',phone:'+77'+String(Date.now()).slice(-9)}});
+    await p.wallet.update({where:{userId:driver.id},data:{money:10000}});
+    const profile = await p.driverProfile.create({data:{userId:driver.id,status:'APPROVED',online:{create:{isOnline:true,lastLat:49.9,lastLng:82.6}}}});
+    driverProfiles.push(profile.id);
+    const intercity = new IntercityService(p,{getRoute:async()=>({distance:100,duration:60})},{},{publish:()=>{}},{});
+    for(let n=0;n<6;n++) {
+      const request=await p.intercityRequest.create({data:{passengerId:u.id,selectedDriverId:driver.id,status:'IN_PROGRESS',currency:'KZT',paymentMethod:'CASH',price:1000,fromCity:'Test origin',toCity:'Test destination',date:new Date()}});
+      requests.push(request.id);
+    }
+    const financial = await Promise.allSettled([...requests.map(id=>intercity.updateDriverRequestStatus(driver.id,id,'COMPLETED')), ...Array.from({length:6},()=>tax.collectDebt(driver.id))]);
+    const failed = financial.filter(result=>result.status==='rejected');
+    assert.equal(failed.length,0,failed.map(result=>result.reason.message).join('\n'));
+    const posted=await p.taxIncomeEntry.findMany({where:{ownerKey:driver.id,sourceKind:'INTERCITY'}});
+    assert.equal(posted.length,6);assert.equal(posted.reduce((sum,row)=>sum+Number(row.withheld),0),240);
+    assert.ok((await p.wallet.findUnique({where:{userId:driver.id}})).money>=0);
   } finally {
     global.fetch=oldFetch;
     if(oldKey===undefined) delete process.env.TAX_ID_ENCRYPTION_KEY;else process.env.TAX_ID_ENCRYPTION_KEY=oldKey;
     await p.taxIncomeEntry.deleteMany({where:{ownerKey:{in:owners}}});await p.taxPeriodBasis.deleteMany({where:{ownerKey:{in:owners}}});await p.taxRemittance.deleteMany({where:{ownerKey:{in:owners}}});await p.taxAccountingIdentity.deleteMany({where:{ownerKey:{in:owners}}});
     const wallets=await p.wallet.findMany({where:{userId:{in:owners}},select:{id:true}});const ids=wallets.map(w=>w.id);
-    await p.walletTransaction.deleteMany({where:{walletId:{in:ids}}});await p.payoutRequest.deleteMany({where:{walletId:{in:ids}}});await p.wallet.deleteMany({where:{userId:{in:owners}}});await p.user.deleteMany({where:{id:{in:owners}}});
+    await p.walletTransaction.deleteMany({where:{walletId:{in:ids}}});await p.payoutRequest.deleteMany({where:{walletId:{in:ids}}});
+    await p.tripVerification.deleteMany({where:{driverUserId:{in:owners}}});await p.intercityRequest.deleteMany({where:{id:{in:requests}}});
+    await p.driverDailyParticipation.deleteMany({where:{driverId:{in:driverProfiles}}});await p.driverOnline.deleteMany({where:{driverId:{in:driverProfiles}}});await p.driverProfile.deleteMany({where:{id:{in:driverProfiles}}});
+    await p.wallet.deleteMany({where:{userId:{in:owners}}});await p.user.deleteMany({where:{id:{in:owners}}});
     await p.appSettings.deleteMany({where:{key:{in:settingKeys}}});for(const row of previous) await p.appSettings.create({data:{key:row.key,value:row.value}});
     await p.$disconnect();
   }

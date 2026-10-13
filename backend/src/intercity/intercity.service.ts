@@ -1,4 +1,4 @@
-import { recordCashDriverIncome } from '../tax/tax-ledger';
+import { lockIncomeAccounting, recordCashDriverIncome } from '../tax/tax-ledger';
 import { passengerLeaving } from '../common/passenger-leaving';
 import { RealtimeService } from '../realtime/realtime.service';
 import { PushService } from '../notifications/push.service';
@@ -543,6 +543,7 @@ export class IntercityService {
     if (target === "COMPLETED") {
       const completedAt = new Date();
       return this.prisma.$transaction(async (tx) => {
+        await lockIncomeAccounting(tx);
         const changed = await tx.intercityRequest.updateMany({ where: { id: requestId, status: request.status }, data: { status: target, completedAt } });
         if (changed.count !== 1) return tx.intercityRequest.findUniqueOrThrow({ where: { id: requestId } });
         await this.chargeDriverForCompletedIntercityRequest(

@@ -3,7 +3,7 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes }
 import { PrismaService } from '../prisma.service';
 import { DeclareTaxProfileDto, MonthlyBasisDto, RemittanceDto, TaxSettingsDto, VerifyTaxProfileDto } from './tax.dto';
 import { kazakhstanPeriod, money } from './kz-social-calculator';
-import { releasePendingIncome, taxSettings, totalLiability } from './tax-ledger';
+import { lockIncomeAccounting, releasePendingIncome, taxSettings, totalLiability } from './tax-ledger';
 
 export const TAX_CONSENT_VERSION = 'KZ-platform-income-2026-v1';
 export function validIin(iin: string) {
@@ -106,6 +106,7 @@ export class TaxService {
     release(userId: string) { return this.prisma.$transaction(tx => releasePendingIncome(tx, userId), { timeout: 30000 }); }
     async collectDebt(userId: string) {
         return this.prisma.$transaction(async tx => {
+            await lockIncomeAccounting(tx);
             await tx.$executeRaw`SELECT id FROM "User" WHERE id=${userId} FOR UPDATE`;
             const wallet = await tx.wallet.findUnique({ where: { userId } });
             if (!wallet) throw new NotFoundException('Кошелёк не найден');
