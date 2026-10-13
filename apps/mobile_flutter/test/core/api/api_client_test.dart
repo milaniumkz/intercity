@@ -8,6 +8,65 @@ import 'package:intercity_mobile/core/constants/app_constants.dart';
 import 'package:intercity_shared/intercity_shared.dart';
 
 void main() {
+  group('Sign-in transport recovery', () {
+    test('retries a native timeout once with the same login and HTTPS URL',
+        () async {
+      var attempts = 0;
+      final fallback = _buildMockDio((options) async {
+        attempts++;
+        expect(
+            options.uri.toString(), 'https://api.example.com/api/auth/login');
+        expect(options.data, {'phone': '+77001000002', 'password': 'test'});
+        return _jsonBody({'accessToken': 'access', 'refreshToken': 'refresh'});
+      });
+      final primary = _buildMockDio((options) async {
+        expect(options.connectTimeout, const Duration(seconds: 8));
+        throw DioException.receiveTimeout(
+            timeout: const Duration(seconds: 8), requestOptions: options);
+      });
+      final client = ApiClient(
+          dio: primary,
+          loginFallbackDio: fallback,
+          tokenStore: _MemoryTokenStore(),
+          baseUrl: 'https://api.example.com/api');
+      final response = await client.post('/auth/login',
+          data: {'phone': '+77001000002', 'password': 'test'});
+      expect(response.data['accessToken'], 'access');
+      expect(attempts, 1);
+    });
+
+    for (final scenario in ['password', 'certificate', 'cancel', 'payment']) {
+      test('does not retry $scenario', () async {
+        var attempts = 0;
+        final fallback = _buildMockDio((_) async {
+          attempts++;
+          return _jsonBody({});
+        });
+        final primary = _buildMockDio((options) async {
+          if (scenario == 'password') return _jsonBody({}, statusCode: 401);
+          throw DioException(
+              requestOptions: options,
+              type: scenario == 'certificate'
+                  ? DioExceptionType.badCertificate
+                  : scenario == 'cancel'
+                      ? DioExceptionType.cancel
+                      : DioExceptionType.receiveTimeout);
+        });
+        final client = ApiClient(
+            dio: primary,
+            loginFallbackDio: fallback,
+            tokenStore: _MemoryTokenStore(),
+            baseUrl: 'https://api.example.com/api');
+        await expectLater(
+            client.post(
+                scenario == 'payment' ? '/payments/create' : '/auth/login',
+                data: {}),
+            throwsA(isA<DioException>()));
+        expect(attempts, 0);
+      });
+    }
+  });
+
   group('ApiClient refresh flow', () {
     test('reuses one refresh request for concurrent unauthorized calls',
         () async {

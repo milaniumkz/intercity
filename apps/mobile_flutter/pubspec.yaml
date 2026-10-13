@@ -1,7 +1,7 @@
 name: intercity_mobile
 description: INTERCITY Mobile App
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.1+7
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -23,6 +23,7 @@ dependencies:
 
   # Networking
   dio: ^5.4.0
+  native_dio_adapter: ^1.8.0
   url_launcher: ^6.3.1
 
   # Storage

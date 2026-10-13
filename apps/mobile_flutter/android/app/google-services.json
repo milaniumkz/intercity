@@ -9,7 +9,64 @@
       "client_info": {
         "mobilesdk_app_id": "1:176647550231:android:fcc297a0ecdb070c6d7352",
         "android_client_info": {
+          "package_name": "com.intercity.mobileapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC1DhcnvHMItFX_pxJfBXG-geQTmhd3QHw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:176647550231:android:005e7f58f98c51f96d7352",
+        "android_client_info": {
+          "package_name": "com.intercitycontrols.milanium"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC1DhcnvHMItFX_pxJfBXG-geQTmhd3QHw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:176647550231:android:ef790d70eb872bf16d7352",
+        "android_client_info": {
           "package_name": "com.milanium.intercity"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC1DhcnvHMItFX_pxJfBXG-geQTmhd3QHw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:176647550231:android:6a469e923c46baa46d7352",
+        "android_client_info": {
+          "package_name": "com.milanium.intercitydriver"
         }
       },
       "oauth_client": [],

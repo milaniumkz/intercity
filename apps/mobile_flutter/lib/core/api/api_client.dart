@@ -6,6 +6,7 @@ import 'package:intercity_shared/intercity_shared.dart';
 
 import '../constants/app_constants.dart';
 import '../services/secure_store.dart';
+import 'platform_api_adapter.dart';
 
 abstract class ApiTokenStore {
   Future<String?> read(String key);
@@ -34,14 +35,25 @@ class ApiClient {
   ApiClient({
     Dio? dio,
     Dio? refreshDio,
+    Dio? loginFallbackDio,
     ApiTokenStore? tokenStore,
     String? baseUrl,
   }) : _storage = tokenStore ?? SecureApiTokenStore() {
     final resolvedBaseUrl = _normalizeBaseUrl(baseUrl ?? _resolvedBaseUrl);
     _dio = dio ?? Dio();
     _refreshDio = refreshDio ?? Dio();
+    _loginFallbackDio = loginFallbackDio ??
+        (dio == null ? createPlatformLoginFallback() : null);
+    if (dio == null) configurePlatformApiAdapter(_dio);
+    if (refreshDio == null) configurePlatformApiAdapter(_refreshDio);
     _configureDio(_dio, baseUrl: resolvedBaseUrl);
     _configureDio(_refreshDio, baseUrl: resolvedBaseUrl);
+    if (_loginFallbackDio != null) {
+      _configureDio(_loginFallbackDio!, baseUrl: resolvedBaseUrl);
+      _loginFallbackDio!.options.connectTimeout = const Duration(seconds: 10);
+      _loginFallbackDio!.options.sendTimeout = const Duration(seconds: 10);
+      _loginFallbackDio!.options.receiveTimeout = const Duration(seconds: 15);
+    }
     _dio.interceptors.insert(
       0,
       QueuedInterceptorsWrapper(
@@ -61,6 +73,7 @@ class ApiClient {
 
   late final Dio _dio;
   late final Dio _refreshDio;
+  late final Dio? _loginFallbackDio;
   final ApiTokenStore _storage;
   Future<void>? _refreshFuture;
 
@@ -146,6 +159,9 @@ class ApiClient {
     RequestOptions options,
     RequestInterceptorHandler handler,
   ) async {
+    if (options.path == '/auth/login' && _loginFallbackDio != null) {
+      options.connectTimeout = const Duration(seconds: 8);
+    }
     if (_shouldAttachAuthorization(options)) {
       final token = await _storage.read(AppConstants.accessTokenKey);
       if (token != null && token.isNotEmpty) {
@@ -342,8 +358,30 @@ class ApiClient {
     String path, {
     dynamic data,
     Options? options,
-  }) {
-    return _dio.post<dynamic>(path, data: data, options: options);
+  }) async {
+    final fallback = _loginFallbackDio;
+    final isLogin = path == '/auth/login' && fallback != null;
+    // A stalled native connection must not hold sign-in for a full minute.
+    final primaryOptions = isLogin
+        ? (options ?? Options()).copyWith(
+            sendTimeout: const Duration(seconds: 8),
+            receiveTimeout: const Duration(seconds: 8),
+          )
+        : options;
+    try {
+      return await _dio.post<dynamic>(path,
+          data: data, options: primaryOptions);
+    } on DioException catch (error) {
+      final transportFailure = error.response == null &&
+          (error.type == DioExceptionType.connectionTimeout ||
+              error.type == DioExceptionType.receiveTimeout ||
+              error.type == DioExceptionType.sendTimeout ||
+              error.type == DioExceptionType.connectionError);
+      if (!isLogin || !transportFailure) rethrow;
+      // Retry only sign-in, once, through a separate TLS-validated HTTP/1.1
+      // connection. Never replay payments, orders, or a rejected password.
+      return fallback.post<dynamic>(path, data: data, options: options);
+    }
   }
 
   Future<Response<dynamic>> patch(

@@ -58,20 +58,6 @@ class PushNotificationsService {
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
     final messaging = FirebaseMessaging.instance;
-    await messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: false,
-    );
-
-    await messaging.setAutoInitEnabled(true);
-
-    final token = await messaging.getToken();
-    if (token != null && token.isNotEmpty) {
-      await _sendTokenToBackend(token);
-    }
-
     FirebaseMessaging.onMessage.listen(_onForegroundMessage);
     FirebaseMessaging.onMessageOpenedApp.listen((message) {
       _payloadStreamController.add(Map<String, dynamic>.from(message.data));
@@ -79,6 +65,9 @@ class PushNotificationsService {
     FirebaseMessaging.instance.onTokenRefresh.listen((token) async {
       await _sendTokenToBackend(token);
     });
+    await messaging.requestPermission(alert: true, badge: true, sound: true);
+    await messaging.setAutoInitEnabled(true);
+    await syncTokenIfAuthorized();
   }
 
   Future<void> enableDriverNotifications() async {
@@ -91,7 +80,14 @@ class PushNotificationsService {
   Future<void> syncTokenIfAuthorized() async {
     if (!_firebaseReady) return;
     try {
-      final token = await FirebaseMessaging.instance.getToken();
+      final messaging = FirebaseMessaging.instance;
+      final settings = await messaging.getNotificationSettings();
+      if (settings.authorizationStatus != AuthorizationStatus.authorized &&
+          settings.authorizationStatus != AuthorizationStatus.provisional) {
+        return;
+      }
+      if (Platform.isIOS && await messaging.getAPNSToken() == null) return;
+      final token = await messaging.getToken();
       if (token != null && token.isNotEmpty) {
         await _sendTokenToBackend(token);
       }
@@ -104,7 +100,12 @@ class PushNotificationsService {
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
     const initSettings = InitializationSettings(
-        android: androidSettings, iOS: DarwinInitializationSettings());
+        android: androidSettings,
+        iOS: DarwinInitializationSettings(
+          requestAlertPermission: false,
+          requestBadgePermission: false,
+          requestSoundPermission: false,
+        ));
     await _localNotifications.initialize(
       initSettings,
       onDidReceiveNotificationResponse: _onDidReceiveNotificationResponse,
@@ -280,16 +281,5 @@ class PushNotificationsService {
 }
 
 Future<void> _initializeFirebaseForSupportedNativePlatform() {
-  if (Platform.isAndroid) {
-    return Firebase.initializeApp(
-      options: const FirebaseOptions(
-        apiKey: 'AIzaSyC1DhcnvHMItFX_pxJfBXG-geQTmhd3QHw',
-        appId: '1:176647550231:android:fcc297a0ecdb070c6d7352',
-        messagingSenderId: '176647550231',
-        projectId: 'inter-city-pkzpps',
-        storageBucket: 'inter-city-pkzpps.firebasestorage.app',
-      ),
-    );
-  }
   return Firebase.initializeApp();
 }
