@@ -12,6 +12,14 @@ compose() {
 
 case "$ACTION" in
   status)
+    if [[ "$TARGET" == "city-tariffs" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQLTARIFFAUDIT'
+SELECT json_build_object('country',c."countryCode",'cities',count(*),'activeCities',count(*) FILTER(WHERE c."isActive"),'withoutValidTariff',count(*) FILTER(WHERE NOT EXISTS(SELECT 1 FROM "TariffCity" t WHERE t."cityId"=c.id AND t."isActive" AND t."basePrice">=0 AND t."pricePerKm">0 AND t."pricePerMin">=0 AND t."minPrice">0))) FROM "City" c WHERE c."countryCode" IN ('KZ','RU') GROUP BY c."countryCode";
+SELECT json_build_object('country',c."countryCode",'basePrice',t."basePrice",'pricePerKm',t."pricePerKm",'pricePerMin',t."pricePerMin",'minPrice',t."minPrice",'cities',count(DISTINCT c.id)) FROM "TariffCity" t JOIN "City" c ON c.id=t."cityId" WHERE c."countryCode" IN ('KZ','RU') AND t."isActive" GROUP BY c."countryCode",t."basePrice",t."pricePerKm",t."pricePerMin",t."minPrice" ORDER BY count(*) DESC LIMIT 15;
+SQLTARIFFAUDIT
+      exit 0
+    fi
     if [[ "$TARGET" == "notifications" ]]; then
       docker exec -i intercity-backend node <<'JSNOTIFICATIONS'
 const raw=process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
