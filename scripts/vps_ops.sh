@@ -11,6 +11,20 @@ compose() {
 }
 
 case "$ACTION" in
+  seed-city-tariffs)
+    [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || { echo 'Expected deployed commit SHA is required' >&2; exit 1; }
+    test "$(cat "$APP_ROOT/current_commit")" = "$TARGET"
+    test -s /tmp/seed-all-city-tariffs.cjs
+    umask 077
+    backup="$APP_ROOT/backups/$(date -u +%Y%m%d-%H%M%S)-all-city-tariffs"
+    mkdir -p "$backup"
+    docker exec intercity-postgres sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup/database.dump"
+    test -s "$backup/database.dump"
+    docker exec -i intercity-postgres pg_restore --list < "$backup/database.dump" > "$backup/contents.txt"
+    test -s "$backup/contents.txt"
+    echo "Verified database backup: $backup/database.dump"
+    docker exec -i intercity-backend node < /tmp/seed-all-city-tariffs.cjs
+    ;;
   status)
     if [[ "$TARGET" == "city-tariffs" ]]; then
       cat "$APP_ROOT/current_commit"
