@@ -2234,6 +2234,8 @@ class AdminShell extends StatelessWidget {
     ('/payouts', 'Выплаты', Icons.payments_outlined),
     ('/notifications', 'Уведомления', Icons.notifications_active_outlined),
     ('/finance-audit', 'Финансовый аудит', Icons.receipt_long_outlined),
+    ('/tax-self-employed', 'Самозанятые', Icons.person_outline),
+    ('/tax-ie', 'ИП', Icons.business_center_outlined),
     ('/orders', 'Заказы', Icons.local_taxi_outlined),
     ('/trip-reviews', 'Проверка поездок', Icons.route_outlined),
     ('/rating-reviews', 'Разбор оценок', Icons.rate_review_outlined),

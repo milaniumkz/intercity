@@ -1,3 +1,4 @@
+import 'features/admin/screens/admin_tax_registry_page.dart';
 import 'features/admin/screens/admin_trip_reviews_page.dart';
 import 'features/admin/screens/admin_rating_reviews_page.dart';
 import 'package:flutter/material.dart';
@@ -67,6 +68,8 @@ class IntercityAdminApp extends StatelessWidget {
         '/finance-audit': (context) => const AdminFinanceAuditPage(),
         '/orders': (context) => const AdminOrdersPage(),
         '/trip-reviews': (context) => const AdminTripReviewsPage(),
+        '/tax-self-employed': (context) => const AdminTaxRegistryPage(),
+        '/tax-ie': (context) => const AdminTaxRegistryPage(kind: 'IE'),
         '/rating-reviews': (context) => const AdminRatingReviewsPage(),
       },
     );

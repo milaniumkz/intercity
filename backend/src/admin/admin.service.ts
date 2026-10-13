@@ -64,6 +64,8 @@ export class AdminService {
         { key: 'drivers.manage', module: 'drivers', action: 'manage', description: 'Управление водителями' },
         { key: 'users.view', module: 'users', action: 'view', description: 'Просмотр пользователей' },
         { key: 'users.manage', module: 'users', action: 'manage', description: 'Управление пользователями' },
+        { key: 'tax.view', module: 'tax', action: 'view', description: 'Просмотр налоговых реестров' },
+        { key: 'tax.manage', module: 'tax', action: 'manage', description: 'Проверка статусов и социальные платежи' },
         { key: 'finance.view', module: 'finance', action: 'view', description: 'Просмотр финансов' },
         { key: 'finance.manage', module: 'finance', action: 'manage', description: 'Управление финансами' },
         { key: 'tariffs.view', module: 'tariffs', action: 'view', description: 'Просмотр тарифов' },
@@ -645,6 +647,7 @@ export class AdminService {
     }
 
     async setSetting(key: string, value: string) {
+        if (key.startsWith('kzTax') || key === 'referralMinPayoutKzt') throw new BadRequestException('Настройка выполняется только в разделе налоговых реестров');
         if (key === 'kassa24SavedCardsEnabled' && !['true','false'].includes(value)) throw new BadRequestException('Укажите true или false');
         if (key === 'kassa24AcquiringId' && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0)) throw new BadRequestException('Укажите числовой acquiringId терминала Kassa24');
         if (['driverDailyBonusKZT', 'driverDailyBonusRUB'].includes(key)) {
@@ -899,7 +902,7 @@ export class AdminService {
         if (payout.status !== 'PENDING') {
             throw new BadRequestException(`Payout already ${payout.status.toLowerCase()}`);
         }
-        let payoutSource: 'MONEY' | 'BONUS' = 'MONEY';
+        let payoutSource: 'MONEY' | 'BONUS' | 'REFERRAL' = 'MONEY';
 
         await this.prisma.$transaction(async (tx) => {
             const current = await tx.payoutRequest.findUnique({
@@ -921,7 +924,7 @@ export class AdminService {
             if (claimed.count !== 1) throw new BadRequestException('Payout already processed');
             await tx.wallet.update({
                 where: { id: payout.walletId },
-                data: refundToBonus
+                data: payoutSource === 'REFERRAL' ? { referralMoney: { increment: payout.amount } } : refundToBonus
                     ? { [bonusField(payout.currency)]: { increment: payout.amount } }
                     : { [moneyField(payout.currency)]: { increment: payout.amount } },
             });
@@ -951,12 +954,13 @@ export class AdminService {
     private async resolvePayoutRefundSource(
         db: { payoutRequest: any; walletTransaction?: any },
         payoutId: string,
-    ): Promise<'MONEY' | 'BONUS'> {
+    ): Promise<'MONEY' | 'BONUS' | 'REFERRAL'> {
         try {
             const payout = await db.payoutRequest.findUnique({
                 where: { id: payoutId },
                 select: { source: true },
             });
+            if (payout?.source === 'REFERRAL') return 'REFERRAL';
             if (payout?.source === 'BONUS') {
                 return 'BONUS';
             }
@@ -978,6 +982,7 @@ export class AdminService {
                 orderBy: { createdAt: 'desc' },
                 select: { balanceSource: true },
             });
+            if (walletTransaction?.balanceSource === 'REFERRAL') return 'REFERRAL';
             if (walletTransaction?.balanceSource === 'BONUS') {
                 return 'BONUS';
             }

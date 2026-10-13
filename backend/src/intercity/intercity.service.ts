@@ -1,3 +1,4 @@
+import { recordCashDriverIncome } from '../tax/tax-ledger';
 import { passengerLeaving } from '../common/passenger-leaving';
 import { RealtimeService } from '../realtime/realtime.service';
 import { PushService } from '../notifications/push.service';
@@ -556,6 +557,8 @@ export class IntercityService {
           commissionAmount: await this.getIntercityAcceptedRequestFee(request, driverUserId),
           passengerId: request.passengerId, driverUserId, intercity: true,
         });
+        const acceptedOffer = request.selectedOfferId ? await tx.intercityOffer.findUnique({ where: { id: request.selectedOfferId } }) : null;
+        await recordCashDriverIncome(tx, 'INTERCITY', request, driverUserId, acceptedOffer?.price ?? request.price, completedAt);
         if (profile) await creditDriverDailyBonus(tx, profile.id, driverUserId, request.currency, completedAt);
         return tx.intercityRequest.update({
           where: { id: requestId },

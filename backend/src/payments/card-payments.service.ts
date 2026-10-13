@@ -1,3 +1,4 @@
+import { recordTaxIncome } from '../tax/tax-ledger';
 import { Injectable, BadRequestException, NotFoundException, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma.service';
@@ -254,6 +255,7 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
                 await tx.walletTransaction.create({data:{walletId:wallet.id,currency:payment.currency,type:'CARD_RIDE_EARNINGS',direction:'CREDIT',balanceSource:'MONEY',amount:payment.amount,idempotencyKey:key,orderId:payment.kind==='CITY'?payment.tripId:null,intercityRequestId:payment.kind==='INTERCITY'?payment.tripId:null,note:'Оплата поездки банковской картой'}});
             }
             await tx.tripCardPayment.update({where:{id:payment.id},data:{earningsCredited:true,status:'SETTLED'}});
+            await recordTaxIncome(tx,{key:`driver-income:${payment.kind}:${payment.tripId}`,userId:payment.driverUserId,sourceKind:payment.kind,sourceId:payment.tripId,gross:payment.amount,currency:payment.currency,occurredAt:new Date()});
         });
         await this.publishPayment(payment,'SETTLED');
     }

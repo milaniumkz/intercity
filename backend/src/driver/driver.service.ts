@@ -14,6 +14,7 @@ import { GeoService } from '../geo/geo.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { clientUserSelect } from '../common/public-user-select';
 import { PushService } from '../notifications/push.service';
+import { TaxService } from '../tax/tax.service';
 
 @Injectable()
 export class DriverService {
@@ -23,9 +24,16 @@ export class DriverService {
         private realtimeService: RealtimeService,
         private pushService: PushService,
         private autoDispatchService: AutoDispatchService,
+        private taxService: TaxService,
     ) { }
 
     async createProfile(userId: string, dto: CreateDriverProfileDto) {
+        const rollout = (await this.prisma.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
+        if (rollout && !dto.taxCountry && !await this.prisma.driverProfile.findUnique({ where: { userId } })) throw new BadRequestException('Укажите страну налогового статуса');
+        if (rollout && dto.taxCountry === 'KZ') {
+            const tax = await this.prisma.taxProfile.findUnique({ where: { userId } });
+            if (!tax || tax.status === 'REJECTED') throw new BadRequestException('Выберите и сохраните налоговый статус: самозанятый или ИП');
+        }
         await this.prisma.user.update({
             where: { id: userId },
             data: { role: 'DRIVER' },
@@ -223,6 +231,17 @@ export class DriverService {
             throw new BadRequestException('Driver profile not approved');
         }
         if (dto.isOnline) {
+            const city = await this.prisma.city.findUnique({ where: { id: dto.cityId ?? profile.online?.cityId ?? profile.user?.cityId ?? '' } });
+            const rollout = (await this.prisma.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
+            if (rollout && city?.countryCode === 'KZ') {
+                const tax = await this.prisma.taxProfile.findUnique({ where: { userId: driverUserId } });
+                if (tax?.countryCode !== 'KZ' || tax.status !== 'VERIFIED' || !tax.activities.includes('49320')) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');
+                await this.taxService.collectDebt(driverUserId);
+                const totals = await this.prisma.taxIncomeEntry.aggregate({ where: { ownerKey: driverUserId, status: 'ACCOUNTED', currency: 'KZT' },
+                    _sum: { opv: true, opvr: true, so: true, osms: true, withheld: true } });
+                const debt = ['opv','opvr','so','osms'].reduce((sum,key) => sum + Number(totals._sum[key] ?? 0), 0) - Number(totals._sum.withheld ?? 0);
+                if (debt > 0.005) throw new BadRequestException('Пополните основной баланс для удержания социальных платежей за прошлые поездки');
+            }
             const stats = await this.ensureDriverActivityState(profile.id);
             if (stats.activityScore <= 0 || (stats.activityBlockedUntil && stats.activityBlockedUntil > new Date())) throw new BadRequestException('Driver temporarily blocked due to low activity');
             await this.ensureDriverCanStayOnline(driverUserId, profile.id, dto.cityId);

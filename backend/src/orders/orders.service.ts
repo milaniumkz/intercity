@@ -1,3 +1,4 @@
+import { recordCashDriverIncome } from '../tax/tax-ledger';
 import { CITY_TARIFF_DEFAULTS } from '../common/city-tariff-defaults';
 import { passengerLeaving } from '../common/passenger-leaving';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -887,6 +888,7 @@ export class OrdersService {
             if (targetStatus === 'COMPLETED') {
                 const verification = order.driver ? await finishTripVerification(tx, 'CITY', order, order.driver.id, order.driver.userId, updateData.completedAt) : 'REVIEW';
                 if (verification === 'VERIFIED') await this.applyReferralCommissionBonuses(order, tx);
+                if (order.driver?.userId) await recordCashDriverIncome(tx, 'CITY', order, order.driver.userId, order.price, updateData.completedAt);
                 if (order.driverId) {
                     const profile = await tx.driverProfile.findUnique({ where: { id: order.driverId } });
                     if (profile) await creditDriverDailyBonus(tx, profile.id, profile.userId, order.currency, updateData.completedAt);

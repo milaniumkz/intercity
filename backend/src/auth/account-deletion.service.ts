@@ -78,6 +78,12 @@ export class AccountDeletionService implements OnModuleInit, OnModuleDestroy {
                 await tx.driverProfile.delete({where: {id: driverId}});
                 await tx.accountDeletionFileJob.create({data: {directory: driverId}});
             }
+            // Keep the minimum encrypted fiscal identity only where actual income
+            // has been accounted. Pending declarations are erased with the account.
+            await tx.taxIncomeEntry.updateMany({where: {ownerKey: userId}, data: {ownerKey: archiveId}});
+            await tx.taxRemittance.updateMany({where: {ownerKey: userId}, data: {ownerKey: archiveId}});
+            await tx.taxPeriodBasis.updateMany({where: {ownerKey: userId}, data: {ownerKey: archiveId}});
+            await tx.taxAccountingIdentity.updateMany({where: {ownerKey: userId}, data: {ownerKey: archiveId}});
             await tx.user.delete({where: {id: userId}});
             return driverId;
         }, {maxWait: 10000, timeout: 30000});

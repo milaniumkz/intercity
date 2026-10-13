@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { TopupRequestDto, PayoutRequestDto } from './dto/wallet.dto';
+import { TaxService } from '../tax/tax.service';
 
 @Injectable()
 export class WalletService {
@@ -23,7 +24,7 @@ export class WalletService {
         (process.env.KASSA24_DEMO || 'false').toLowerCase() === 'true';
     private payoutSourceColumnSupported: boolean | null = null;
 
-    constructor(private prisma: PrismaService) { }
+    constructor(private prisma: PrismaService, private taxService: TaxService) { }
 
     async getWallet(userId: string, selectedCurrency?: string) {
         const currency = walletCurrency(selectedCurrency);
@@ -38,6 +39,7 @@ export class WalletService {
                 lockedBonus: true,
                 lockedBonusRub: true,
                 bonusRub: true,
+                referralMoney: true,
                 createdAt: true,
                 updatedAt: true,
             },
@@ -263,6 +265,13 @@ export class WalletService {
 
     async createPayoutRequest(userId: string, dto: PayoutRequestDto, userRole?: string) {
         const currency = walletCurrency(dto.currency);
+        if (currency === 'KZT') await this.taxService?.collectDebt(userId);
+        const referral = dto.source === 'REFERRAL';
+        if (referral && currency !== 'KZT') throw new BadRequestException('Денежный вывод рефералов доступен только в тенге');
+        if (referral) {
+            const profile = await this.prisma.taxProfile.findUnique({ where: { userId } });
+            if (profile?.countryCode !== 'KZ' || profile.status !== 'VERIFIED') throw new BadRequestException('Подтвердите налоговый статус Казахстана');
+        }
         if (!Number.isFinite(dto.amount) || dto.amount <= 0) throw new BadRequestException('Введите сумму больше нуля');
         const wallet = await this.prisma.wallet.findUnique({
             where: { userId },
@@ -274,13 +283,13 @@ export class WalletService {
 
         // Check minimum payout amount
         const settings = await this.prisma.appSettings.findMany();
-        const minPayout = parseFloat(settings.find(s => s.key === (currency === 'RUB' ? 'minPayoutAmountRub' : 'minPayoutAmount'))?.value || '1000');
+        const minPayout = parseFloat(settings.find(s => s.key === (referral ? 'referralMinPayoutKzt' : currency === 'RUB' ? 'minPayoutAmountRub' : 'minPayoutAmount'))?.value || (referral ? '5000' : '1000'));
 
         if (dto.amount < minPayout) {
             throw new BadRequestException(`Минимальная сумма вывода — ${minPayout}`);
         }
 
-        if (withdrawableMoney(wallet, currency) < dto.amount) {
+        if ((referral ? Number(wallet.referralMoney) : withdrawableMoney(wallet, currency)) < dto.amount) {
             throw new BadRequestException('Недостаточно средств для вывода. Бонусы не выводятся.');
         }
 
@@ -288,14 +297,19 @@ export class WalletService {
             throw new BadRequestException('Введите корректный номер карты для вывода');
         }
 
-        const payoutSource = 'MONEY' as const;
+        const payoutSource = referral ? 'REFERRAL' as const : 'MONEY' as const;
         let localPayout: { id: string; walletId: string; amount: number; status: string };
         try {
             localPayout = await this.prisma.$transaction(async (tx) => {
-                const field = moneyField(currency);
+                if (referral) {
+                    await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+                    const verified = await tx.taxProfile.findUnique({ where: { userId } });
+                    if (verified?.countryCode !== 'KZ' || verified.status !== 'VERIFIED') throw new BadRequestException('Налоговый статус требует проверки');
+                }
+                const field = referral ? 'referralMoney' : moneyField(currency);
                 await tx.$executeRaw`SELECT id FROM "Wallet" WHERE id = ${wallet.id} FOR UPDATE`;
                 const current = await tx.wallet.findUnique({ where: { id: wallet.id } });
-                if (!current || withdrawableMoney(current, currency) < dto.amount) throw new BadRequestException('Бонусы не выводятся. Недостаточно собственных средств.');
+                if (!current || (referral ? Number(current.referralMoney) : withdrawableMoney(current, currency)) < dto.amount) throw new BadRequestException('Бонусы не выводятся. Недостаточно собственных средств.');
                 const debit = await tx.wallet.updateMany({
                     where: { userId, [field]: { gte: dto.amount } },
                     data: { [field]: { decrement: dto.amount } },
@@ -706,7 +720,7 @@ export class WalletService {
         walletId: string;
         type: string;
         direction: 'DEBIT' | 'CREDIT';
-        balanceSource: 'MONEY' | 'BONUS';
+        balanceSource: 'MONEY' | 'BONUS' | 'REFERRAL';
         currency?: string;
         amount: number;
         note?: string;
@@ -739,10 +753,11 @@ export class WalletService {
     private async createPayoutRequestCompat(db: { payoutRequest: any }, input: {
         walletId: string;
         amount: number;
-        source: 'MONEY' | 'BONUS';
+        source: 'MONEY' | 'BONUS' | 'REFERRAL';
         currency: string;
     }) {
         const includeSource = await this.supportsPayoutSourceColumn();
+        if (!includeSource && input.source === 'REFERRAL') throw new ServiceUnavailableException('Для вывода рефералов необходима миграция базы');
         return await db.payoutRequest.create({
             data: includeSource
                 ? {
