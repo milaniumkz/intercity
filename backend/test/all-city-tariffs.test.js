@@ -18,3 +18,22 @@ test('bulk tariffs preserve existing rates, disabled cities, country boundaries 
   await p.tariffCity.deleteMany({where:{cityId:{in:cities.map(c=>c.id)}}});await p.city.deleteMany({where:{id:{in:cities.map(c=>c.id)}}});await p.$disconnect();
  }
 });
+
+const {OrdersService}=require('../dist/src/orders/orders.service');
+test('new-city preview provisions country rates once and respects manual tariff disabling',{skip:!database},async()=>{
+ const url=new URL(database);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.pathname,'/dispatch_test');
+ const p=new PrismaClient({datasources:{db:{url:database}}});const cities=[];
+ try {
+  for(const countryCode of ['KZ','RU']) {
+   const city=await p.city.create({data:{name:'new-tariff-'+countryCode+'-'+Date.now(),countryCode,lat:40,lng:60}});cities.push(city);
+   const service=new OrdersService(p,{reverseGeocode:async()=>({cityId:city.id,currency:countryCode==='RU'?'RUB':'KZT'}),getRoute:async()=>({distance:1,duration:1})},{},{},{});
+   const dto={fromLat:40,fromLng:60,toLat:40.01,toLng:60.01,mode:'CITY'};
+   const results=await Promise.all([service.previewOrder(dto),service.previewOrder(dto)]);
+   assert.equal(await p.tariffCity.count({where:{cityId:city.id}}),1);
+   assert.equal(results[0].currency,countryCode==='RU'?'RUB':'KZT');assert.equal(results[0].price,countryCode==='RU'?150:700);assert.equal(results[0].tariff.id,results[1].tariff.id);
+   await p.tariffCity.update({where:{id:results[0].tariff.id},data:{isActive:false}});
+   await assert.rejects(service.previewOrder(dto),/City tariff is not configured/);
+   assert.equal(await p.tariffCity.count({where:{cityId:city.id}}),1);
+  }
+ } finally {await p.tariffCity.deleteMany({where:{cityId:{in:cities.map(c=>c.id)}}});await p.city.deleteMany({where:{id:{in:cities.map(c=>c.id)}}});await p.$disconnect();}
+});

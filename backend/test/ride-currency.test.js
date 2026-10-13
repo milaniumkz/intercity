@@ -36,7 +36,7 @@ test('city preview uses only configured city rates and returns its currency', as
         kz: { basePrice: 500, pricePerKm: 80, pricePerMin: 10, minPrice: 1000 },
     };
     const queries = [];
-    const prisma = { tariffCity: { findMany: async ({ where }) => {
+    const prisma = { $transaction: async task => task({$queryRaw:async()=>[],city:{findUnique:async()=>null}}), tariffCity: { findMany: async ({ where }) => {
         queries.push(where); return tariffs[where.cityId] ? [tariffs[where.cityId]] : [];
     } } };
     const service = new OrdersService(prisma, {

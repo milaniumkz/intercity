@@ -736,7 +736,8 @@ export class GeoService {
     private normalizeLocalityName(value: string) {
         const normalized = this.normalizeCityToken(value)
             .replace(/^(городская администрация|городской округ|город|г\.)\s+/u, '')
-            .replace(/\s+городская администрация$/u, '');
+            .replace(/\s+городская администрация$/u, '')
+            .replace(/\s+г\.\s*а\.?$/u, '');
         if (!GeoService.localityAliases) {
             const aliases = new Map<string, string>();
             const preferred = new Map(GeoService.fallbackCities.map(city => [this.normalizeCityToken(city.name), city]));
