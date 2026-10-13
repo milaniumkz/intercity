@@ -114,7 +114,7 @@ test('reverse lookup canonicalizes historical Ridder name and uses exact country
 });
 
 test('reverse lookup normalizes administrative city labels and preserves verified house address', async()=>{
- for(const [raw,name,lat,lng] of [['городской округ Омск','Омск',54.989,73.368],['Городская администрация Риддера','Риддер',50.344,83.513],['Усть-Каменогорск','Усть-Каменогорск',49.902631,82.609936]]){
+ for(const [raw,name,lat,lng] of [['Кокшетау Г.А.','Кокшетау',53.283,69.388],['Кокшетау г. а.','Кокшетау',53.283,69.388],['городской округ Омск','Омск',54.989,73.368],['Городская администрация Риддера','Риддер',50.344,83.513],['Усть-Каменогорск','Усть-Каменогорск',49.902631,82.609936]]){
   const geo=makeGeo();const country=name==='Омск'?'RU':'KZ';
   geo.findNearestCity=async()=>({id:'city',name:raw,countryCode:country});
   geo.prisma.city.findFirst=async()=>({id:'canonical',name,countryCode:country});

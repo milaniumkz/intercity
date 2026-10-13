@@ -5,6 +5,64 @@ import 'package:intercity_admin/core/api/admin_api_client.dart';
 import 'package:intercity_admin/features/admin/screens/admin_dashboard_page.dart';
 
 void main() {
+  testWidgets('large tariff catalogue renders only the selected city',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final api = _TariffApi();
+    api.tariffs.addAll(List.generate(
+        20000,
+        (i) => {
+              'id': 'other-$i',
+              'cityId': 'other-$i',
+              'name': 'Other tariff $i',
+              'isActive': true
+            }));
+    api.tariffs.addAll([
+      {
+        'id': 'rub',
+        'cityId': 'ru',
+        'name': 'Moscow tariff',
+        'basePrice': 90,
+        'pricePerKm': 18,
+        'pricePerMin': 4,
+        'minPrice': 150,
+        'city': api.cities.first
+      },
+      {
+        'id': 'kzt',
+        'cityId': 'kz',
+        'name': 'Almaty tariff',
+        'basePrice': 400,
+        'pricePerKm': 90,
+        'pricePerMin': 15,
+        'minPrice': 700,
+        'city': api.cities.last
+      },
+    ]);
+    AdminApiClient.debugOverride(api);
+    addTearDown(() => AdminApiClient.debugOverride(null));
+    await tester.pumpWidget(const MaterialApp(home: AdminTariffsPage()));
+    await tester.pumpAndSettle();
+    expect(find.text('Выберите город в поиске выше.'), findsOneWidget);
+    final field = find.widgetWithText(
+        TextField, 'Город тарифа — начните вводить название');
+    await tester.enterText(field, 'Москва');
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('Москва,').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Moscow tariff'), findsOneWidget);
+    expect(find.text('Almaty tariff'), findsNothing);
+    expect(find.text('Other tariff 0'), findsNothing);
+    await tester.enterText(field, 'Алматы');
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('Алматы,').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Moscow tariff'), findsNothing);
+    expect(find.text('Almaty tariff'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('city country is stored when creating and editing a city',
       (tester) async {
     tester.view.physicalSize = const Size(1600, 2200);

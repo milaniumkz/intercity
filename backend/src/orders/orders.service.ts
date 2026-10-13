@@ -1,3 +1,4 @@
+import { CITY_TARIFF_DEFAULTS } from '../common/city-tariff-defaults';
 import { passengerLeaving } from '../common/passenger-leaving';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { CardPaymentsService } from '../payments/card-payments.service';
@@ -106,7 +107,19 @@ export class OrdersService {
             orderBy: { basePrice: 'asc' },
         }) : [];
         if (tariffs.length === 0) {
-            return { tariff: null as any, multiplier: 1 };
+            if (!cityId) return { tariff: null as any, multiplier: 1 };
+            const tariff = await this.prisma.$transaction(async tx => {
+                await tx.$queryRaw`SELECT id FROM "City" WHERE id=${cityId} FOR UPDATE`;
+                const city = await tx.city.findUnique({where:{id:cityId}});
+                if (!city?.isActive || !CITY_TARIFF_DEFAULTS[city.countryCode]) return null;
+                const existing = await tx.tariffCity.findMany({where:{cityId},orderBy:{basePrice:'asc'}});
+                const active = existing.find(rate => rate.isActive);
+                if (active) return active;
+                // Explicitly disabled tariffs must stay disabled.
+                if (existing.length) return null;
+                return tx.tariffCity.create({data:{cityId,name:'Эконом — базовый тариф',...CITY_TARIFF_DEFAULTS[city.countryCode]}});
+            });
+            return { tariff, multiplier: 1 };
         }
 
         return {

@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - status
+          - seed-city-tariffs
           - logs
           - restart
           - redeploy-current
@@ -70,4 +71,7 @@ jobs:
           TARGET: ${{ inputs.target }}
         run: |
           scp scripts/vps_ops.sh "$VPS_USER@$VPS_HOST:/tmp/vps_ops.sh"
+          if [[ "$ACTION" == "seed-city-tariffs" ]]; then
+            scp backend/scripts/seed-all-city-tariffs.cjs "$VPS_USER@$VPS_HOST:/tmp/seed-all-city-tariffs.cjs"
+          fi
           ssh "$VPS_USER@$VPS_HOST" "bash /tmp/vps_ops.sh '$ACTION' '$TARGET'"
