@@ -8,6 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:intercity_mobile/core/api/api_client.dart';
 import 'package:intercity_mobile/core/utils/route_guard.dart';
 import 'package:intercity_mobile/features/referral/widgets/referral_profile_card.dart';
+import 'package:intercity_mobile/features/referral/widgets/referral_profile_entry.dart';
 import 'package:intercity_mobile/features/referral/screens/referral_landing_page.dart';
 
 class _ReferralApi extends ApiClient {
@@ -43,7 +44,7 @@ void main() {
     await tester.pumpWidget(const ProviderScope(
         child: MaterialApp(home: ProfilePage())));
     await tester.pump();
-    expect(find.byType(ReferralProfileCard), findsOneWidget);
+    expect(find.byType(ReferralProfileEntry), findsOneWidget);
     expect(find.byType(ListView), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -70,7 +71,7 @@ void main() {
     }, apiClient: _ReferralApi()))));
     await tester.pumpAndSettle();
     expect(find.text('Приглашено: 3'), findsOneWidget);
-    expect(find.text('Начислено: 25.00 ₸ · 75.00 ₽'), findsOneWidget);
+    expect(find.text('Начислено: 25.00 тг · 75.00 ₽'), findsOneWidget);
     await tester.tap(find.text('Скопировать ссылку'));
     await tester.pumpAndSettle();
     expect(copied, 'https://intercity.89-207-255-27.sslip.io/#/ref/INVITE123');

@@ -1,7 +1,10 @@
-import { IsString, IsNumber, IsOptional, IsBoolean, IsInt, Min, Max, IsISO8601 } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsBoolean, IsInt, Min, Max, IsISO8601, IsIn } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateDriverProfileDto {
+    @IsOptional()
+    @IsIn(['KZ', 'RU'])
+    taxCountry?: string;
     @ApiProperty()
     @IsString()
     carModel: string;

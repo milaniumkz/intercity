@@ -26,6 +26,24 @@ case "$ACTION" in
     docker exec -i intercity-backend node < /tmp/seed-all-city-tariffs.cjs
     ;;
   status)
+    if [[ "$TARGET" == "tax" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSTAXSTATUS'
+const { PrismaClient } = require('@prisma/client');
+(async () => {
+  const p = new PrismaClient();
+  try {
+    const tables = await p.$queryRaw`SELECT to_regclass('public."TaxIncomeEntry"') IS NOT NULL AS ready`;
+    const enabled = await p.appSettings.findUnique({where:{key:'kzTaxEnabled'}});
+    const threshold = await p.appSettings.findUnique({where:{key:'referralMinPayoutKzt'}});
+    const identityKey = process.env.TAX_ID_ENCRYPTION_KEY || process.env.JWT_SECRET || '';
+    console.log(JSON.stringify({taxTablesReady:tables[0].ready,taxEnabled:enabled?.value==='true',referralMinimumKzt:threshold?.value || '5000',identityEncryptionReady:identityKey.length>=32}));
+    if (tables[0].ready) console.log(JSON.stringify({taxProfiles:await p.taxProfile.count(),taxIncomeEvents:await p.taxIncomeEntry.count(),taxRemittances:await p.taxRemittance.count()}));
+  } finally {await p.$disconnect();}
+})().catch(() => {console.error('Tax readiness check failed');process.exitCode=1;});
+JSTAXSTATUS
+      exit 0
+    fi
     if [[ "$TARGET" == "city-tariffs" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQLTARIFFAUDIT'

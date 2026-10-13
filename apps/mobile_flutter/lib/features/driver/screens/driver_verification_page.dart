@@ -1,3 +1,4 @@
+import '../../referral/widgets/tax_status_panel.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -35,6 +36,8 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
   final _carNumberCtrl = TextEditingController();
   final _carClassCtrl = TextEditingController();
   String _message = '';
+  String _taxCountry = 'KZ';
+  bool _taxSaved = false;
   String _accountPhone = '';
   bool _loading = false;
   String? _docUploadingType;
@@ -56,6 +59,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
     super.initState();
     _loadAccountProfile();
     _loadDriverDocs();
+    _loadTaxStatus();
   }
 
   @override
@@ -70,6 +74,19 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
     _carNumberCtrl.dispose();
     _carClassCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadTaxStatus() async {
+    try {
+      final response = await ApiClient().get('/tax/me');
+      final profile = response.data['profile'];
+      if (mounted &&
+          profile is Map &&
+          profile['status'] != 'REJECTED' &&
+          (profile['activities'] as List? ?? []).contains('49320')) {
+        setState(() => _taxSaved = true);
+      }
+    } catch (_) {/* Form remains available for a new declaration. */}
   }
 
   Future<void> _loadAccountProfile() async {
@@ -287,6 +304,10 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
     final carModel =
         '${_carBrandCtrl.text.trim()} ${_carModelCtrl.text.trim()}'.trim();
     final carNumber = _carNumberCtrl.text.trim();
+    if (_taxCountry == 'KZ' && !_taxSaved) {
+      setState(() => _message = 'Сначала сохраните налоговый статус.');
+      return;
+    }
     if (carModel.isEmpty || carNumber.isEmpty) {
       setState(() => _message = 'Укажите автомобиль и гос. номер.');
       return;
@@ -294,6 +315,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
     setState(() => _loading = true);
     try {
       await ApiClient().post('/driver/profile', data: {
+        'taxCountry': _taxCountry,
         'carModel': carModel,
         'carNumber': carNumber,
         'acceptCityFixed': true,
@@ -613,6 +635,26 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
                           ],
                         ),
                     trailing: Icons.chevron_right_rounded),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                    initialValue: _taxCountry,
+                    decoration: const InputDecoration(
+                        labelText: 'Страна налогового статуса'),
+                    items: const [
+                      DropdownMenuItem(value: 'KZ', child: Text('Казахстан')),
+                      DropdownMenuItem(value: 'RU', child: Text('Россия'))
+                    ],
+                    onChanged: (value) =>
+                        setState(() => _taxCountry = value ?? 'KZ')),
+                if (_taxCountry == 'KZ')
+                  TaxStatusPanel(
+                      driver: true,
+                      onSaved: () => setState(() => _taxSaved = true)),
+                if (_taxCountry == 'RU')
+                  const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Text(
+                          'Казахстанские социальные удержания не применяются к российскому налоговому статусу.')),
                 if (_message.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   ICPremiumInfoBanner(text: _message),

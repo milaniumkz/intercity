@@ -1,5 +1,5 @@
 import '../../../core/widgets/account_deletion_dialog.dart';
-import '../../referral/widgets/referral_profile_card.dart';
+import '../../referral/widgets/referral_profile_entry.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1469,7 +1469,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
                 children: [
-                  ReferralProfileCard(user: _user),
+                  const ReferralProfileEntry(),
                   const SizedBox(height: 12),
                   if (_loading)
                     ClipRRect(
@@ -2261,7 +2261,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
                 ],
               ),
               const SizedBox(height: 22),
-              ReferralProfileCard(user: _user),
+              const ReferralProfileEntry(),
               const SizedBox(height: 12),
               _boardProfileRow(
                 icon: Icons.location_on_outlined,

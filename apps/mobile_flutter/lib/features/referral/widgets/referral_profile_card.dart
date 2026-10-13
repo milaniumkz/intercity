@@ -4,9 +4,14 @@ import '../../../core/api/api_client.dart';
 import '../../../core/constants/app_constants.dart';
 
 class ReferralProfileCard extends StatefulWidget {
-  const ReferralProfileCard({super.key, required this.user, this.apiClient});
+  const ReferralProfileCard(
+      {super.key,
+      required this.user,
+      this.apiClient,
+      this.showLegacyTotals = true});
   final Map<String, dynamic>? user;
   final ApiClient? apiClient;
+  final bool showLegacyTotals;
 
   @override
   State<ReferralProfileCard> createState() => _ReferralProfileCardState();
@@ -53,16 +58,16 @@ class _ReferralProfileCardState extends State<ReferralProfileCard> {
                 style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
             const Text(
-                'Получайте бонусы за завершённые поездки приглашённых пассажиров и водителей.'),
+                'Приглашайте пассажиров и водителей. Вознаграждение за их завершённые поездки учитывается по правилам программы.'),
             const SizedBox(height: 8),
             SelectableText(link),
             const SizedBox(height: 8),
             Text('Код приглашения: $code'),
             if (_summary != null) ...[
               Text('Приглашено: ${_summary!["invitedCount"] ?? 0}'),
-              if (earned != null)
+              if (earned != null && widget.showLegacyTotals)
                 Text(
-                    'Начислено: ${(earned["KZT"] as num? ?? 0).toStringAsFixed(2)} ₸ · ${(earned["RUB"] as num? ?? 0).toStringAsFixed(2)} ₽'),
+                    'Начислено: ${(earned["KZT"] as num? ?? 0).toStringAsFixed(2)} тг · ${(earned["RUB"] as num? ?? 0).toStringAsFixed(2)} ₽'),
             ],
             const SizedBox(height: 8),
             FilledButton.icon(

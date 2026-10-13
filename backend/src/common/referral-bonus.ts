@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { bonusField } from './currency';
+import { lockIncomeAccounting, recordTaxIncome } from '../tax/tax-ledger';
 
 export async function creditRideReferrals(tx: Prisma.TransactionClient, ride: {
     id: string; currency: string; commissionAmount: number;
@@ -12,6 +13,7 @@ export async function creditRideReferrals(tx: Prisma.TransactionClient, ride: {
         !Number.isFinite(ride.commissionAmount) || ride.commissionAmount <= 0) return;
     const amount = Math.round(ride.commissionAmount * percent) / 100;
     if (amount <= 0) return;
+    if ((await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true') await lockIncomeAccounting(tx);
     const invited = await tx.user.findMany({
         where: { id: { in: [ride.passengerId, ride.driverUserId].filter(Boolean) } },
         select: { id: true, referredBy: true },
@@ -26,6 +28,21 @@ export async function creditRideReferrals(tx: Prisma.TransactionClient, ride: {
     // Stable wallet order avoids deadlocks when the same two inviters earn together.
     credits.sort((a, b) => a.userId.localeCompare(b.userId) || a.side.localeCompare(b.side));
     for (const credit of credits) {
+        // Kazakhstan cash-referral rollout is explicit; Russia and the old
+        // promotional ledger remain untouched. Unverified KZ entitlements wait
+        // in the new ledger instead of silently becoming withdrawable money.
+        const cashReferral = ride.currency === 'KZT' &&
+            (await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
+        if (cashReferral) {
+            const key = `referral:${ride.intercity ? 'intercity:' : ''}${ride.id}:${credit.side}`;
+            if (!await tx.walletTransaction.findFirst({ where: { idempotencyKey: key } })) {
+                const entry = await recordTaxIncome(tx, { key, userId: credit.userId, sourceKind: 'REFERRAL',
+                    sourceId: ride.id, gross: amount, currency: ride.currency, occurredAt: new Date() });
+                if (entry) continue;
+            } else {
+                continue;
+            }
+        }
         const wallet = await tx.wallet.upsert({ where: { userId: credit.userId }, create: { userId: credit.userId }, update: {} });
         await tx.wallet.update({ where: { id: wallet.id }, data: { [bonusField(ride.currency)]: { increment: 0 } } });
         const key = `referral:${ride.intercity ? 'intercity:' : ''}${ride.id}:${credit.side}`;

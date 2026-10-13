@@ -35,6 +35,10 @@ export class WalletController {
     async topupCallback(@Body() body: Record<string, any>) {
         return this.walletService.handleTopupPaymentCallback(body ?? {});
     }
+    @Get('topup/callback')
+    async topupGetCallback(@Query() query: Record<string, any>) {
+        return this.walletService.handleTopupPaymentCallback({ ...query, paid: true });
+    }
 
     @Post('payout-request')
     @UseGuards(JwtAuthGuard)

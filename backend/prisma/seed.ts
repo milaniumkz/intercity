@@ -51,6 +51,8 @@ async function main() {
         ['drivers.manage', 'drivers', 'manage', 'Управление водителями'],
         ['users.view', 'users', 'view', 'Просмотр клиентов'],
         ['users.manage', 'users', 'manage', 'Управление клиентами'],
+        ['tax.view', 'tax', 'view', 'Просмотр налоговых реестров'],
+        ['tax.manage', 'tax', 'manage', 'Проверка статусов и социальные платежи'],
         ['finance.view', 'finance', 'view', 'Просмотр финансов'],
         ['finance.manage', 'finance', 'manage', 'Управление выплатами и пополнениями'],
         ['tariffs.view', 'tariffs', 'view', 'Просмотр тарифов'],

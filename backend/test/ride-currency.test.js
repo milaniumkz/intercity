@@ -195,8 +195,8 @@ test('local database stores city rates and immutable order/request currencies', 
         assert.equal((await wallets.getWallet(user.id, 'RUB')).bonus, 2900);
         await intercity.cancelRequest(user.id, bonusRequest.id);
         await prisma.driverProfile.create({ data: { userId: user.id } });
-        const auctionDriver = await prisma.driverProfile.create({ data: { userId: recipient.id } });
-        const auction = await orders.createOrder(user.id, { ...dto, requestType: 'CITY_AUCTION', paymentMethod: 'BONUSES' });
+        const auctionDriver = await prisma.driverProfile.create({ data: { userId: recipient.id, status:'APPROVED', online:{create:{isOnline:true,cityId:ru.id}} } });
+        const auction = await orders.createOrder(user.id, { ...dto, requestType: 'CITY_AUCTION', desiredPrice:200, paymentMethod: 'BONUSES' });
         assert.equal((await wallets.getWallet(user.id, 'RUB')).bonus, 2900);
         const offer = await prisma.orderOffer.create({ data: { orderId: auction.id, driverId: auctionDriver.id, price: 200 } });
         await orders.acceptOrderOffer(offer.id, user.id);
@@ -234,10 +234,9 @@ test('local database stores city rates and immutable order/request currencies', 
         await prisma.user.update({ where: { id: user.id }, data: { referredBy: recipient.refCode } });
         await orders.applyReferralCommissionBonuses({ id: order.id, currency: 'RUB', price: 500, commissionAmount: 50, passengerId: user.id });
         assert.equal((await wallets.getWallet(recipient.id, 'RUB')).bonus, 112.5);
-        const bonusPayout = await wallets.createPayoutRequest(user.id, { amount: 2500, currency: 'RUB', cardNumber: '4400430154321098' }, 'DRIVER');
-        assert.equal(bonusPayout.source, 'BONUS');
-        assert.equal((await wallets.getWallet(user.id, 'RUB')).bonus, 400);
-        await admin.rejectPayout(bonusPayout.id);
+        // Promotional bonuses must not fill a shortfall in withdrawable money.
+        await assert.rejects(wallets.createPayoutRequest(user.id, { amount: 2500, currency: 'RUB', cardNumber: '4400430154321098' }, 'DRIVER'), /Бонусы не выводятся/);
+        assert.equal((await wallets.getWallet(user.id, 'RUB')).money, 2350);
         assert.equal((await wallets.getWallet(user.id, 'RUB')).bonus, 2900);
         const race = await Promise.allSettled([
             wallets.transferBonusByPhone(recipient.id, user.phone, 100, 'RUB'),
