@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma.service';
 import { TopupRequestDto, PayoutRequestDto } from './dto/wallet.dto';
 import { TaxService } from '../tax/tax.service';
 import { lockIncomeAccounting } from '../tax/tax-ledger';
+import { confirmedPayment, Kassa24Gateway } from '../payments/kassa24-gateway';
 
 @Injectable()
 export class WalletService {
@@ -24,6 +25,7 @@ export class WalletService {
     private readonly kassa24Demo =
         (process.env.KASSA24_DEMO || 'false').toLowerCase() === 'true';
     private payoutSourceColumnSupported: boolean | null = null;
+    private readonly gateway = new Kassa24Gateway({ baseUrl: this.kassa24BaseUrl, login: this.kassa24Login, password: this.kassa24Password, demo: this.kassa24Demo });
 
     constructor(private prisma: PrismaService, private taxService: TaxService) { }
 
@@ -134,6 +136,7 @@ export class WalletService {
                 headers: this.kassa24Headers(),
                 body: JSON.stringify({
                     amount: Math.round(dto.amount * 100),
+                    orderId: localTopup.id,
                     externalId: localTopup.id,
                     merchantId: this.kassa24Login,
                     description: `Пополнение InterCity ${localTopup.id}`,
@@ -207,10 +210,6 @@ export class WalletService {
     async handleTopupPaymentCallback(body: Record<string, any>) {
         const externalOrderId = this.extractExternalOrderId(body);
         const localTopupId = this.extractLocalTopupId(body);
-        const paid = this.isPaymentPaid(body);
-        if (!paid) {
-            return { success: true, ignored: true, reason: 'payment_not_paid' };
-        }
         if (!externalOrderId && !localTopupId) {
             throw new BadRequestException('Не передан идентификатор платежа');
         }
@@ -218,6 +217,7 @@ export class WalletService {
             where: {
                 OR: [
                     ...(externalOrderId ? [{ externalOrderId }] : []),
+                    ...(externalOrderId ? [{ id: externalOrderId }] : []),
                     ...(localTopupId ? [{ id: localTopupId }] : []),
                 ],
             },
@@ -230,18 +230,25 @@ export class WalletService {
         if (topup.status !== 'PENDING') {
             return { success: true, alreadyProcessed: true, topupId: topup.id };
         }
+        // Callback fields are untrusted. Only an authenticated bank lookup of
+        // our order, merchant and amount may create withdrawable wallet money.
+        const payment = await this.gateway.status(topup.id);
+        if (this.kassa24Demo || !confirmedPayment(payment, topup.id, topup.amount, this.kassa24Login, false) || Number(payment.status) !== 1) {
+            return { success: true, ignored: true, reason: 'payment_not_confirmed' };
+        }
 
         await this.prisma.$transaction(async (tx) => {
             const current = await tx.topupRequest.findUnique({ where: { id: topup.id } });
             if (!current || current.status !== 'PENDING') return;
-            await tx.topupRequest.update({
-                where: { id: topup.id },
+            const claimed = await tx.topupRequest.updateMany({
+                where: { id: topup.id, status: 'PENDING' },
                 data: {
                     status: 'APPROVED',
                     provider: topup.provider ?? 'KASSA24',
-                    externalOrderId: externalOrderId ?? topup.externalOrderId,
+                    externalOrderId: topup.externalOrderId,
                 },
             });
+            if (claimed.count !== 1) return;
             await tx.wallet.update({
                 where: { id: topup.walletId },
                 data: { [moneyField(topup.currency)]: { increment: topup.amount } },
@@ -626,7 +633,9 @@ export class WalletService {
     private kassa24Endpoint(path: string) {
         const base = this.kassa24BaseUrl.replace(/\/+$/, '');
         const suffix = path.replace(/^\/+/, '');
-        return `${base}/${suffix}`;
+        const url = new URL(`${base}/${suffix}`);
+        if (url.protocol !== 'https:') throw new ServiceUnavailableException('Платёжный шлюз должен использовать HTTPS');
+        return url.toString();
     }
 
     private backendCallbackUrl(path: string) {

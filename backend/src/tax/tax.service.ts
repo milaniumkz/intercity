@@ -57,7 +57,11 @@ export class TaxService {
         const secret = process.env.TAX_ID_ENCRYPTION_KEY || process.env.JWT_SECRET || '';
         const iinHash = createHmac('sha256', secret).update(`intercity:taxpayer:v1:${dto.iin}`).digest('hex');
         return this.prisma.$transaction(async tx => {
+            await lockIncomeAccounting(tx);
             await tx.$executeRaw`SELECT id FROM "User" WHERE id=${userId} FOR UPDATE`;
+            const driver = await tx.driverProfile.findUnique({ where: { userId }, select: { id: true } });
+            if (driver && (await tx.order.findFirst({ where: { driverId: driver.id, status: { in: ['DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'] } } }) ||
+                await tx.intercityRequest.findFirst({ where: { selectedDriverId: userId, status: { in: ['ACCEPTED','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'] } } }))) throw new BadRequestException('Измените налоговый статус после завершения текущей поездки');
             const current = await tx.taxProfile.findUnique({ where: { userId } });
             const accountingIdentity = await tx.taxAccountingIdentity.findUnique({ where: { ownerKey: userId } });
             if (accountingIdentity && this.decryptIin(accountingIdentity.iinEncrypted) !== dto.iin) throw new BadRequestException('Смена ИИН после учёта дохода требует проверки администратора');
@@ -70,12 +74,14 @@ export class TaxService {
                 iinLast4: dto.iin.slice(-4), activities: [...new Set(dto.activities)], exemptions: current?.iinHash === iinHash ? current.exemptions : [], birthDate: current?.iinHash === iinHash ? current.birthDate : null, consentVersion: TAX_CONSENT_VERSION,
                 consentAt: new Date(), verifiedAt: null, verifiedBy: null, verificationReference: null };
             const profile = await tx.taxProfile.upsert({ where: { userId }, create: { userId, ...data }, update: data });
+            if ((await taxSettings(tx)).enabled) await this.offlineUnverifiedKazakhstanDrivers(tx);
             return this.publicProfile(profile);
         });
     }
     async verify(userId: string, dto: VerifyTaxProfileDto, adminId: string) {
         if (dto.reference.trim().length < 5) throw new BadRequestException('Укажите документ проверки статуса и льгот');
         return this.prisma.$transaction(async tx => {
+            await lockIncomeAccounting(tx);
             await tx.$executeRaw`SELECT id FROM "User" WHERE id=${userId} FOR UPDATE`;
             const profile = await tx.taxProfile.findUnique({ where: { userId } });
             if (!profile) throw new NotFoundException('Налоговый профиль не найден');
@@ -88,6 +94,7 @@ export class TaxService {
                 await tx.taxIncomeEntry.count({ where: { ownerKey: userId, period: kazakhstanPeriod(new Date()), status: 'ACCOUNTED' } })) throw new BadRequestException('Льготы месяца уже использованы. Изменение требует бухгалтерской сверки');
             const updated = await tx.taxProfile.update({ where: { userId }, data: { status: dto.status,
                 exemptions, birthDate, effectiveFrom, verifiedBy: adminId, verifiedAt: new Date(), verificationReference: dto.reference.trim() } });
+            if ((await taxSettings(tx)).enabled) await this.offlineUnverifiedKazakhstanDrivers(tx);
             return this.publicProfile(updated);
         });
     }
@@ -195,6 +202,7 @@ export class TaxService {
             kzTaxReferralContractReference: dto.referralContractReference.trim(), referralMinPayoutKzt: money(dto.minPayout).toString(),
             [`kzTaxPolicy${dto.year}`]: JSON.stringify({ mrp: dto.mrp, mzp: dto.mzp, reference: dto.policyReference.trim() }) };
         await this.prisma.$transaction(async tx => {
+            await lockIncomeAccounting(tx);
             await tx.$queryRaw`SELECT key FROM "AppSettings" WHERE key = 'kzTaxEnabled' FOR UPDATE`;
             const enabled = await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } });
             if (enabled?.value === 'true' && !dto.enabled && await tx.taxIncomeEntry.count()) throw new BadRequestException('Есть налоговые и денежные события. Отключение требует сверки обязательств и остановки приёма новых доходов; возврат к старым бонусам не допускается');
@@ -202,8 +210,17 @@ export class TaxService {
             const previous = await tx.appSettings.findUnique({ where: { key: `kzTaxPolicy${dto.year}` } });
             if (previous && previous.value !== settings[`kzTaxPolicy${dto.year}`] && await tx.taxIncomeEntry.count({ where: { period: { startsWith: `${dto.year}-` }, status: 'ACCOUNTED' } })) throw new BadRequestException('Годовая политика уже использована. Нужна бухгалтерская корректировка');
             for (const [key,value] of Object.entries(settings)) await tx.appSettings.upsert({ where: { key }, create: { key,value }, update: { value } });
+            if (dto.enabled) await this.offlineUnverifiedKazakhstanDrivers(tx);
         });
         return { ...dto, enabled: dto.enabled };
+    }
+    private offlineUnverifiedKazakhstanDrivers(tx: any) {
+        return tx.driverOnline.updateMany({ where: { isOnline: true, AND: [
+            { OR: [{ city: { countryCode: 'KZ' } }, { cityId: null, driver: { user: { city: { countryCode: 'KZ' } } } }] },
+            { driver: { user: { OR: [ { taxProfile: null }, { taxProfile: { is: { OR: [
+                { status: { not: 'VERIFIED' } }, { countryCode: { not: 'KZ' } }, { NOT: { activities: { has: '49320' } } },
+            ] } } } ] } } },
+        ] }, data: { isOnline: false } });
     }
     async configuration() {
         const year = new Date().getUTCFullYear().toString();

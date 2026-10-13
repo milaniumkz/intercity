@@ -15,6 +15,7 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { clientUserSelect } from '../common/public-user-select';
 import { PushService } from '../notifications/push.service';
 import { TaxService } from '../tax/tax.service';
+import { lockIncomeAccounting } from '../tax/tax-ledger';
 
 @Injectable()
 export class DriverService {
@@ -248,13 +249,23 @@ export class DriverService {
         }
 
         const resolvedCityId = dto.cityId ?? profile.online?.cityId ?? profile.user?.cityId ?? null;
-        const updated = await this.prisma.driverOnline.update({
+        const updateOnline = (db: any) => db.driverOnline.update({
             where: { driverId: profile.id },
             data: {
                 isOnline: dto.isOnline,
                 cityId: resolvedCityId,
             },
         });
+        const updated = dto.isOnline ? await this.prisma.$transaction(async tx => {
+            await lockIncomeAccounting(tx);
+            const city = resolvedCityId ? await tx.city.findUnique({ where: { id: resolvedCityId } }) : null;
+            const enabled = (await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
+            if (enabled && city?.countryCode === 'KZ') {
+                const tax = await tx.taxProfile.findUnique({ where: { userId: driverUserId } });
+                if (tax?.countryCode !== 'KZ' || tax.status !== 'VERIFIED' || !tax.activities.includes('49320')) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');
+            }
+            return updateOnline(tx);
+        }) : await updateOnline(this.prisma);
         this.realtimeService.publish({
             type: 'driver.online.changed',
             entity: 'driver',

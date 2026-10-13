@@ -893,7 +893,7 @@ model AccountDeletionFileJob {
 }
 
 // Separate, encrypted identity and immutable financial events. Deleting a user
-// erases the tax identity; accounting entries retain only their pseudonymous key.
+// erases the declaration; required accounting identity is protected separately.
 model TaxProfile {
   id                    String    @id @default(uuid())
   userId                String    @unique

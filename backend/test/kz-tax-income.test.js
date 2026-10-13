@@ -7,6 +7,8 @@ const { TaxService, validIin } = require('../dist/src/tax/tax.service');
 const { recordTaxIncome, releasePendingIncome } = require('../dist/src/tax/tax-ledger');
 const { WalletService } = require('../dist/src/wallet/wallet.service');
 const { AdminService } = require('../dist/src/admin/admin.service');
+const {validateSync}=require('class-validator');
+const {VerifyTaxProfileDto}=require('../dist/src/tax/tax.dto');
 const { IntercityService } = require('../dist/src/intercity/intercity.service');
 
 test('social payments use cumulative rounding, Kazakhstan calendar, SO cap and verified exemptions', () => {
@@ -19,13 +21,17 @@ test('social payments use cumulative rounding, Kazakhstan calendar, SO cap and v
   assert.ok(Math.abs(paid - .68) < .000001);
   assert.equal(kazakhstanPeriod(new Date('2026-10-31T19:01:00Z')), '2026-11');
   assert.equal(validIin('000000000000'), false); assert.equal(validIin('123'), false);
+  for(const birthDate of ['1975-01-01T00:00:00+05:00','1990-02-31']) {
+    const dto=Object.assign(new VerifyTaxProfileDto(),{status:'VERIFIED',reference:'verified document',exemptions:[],birthDate});
+    assert.ok(validateSync(dto).some(error=>error.property==='birthDate'));
+  }
 });
 
 const database = process.env.DISPATCH_TEST_DATABASE_URL;
 test('KZ monetary referrals: verified status, no duplicate money, caps, IP, currency review, payouts and refunds', { skip: !database }, async () => {
   const url = new URL(database); assert.equal(url.hostname, '127.0.0.1'); assert.equal(url.pathname, '/dispatch_test');
   const p = new PrismaClient({ datasources: { db: { url: database } } });
-  const tax = new TaxService(p), key = `tax-test:${randomUUID()}`, owners = [], driverProfiles = [], requests = [];
+  const tax = new TaxService(p), key = `tax-test:${randomUUID()}`, owners = [], driverProfiles = [], requests = [], cities = [];
   const settingKeys = ['kzTaxEnabled','kzTaxOperatorReference','kzTaxReferralContractReference','referralMinPayoutKzt',`kzTaxPolicy${new Date().getUTCFullYear()}`];
   const previous = await p.appSettings.findMany({where:{key:{in:settingKeys}}});
   const oldKey = process.env.TAX_ID_ENCRYPTION_KEY;
@@ -54,7 +60,15 @@ test('KZ monetary referrals: verified status, no duplicate money, caps, IP, curr
   }
   const credit = (u,id,gross=10000,currency='KZT',sourceKind='REFERRAL') => p.$transaction(tx => recordTaxIncome(tx,{key:`${key}:${id}`,userId:u.id,sourceKind,sourceId:id,gross,currency,occurredAt:new Date()}));
   try {
+    const legacy=[];
+    for(const countryCode of ['KZ','RU']) {
+      const city=await p.city.create({data:{name:key+countryCode,countryCode,lat:50,lng:80}});cities.push(city.id);
+      const oldDriver=await p.user.create({data:{phone:key+countryCode,password:'test',name:'Legacy',refCode:randomUUID(),refLink:'test',role:'DRIVER',cityId:city.id}});owners.push(oldDriver.id);
+      const dp=await p.driverProfile.create({data:{userId:oldDriver.id,status:'APPROVED',online:{create:{isOnline:true,cityId:city.id}}}});driverProfiles.push(dp.id);legacy.push(dp.id);
+    }
     await tax.configure({enabled:true,operatorReference:'TEST operator',referralContractReference:'TEST eligible contract',minPayout:5000,year:new Date().getUTCFullYear().toString(),mrp:4325,mzp:85000,policyReference:'TEST annual policy'});
+    assert.equal((await p.driverOnline.findUnique({where:{driverId:legacy[0]}})).isOnline,false);
+    assert.equal((await p.driverOnline.findUnique({where:{driverId:legacy[1]}})).isOnline,true);
     const u=await user();
     await Promise.all([credit(u,'same'),credit(u,'same'),credit(u,'same')]);
     assert.equal(await p.taxIncomeEntry.count({where:{ownerKey:u.id}}),1);
@@ -96,9 +110,20 @@ test('KZ monetary referrals: verified status, no duplicate money, caps, IP, curr
     assert.equal(payouts.filter(r=>r.status==='fulfilled').length,1);
     const payout=payouts.find(r=>r.status==='fulfilled').value;
     assert.equal((await p.wallet.findUnique({where:{userId:u.id}})).referralMoney.toString(),'4600');
+    // A user can trigger a callback, but cannot assert that money was paid.
+    // A real authenticated provider confirmation is required and replay-safe.
+    const paymentService=new WalletService(p,tax);
+    const deposit=await p.topupRequest.create({data:{walletId:u.wallet.id,amount:100,currency:'KZT',provider:'ONLINE',externalOrderId:'provider-'+key}});
+    paymentService.gateway.status=async()=>({orderId:deposit.id,merchantId:'wrong-merchant',amount:10000,demo:false,status:1});
+    assert.equal((await paymentService.handleTopupPaymentCallback({orderId:deposit.id,paid:true})).ignored,true);
+    assert.equal((await p.wallet.findUnique({where:{userId:u.id}})).money,0);
+    paymentService.gateway.status=async()=>({orderId:deposit.id,merchantId:paymentService.kassa24Login,amount:10000,demo:false,status:1});
+    await Promise.all([paymentService.handleTopupPaymentCallback({orderId:deposit.id,paid:true}),paymentService.handleTopupPaymentCallback({orderId:deposit.id,paid:true})]);
+    assert.equal((await p.wallet.findUnique({where:{userId:u.id}})).money,100);
+    assert.equal(await p.walletTransaction.count({where:{topupRequestId:deposit.id,type:'TOPUP_PAID_ONLINE'}}),1);
     const admin=new AdminService(p,{publish:()=>{}},{});
     await admin.rejectPayout(payout.id);
-    wallet=await p.wallet.findUnique({where:{userId:u.id}});assert.equal(wallet.referralMoney.toString(),'9600');assert.equal(wallet.money,0);assert.equal(wallet.bonus,123);
+    wallet=await p.wallet.findUnique({where:{userId:u.id}});assert.equal(wallet.referralMoney.toString(),'9600');assert.equal(wallet.money,100);assert.equal(wallet.bonus,123);
     await assert.rejects(admin.rejectPayout(payout.id));
     await tax.remittance({ownerKey:u.id,period,component:'OPV',amount:100,reference:`${key}:bank-payment`,paidAt:new Date().toISOString(),note:'TEST actual bank confirmation'},'test-admin');
     await assert.rejects(tax.remittance({ownerKey:u.id,period,component:'OPV',amount:1,reference:`${key}:bank-payment`,paidAt:new Date().toISOString(),note:'Duplicate'},'test-admin'));
@@ -129,10 +154,10 @@ test('KZ monetary referrals: verified status, no duplicate money, caps, IP, curr
     if(oldKey===undefined) delete process.env.TAX_ID_ENCRYPTION_KEY;else process.env.TAX_ID_ENCRYPTION_KEY=oldKey;
     await p.taxIncomeEntry.deleteMany({where:{ownerKey:{in:owners}}});await p.taxPeriodBasis.deleteMany({where:{ownerKey:{in:owners}}});await p.taxRemittance.deleteMany({where:{ownerKey:{in:owners}}});await p.taxAccountingIdentity.deleteMany({where:{ownerKey:{in:owners}}});
     const wallets=await p.wallet.findMany({where:{userId:{in:owners}},select:{id:true}});const ids=wallets.map(w=>w.id);
-    await p.walletTransaction.deleteMany({where:{walletId:{in:ids}}});await p.payoutRequest.deleteMany({where:{walletId:{in:ids}}});
+    await p.walletTransaction.deleteMany({where:{walletId:{in:ids}}});await p.payoutRequest.deleteMany({where:{walletId:{in:ids}}});await p.topupRequest.deleteMany({where:{walletId:{in:ids}}});
     await p.tripVerification.deleteMany({where:{driverUserId:{in:owners}}});await p.intercityRequest.deleteMany({where:{id:{in:requests}}});
     await p.driverDailyParticipation.deleteMany({where:{driverId:{in:driverProfiles}}});await p.driverOnline.deleteMany({where:{driverId:{in:driverProfiles}}});await p.driverProfile.deleteMany({where:{id:{in:driverProfiles}}});
-    await p.wallet.deleteMany({where:{userId:{in:owners}}});await p.user.deleteMany({where:{id:{in:owners}}});
+    await p.wallet.deleteMany({where:{userId:{in:owners}}});await p.user.deleteMany({where:{id:{in:owners}}});await p.city.deleteMany({where:{id:{in:cities}}});
     await p.appSettings.deleteMany({where:{key:{in:settingKeys}}});for(const row of previous) await p.appSettings.create({data:{key:row.key,value:row.value}});
     await p.$disconnect();
   }

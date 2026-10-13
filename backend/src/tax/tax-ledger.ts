@@ -97,7 +97,9 @@ async function calculateEntry(tx: Prisma.TransactionClient, input: IncomeEvent, 
         opv: components.OPV, opvr: components.OPVR, so: components.SO, osms: components.OSMS, withheld: collected };
     const entry = pendingId ? await tx.taxIncomeEntry.update({ where: { id: pendingId }, data })
         : await tx.taxIncomeEntry.create({ data: { ...data, eventKey: input.key } });
-    if (!reviewReason) await tx.taxAccountingIdentity.upsert({ where: { ownerKey: input.userId }, update: {},
+    // Actual driver income needs a protected accounting identity even while its
+    // tax classification is reviewed. Unpaid referral entitlements do not.
+    if (profile && (!reviewReason || !referral)) await tx.taxAccountingIdentity.upsert({ where: { ownerKey: input.userId }, update: {},
         create: { ownerKey: input.userId, iinEncrypted: profile.iinEncrypted, iinHash: profile.iinHash, iinLast4: profile.iinLast4, firstIncomeAt: input.occurredAt } });
     if (!reviewReason && referral) {
         const net = gross.sub(components.total);

@@ -8,7 +8,7 @@ export class DeclareTaxProfileDto {
     @IsBoolean() consent: boolean;
 }
 export class VerifyTaxProfileDto {
-    @IsOptional() @IsISO8601() birthDate?: string;
+    @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/) @IsISO8601({ strict: true }) birthDate?: string;
     @IsOptional() @IsISO8601() effectiveFrom?: string;
     @IsIn(['VERIFIED', 'REJECTED']) status: string;
     @IsString() @MaxLength(500) reference: string;
