@@ -1248,7 +1248,12 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
           _SectionCard(
               title: 'Городские тарифы — нажмите для редактирования',
               child: _TariffList(
-                  items: _city,
+                  items: _city
+                      .where((tariff) => tariff['cityId'] == _cityIdCtrl.text)
+                      .toList(),
+                  emptyMessage: _cityIdCtrl.text.isEmpty
+                      ? 'Выберите город в поиске выше.'
+                      : 'Для выбранного города тарифы не найдены.',
                   onDelete: _deleteCityTariff,
                   cityAware: true,
                   onEdit: _editCityTariff)),
@@ -2599,19 +2604,21 @@ class _TariffList extends StatelessWidget {
   final List<dynamic> items;
   final Future<void> Function(String id) onDelete;
   final bool cityAware;
+  final String emptyMessage;
   final void Function(Map<String, dynamic>)? onEdit;
 
   const _TariffList({
     required this.items,
     required this.onDelete,
     this.cityAware = false,
+    this.emptyMessage = 'Тарифы не загружены.',
     this.onEdit,
   });
 
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
-      return const Text('Тарифы не загружены.');
+      return Text(emptyMessage);
     }
     return Column(
       children: items.map((t) {
