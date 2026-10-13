@@ -66,7 +66,7 @@ test('KZ monetary referrals: verified status, no duplicate money, caps, IP, curr
       const oldDriver=await p.user.create({data:{phone:key+countryCode,password:'test',name:'Legacy',refCode:randomUUID(),refLink:'test',role:'DRIVER',cityId:city.id}});owners.push(oldDriver.id);
       const dp=await p.driverProfile.create({data:{userId:oldDriver.id,status:'APPROVED',online:{create:{isOnline:true,cityId:city.id}}}});driverProfiles.push(dp.id);legacy.push(dp.id);
     }
-    await tax.configure({enabled:true,operatorReference:'TEST operator',referralContractReference:'TEST eligible contract',minPayout:5000,year:new Date().getUTCFullYear().toString(),mrp:4325,mzp:85000,policyReference:'TEST annual policy'});
+    await tax.configure({enabled:true,operatorReference:'',referralContractReference:'',minPayout:5000,year:new Date().getUTCFullYear().toString(),mrp:4325,mzp:85000,policyReference:'TEST annual policy'});
     assert.equal((await p.driverOnline.findUnique({where:{driverId:legacy[0]}})).isOnline,false);
     assert.equal((await p.driverOnline.findUnique({where:{driverId:legacy[1]}})).isOnline,true);
     const u=await user();

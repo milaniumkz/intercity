@@ -13,7 +13,7 @@ export async function lockIncomeAccounting(tx: Prisma.TransactionClient) {
 export async function taxSettings(tx: Prisma.TransactionClient) {
     const rows = await tx.appSettings.findMany({ where: { key: { in: TAX_SETTINGS } } });
     const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
-    return { enabled: values.kzTaxEnabled === 'true' && !!values.kzTaxOperatorReference?.trim(),
+    return { enabled: values.kzTaxEnabled === 'true',
         operatorReference: values.kzTaxOperatorReference ?? '',
         referralContractReference: values.kzTaxReferralContractReference ?? '',
         minPayout: money(values.referralMinPayoutKzt || 5000) };
@@ -58,7 +58,6 @@ async function calculateEntry(tx: Prisma.TransactionClient, input: IncomeEvent, 
     if (input.currency !== 'KZT') reviewReason = 'CURRENCY_REVIEW';
     if (!profile || profile.countryCode !== 'KZ' || profile.status !== 'VERIFIED') reviewReason = 'PROFILE_VERIFICATION';
     if (profile?.status === 'VERIFIED' && (!profile.effectiveFrom || profile.effectiveFrom > input.occurredAt)) reviewReason = 'STATUS_AT_INCOME_DATE';
-    if (referral && !config.referralContractReference) reviewReason = 'REFERRAL_CONTRACT';
     if (profile?.kind === 'SELF_EMPLOYED' && !profile.activities.includes(referral ? '82990' : '49320')) reviewReason = 'ACTIVITY_VERIFICATION';
     // Annual parameters require an explicit, audited configuration. Do not apply
     // last year's MRP/MZP after January 1 or guess external monthly income.

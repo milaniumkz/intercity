@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - status
+          - enable-kz-tax-accounting
           - seed-city-tariffs
           - logs
           - restart

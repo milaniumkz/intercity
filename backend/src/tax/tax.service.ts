@@ -197,7 +197,9 @@ export class TaxService {
         return new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00+05:00` : value);
     }
     async configure(dto: TaxSettingsDto) {
-        if (dto.enabled && (dto.operatorReference.trim().length < 5 || dto.referralContractReference.trim().length < 5 || dto.policyReference.trim().length < 5)) throw new BadRequestException('Перед включением подтвердите оператора, договор рефералов и годовые параметры');
+        // Internal accounting is independent of government connectivity. References
+        // describe documents only; enabling never records a government payment.
+        if (dto.enabled && dto.policyReference.trim().length < 5) throw new BadRequestException('Укажите источник годовых параметров расчёта');
         const settings = { kzTaxEnabled: String(dto.enabled), kzTaxOperatorReference: dto.operatorReference.trim(),
             kzTaxReferralContractReference: dto.referralContractReference.trim(), referralMinPayoutKzt: money(dto.minPayout).toString(),
             [`kzTaxPolicy${dto.year}`]: JSON.stringify({ mrp: dto.mrp, mzp: dto.mzp, reference: dto.policyReference.trim() }) };
