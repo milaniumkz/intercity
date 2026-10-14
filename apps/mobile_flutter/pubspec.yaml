@@ -23,6 +23,7 @@ dependencies:
 
   # Networking
   dio: ^5.4.0
+  uuid: 4.5.3
   url_launcher: ^6.3.1
 
   # Storage

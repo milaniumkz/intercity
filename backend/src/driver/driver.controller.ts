@@ -10,6 +10,7 @@ import {
     DriverDocsUploadUrlDto,
     CompleteDriverDocsDto,
     DriverIntercityRouteDto,
+    PromoteDriverRouteDto,
 } from './dto/driver.dto';
 
 @ApiTags('driver')
@@ -56,6 +57,12 @@ export class DriverController {
         return this.driverService.getNearbyOrders(req.user.sub);
     }
 
+    @Get('intercity/matching')
+    @ApiOperation({ summary: 'Get open passenger requests matching registered driver routes' })
+    async getMatchingIntercityRequests(@Request() req) {
+        return this.driverService.getMatchingIntercityRequests(req.user.sub);
+    }
+
     @Get('intercity/active')
     @ApiOperation({ summary: 'Get active intercity work for driver' })
     async getActiveIntercity(@Request() req) {
@@ -72,6 +79,12 @@ export class DriverController {
     @ApiOperation({ summary: 'Apply for an intercity route' })
     async addIntercityRoute(@Request() req, @Body() dto: DriverIntercityRouteDto) {
         return this.driverService.addIntercityRoute(req.user.sub, dto);
+    }
+
+    @Post('intercity/routes/:id/promote')
+    @ApiOperation({ summary: 'Purchase route priority for the configured duration' })
+    async promoteIntercityRoute(@Request() req, @Param('id') id: string, @Body() dto: PromoteDriverRouteDto) {
+        return this.driverService.promoteIntercityRoute(req.user.sub,id,dto);
     }
 
     @Post('intercity/routes/:id/delete')

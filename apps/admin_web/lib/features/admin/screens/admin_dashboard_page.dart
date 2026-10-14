@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:intercity_shared/intercity_shared.dart';
 
 import '../../../core/api/admin_api_client.dart';
+import '../widgets/driver_route_top_settings_card.dart';
 
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({super.key});
@@ -1342,6 +1343,8 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
       child: ListView(
         children: [
           _StatusBanner(message: _message),
+          const SizedBox(height: 16),
+          const DriverRouteTopSettingsCard(),
           const SizedBox(height: 16),
           const _DriverDailyBonusSettingsCard(),
           const SizedBox(height: 16),

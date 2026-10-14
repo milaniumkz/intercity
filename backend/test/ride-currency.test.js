@@ -55,7 +55,7 @@ test('city preview uses only configured city rates and returns its currency', as
 });
 
 test('intercity requests preserve departure currency including cross-border trips', async () => {
-    const tx = { $queryRaw: async () => [{ id: 'passenger' }], order: { findFirst: async () => null }, intercityRequest: { findFirst: async () => null, create: async ({ data }) => data } };
+    const tx = { $executeRaw: async () => 0, intercityRoutePriorityWindow: { findUnique: async () => ({routeIds:[],activeDriverIds:[],expiresAt:new Date(0)}) }, $queryRaw: async () => [{ id: 'passenger' }], order: { findFirst: async () => null }, intercityRequest: { findFirst: async () => null, create: async ({ data }) => data } };
     const service = new IntercityService({ $transaction: async run => run(tx) }, {
         departureCurrency: async (_lat, _lng, city) => city === 'Москва' ? 'RUB' : 'KZT',
     });

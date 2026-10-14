@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, IsBoolean, IsInt, Min, Max, IsISO8601, IsIn } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsBoolean, IsInt, Min, Max, IsISO8601, IsIn, IsUUID } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateDriverProfileDto {
@@ -138,4 +138,10 @@ export class DriverIntercityRouteDto {
     @IsInt()
     @Min(1)
     seatsAvailable?: number;
+}
+
+export class PromoteDriverRouteDto {
+    @IsUUID() requestKey: string;
+    @IsNumber() @Min(.01) @Max(1000000) expectedPrice: number;
+    @IsIn(['KZT','RUB']) currency: string;
 }

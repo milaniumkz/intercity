@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
 import 'package:intercity_shared/intercity_shared.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/api/api_client.dart';
@@ -12,17 +13,20 @@ import '../../../core/utils/request_flow_utils.dart';
 import '../../../core/utils/route_query.dart';
 import '../../../core/widgets/ic_premium.dart';
 import '../widgets/driver_bottom_nav.dart';
+import '../widgets/intercity_request_card.dart';
 
 class DriverTripCreatePage extends StatefulWidget {
-  const DriverTripCreatePage({super.key, this.routeStage});
+  const DriverTripCreatePage({super.key, this.routeStage, this.apiClient});
 
   final String? routeStage;
+  final ApiClient? apiClient;
 
   @override
   State<DriverTripCreatePage> createState() => _DriverTripCreatePageState();
 }
 
 class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
+  late final ApiClient _api = widget.apiClient ?? ApiClient();
   final _fromCityCtrl = TextEditingController(text: 'Алматы');
   final _toCityCtrl = TextEditingController(text: 'Астана');
   final _pricePerSeatCtrl = TextEditingController(text: '2000');
@@ -40,6 +44,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   bool _routeSaving = false;
   int _selectedTab = 0;
   bool _initialized = false;
+  Timer? _refreshTimer;
   String? _boardStageOverride;
   Map<String, dynamic>? _boardSelectedOrder;
   String _boardTypeFilter = 'Межгород';
@@ -57,6 +62,11 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   @override
   void initState() {
     super.initState();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (mounted && !_loading && ModalRoute.of(context)?.isCurrent == true) {
+        _loadDriverIntercityData(silent: true);
+      }
+    });
   }
 
   @override
@@ -84,6 +94,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _fromCityCtrl.dispose();
     _toCityCtrl.dispose();
     _pricePerSeatCtrl.dispose();
@@ -94,7 +105,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   Future<void> _createTrip({BuildContext? closeContext}) async {
     setState(() => _loading = true);
     try {
-      final res = await ApiClient().post('/ridesharing/trips', data: {
+      final res = await _api.post('/ridesharing/trips', data: {
         'fromCity': _fromCityCtrl.text,
         'toCity': _toCityCtrl.text,
         'fromLat': 43.2220,
@@ -129,7 +140,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   Future<void> _promoteTrip(String id) async {
     setState(() => _loading = true);
     try {
-      await ApiClient().post('/ridesharing/trips/$id/promote');
+      await _api.post('/ridesharing/trips/$id/promote');
       if (!mounted) return;
       setState(() => _message = 'Заявка поднята в топ');
       await _loadDriverIntercityData(silent: true);
@@ -425,7 +436,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
     String? warning;
 
     try {
-      final res = await ApiClient().get('/intercity/requests/open');
+      final res = await _api.get('/driver/intercity/matching');
       openRequests = List<dynamic>.from(res.data as List);
     } catch (e) {
       debugPrint('Failed to load open intercity requests: $e');
@@ -434,7 +445,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
     }
 
     try {
-      final res = await ApiClient().get('/ridesharing/trips/my');
+      final res = await _api.get('/ridesharing/trips/my');
       myTrips = List<dynamic>.from(res.data as List);
     } catch (e) {
       debugPrint('Failed to load driver trips: $e');
@@ -442,7 +453,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
     }
 
     try {
-      final citiesRes = await ApiClient().get('/geo/cities');
+      final citiesRes = await _api.get('/geo/cities');
       cities = citiesRes.data is List
           ? (citiesRes.data as List)
               .whereType<Map>()
@@ -460,7 +471,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
     }
 
     try {
-      final routesRes = await ApiClient().get('/driver/intercity/routes');
+      final routesRes = await _api.get('/driver/intercity/routes');
       intercityRoutes = routesRes.data is List
           ? (routesRes.data as List)
               .whereType<Map>()
@@ -519,7 +530,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
     }
     setState(() => _routeSaving = true);
     try {
-      await ApiClient().post('/driver/intercity/routes', data: {
+      await _api.post('/driver/intercity/routes', data: {
         'fromCity': fromCity,
         'toCity': toCity,
         'seatsAvailable': seatsAvailable,
@@ -544,7 +555,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   Future<void> _deleteIntercityRoute(String id) async {
     if (id.isEmpty) return;
     try {
-      await ApiClient().post('/driver/intercity/routes/$id/delete');
+      await _api.post('/driver/intercity/routes/$id/delete');
       if (!mounted) return;
       setState(() => _message = 'Межгород-маршрут отключен');
       await _loadDriverIntercityData(silent: true);
@@ -631,7 +642,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
         localMessage = '';
       });
       try {
-        final res = await ApiClient().post(
+        final res = await _api.post(
           '/geo/search',
           data: {'q': query, 'type': 'city'},
         );
@@ -846,7 +857,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
       }
 
       try {
-        await ApiClient().post(
+        await _api.post(
           '/intercity/requests/${request['id']}/offers',
           data: {
             'price': price,
@@ -1437,7 +1448,6 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
 
   Widget _intercityRouteApplicationCard() {
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
 
     return _card(
       padding: const EdgeInsets.all(14),
@@ -1536,69 +1546,129 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
               ),
             ),
             const SizedBox(height: 8),
-            ..._intercityRoutes.map((route) {
-              final id = (route['id'] ?? '').toString();
-              final from = (route['fromCity'] ?? '').toString();
-              final to = (route['toCity'] ?? '').toString();
-              final seats = (route['seatsAvailable'] as num?)?.toInt() ??
-                  (route['seatsTotal'] as num?)?.toInt() ??
-                  0;
-              return Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.035)
-                      : const Color(0xFFF8F6FF),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: AppTheme.primaryColor.withValues(alpha: 0.14),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.alt_route_rounded,
-                      color: AppTheme.primaryColor,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '$from → $to',
-                            style: TextStyle(
-                              color: theme.colorScheme.onSurface,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            'Свободно мест: $seats',
-                            style: TextStyle(
-                              color: theme.colorScheme.onSurfaceVariant,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      onPressed:
-                          _routeSaving ? null : () => _deleteIntercityRoute(id),
-                      icon: const Icon(Icons.close_rounded),
-                      tooltip: 'Отключить маршрут',
-                    ),
-                  ],
-                ),
-              );
-            }),
+            ..._intercityRoutes.map(_registeredRouteTile),
           ],
         ],
       ),
     );
+  }
+
+  bool _routeIsTop(Map<String, dynamic> route) =>
+      DateTime.tryParse('${route['topUntil']}')?.isAfter(DateTime.now()) ==
+      true;
+
+  Future<void> _promoteRoute(Map<String, dynamic> route) async {
+    final price = route['topPrice'];
+    if (price is! num || price <= 0) return;
+    final requestKey = const Uuid().v4();
+    var saving = false;
+    var error = '';
+    await showDialog<void>(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+            builder: (ctx, update) => AlertDialog(
+                  title: const Text('Поднять маршрут в топ'),
+                  content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('${route['fromCity']} → ${route['toCity']}',
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 12),
+                        Text(
+                            '${price.toStringAsFixed(2)} ${intercityCurrencyLabel(route)} · ${route['topDurationHours']} часов'),
+                        const SizedBox(height: 10),
+                        Text(
+                            'Первый доступ к новым заявкам на ${route['firstAccessSeconds']} секунд. Заявка сначала одновременно доступна всем водителям в топе. Если никто не принимает её, доступ получают обычные водители.'),
+                        const SizedBox(height: 10),
+                        const Text(
+                            'Оплата с основного баланса. По окончании срока маршрут остаётся активным без преимущества топа.'),
+                        if (error.isNotEmpty)
+                          Padding(
+                              padding: const EdgeInsets.only(top: 12),
+                              child: Text(error,
+                                  style: TextStyle(
+                                      color: Theme.of(ctx).colorScheme.error))),
+                      ]),
+                  actions: [
+                    TextButton(
+                        onPressed: saving ? null : () => Navigator.pop(ctx),
+                        child: const Text('Отмена')),
+                    FilledButton(
+                        onPressed: saving
+                            ? null
+                            : () async {
+                                update(() {
+                                  saving = true;
+                                  error = '';
+                                });
+                                try {
+                                  await _api.post(
+                                      '/driver/intercity/routes/${route['id']}/promote',
+                                      data: {
+                                        'requestKey': requestKey,
+                                        'expectedPrice': price,
+                                        'currency': route['currency']
+                                      });
+                                  if (ctx.mounted) Navigator.pop(ctx);
+                                  await _loadDriverIntercityData(silent: true);
+                                } catch (e) {
+                                  if (ctx.mounted) {
+                                    update(() {
+                                      saving = false;
+                                      error = errorMessageRu(e);
+                                    });
+                                  }
+                                }
+                              },
+                        child: Text(saving
+                            ? 'Оплачиваем…'
+                            : 'Оплатить ${price.toStringAsFixed(2)} ${intercityCurrencyLabel(route)}'))
+                  ],
+                )));
+  }
+
+  Widget _registeredRouteTile(Map<String, dynamic> route) {
+    final top = _routeIsTop(route);
+    return Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border:
+                Border.all(color: AppTheme.primaryColor.withValues(alpha: .2))),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(top ? Icons.star_rounded : Icons.alt_route_rounded,
+                color: AppTheme.primaryColor),
+            const SizedBox(width: 10),
+            Expanded(
+                child: Text('${route['fromCity']} → ${route['toCity']}',
+                    style: const TextStyle(fontWeight: FontWeight.w700))),
+            IconButton(
+                onPressed: _routeSaving
+                    ? null
+                    : () => _deleteIntercityRoute('${route['id']}'),
+                tooltip: 'Отключить маршрут',
+                icon: const Icon(Icons.close_rounded))
+          ]),
+          Text(
+              'Свободно мест: ${route['seatsAvailable'] ?? route['seatsTotal'] ?? 0}'),
+          if (top)
+            Text('В топе до ${_formatDate(route['topUntil'])}',
+                style: const TextStyle(
+                    color: AppTheme.primaryColor, fontWeight: FontWeight.w700))
+          else
+            TextButton.icon(
+                onPressed: route['topPrice'] is num
+                    ? () => _promoteRoute(route)
+                    : null,
+                icon: const Icon(Icons.vertical_align_top_rounded),
+                label: Text(route['topPrice'] is num
+                    ? 'В топ · ${(route['topPrice'] as num).toStringAsFixed(2)} ${intercityCurrencyLabel(route)}'
+                    : 'Тариф топа уточняется')),
+        ]));
   }
 
   Widget _routeCitySearchField({
@@ -2537,7 +2607,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
     setState(() => _loading = true);
     try {
       final seats = (order['seats'] as num?)?.toInt() ?? 1;
-      await ApiClient().post(
+      await _api.post(
         '/intercity/requests/${order['id']}/offers',
         data: {
           'price': price,
@@ -2883,7 +2953,21 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
               ],
             ),
             const SizedBox(height: 12),
-            _intercityRouteApplicationCard(),
+            Card(
+                child: ExpansionTile(
+              key: ValueKey('route-panel-${_intercityRoutes.isEmpty}'),
+              initiallyExpanded: _intercityRoutes.isEmpty,
+              title: Text('Мои маршруты (${_intercityRoutes.length})',
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: _intercityRoutes.isEmpty
+                  ? const Text('Добавьте направление для поиска пассажиров')
+                  : Text(_intercityRoutes
+                      .take(2)
+                      .map((route) =>
+                          '${route['fromCity']} → ${route['toCity']} · ${route['seatsAvailable']} мест')
+                      .join('\n')),
+              children: [_intercityRouteApplicationCard()],
+            )),
             const SizedBox(height: 14),
             Row(
               children: [
@@ -2959,24 +3043,21 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
 
   Widget _boardRequestDetailScreen(Map<String, dynamic> order) {
     final theme = Theme.of(context);
-    final from = (order['fromAddress'] ?? 'Точка подачи').toString();
-    final to = (order['toAddress'] ?? 'Точка назначения').toString();
+    final from = formatLocationDisplay(order, isFrom: true);
+    final to = formatLocationDisplay(order, isFrom: false);
     final price = (order['price'] as num?)?.toInt() ?? 0;
     final distance = order['distanceKm'] ?? order['distance'];
     final duration = order['durationMinutes'] ?? order['duration'];
-    final distanceText = distance is num
+    final distanceText = distance is num && distance > 0
         ? '${distance.toStringAsFixed(0)} км'
         : 'Расстояние уточняется';
-    final durationText = duration is num
+    final durationText = duration is num && duration > 0
         ? '~ ${duration.toStringAsFixed(0)} мин'
         : 'Время уточняется';
     final orderId =
         (order['id'] ?? order['orderId'] ?? 'новая заявка').toString();
-    final createdAt = (order['departureTime'] ??
-            order['scheduledAt'] ??
-            order['createdAt'] ??
-            'Дата уточняется')
-        .toString();
+    final createdAt = intercityDepartureLabel(
+        order['date'] ?? order['departureTime'] ?? order['scheduledAt']);
     final passenger = (order['passengerName'] ??
             order['clientName'] ??
             order['customerName'] ??
@@ -2994,8 +3075,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
             order['customerRating'] ??
             '—')
         .toString();
-    final commission = ((order['commissionAmount'] as num?)?.toDouble() ??
-        (rideCurrencyCode(order) == 'RUB' ? 0.0 : 270.0));
+    final commission = (order['commissionAmount'] as num?)?.toDouble();
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       body: ICPremiumBackground(
@@ -3135,18 +3215,14 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    _boardMoneyRow('Фиксированная цена',
+                    _boardMoneyRow('Цена пассажира',
                         '$price ${rideCurrencySymbol(order)}'),
-                    _boardMoneyRow('Комиссия сервиса',
-                        '-$commission ${rideCurrencySymbol(order)}'),
-                    _boardMoneyRow(
-                      'К списанию с баланса',
-                      '$commission ${rideCurrencySymbol(order)}',
-                      strong: true,
-                    ),
+                    if (commission != null)
+                      _boardMoneyRow('Комиссия сервиса',
+                          '$commission ${rideCurrencySymbol(order)}'),
                     const SizedBox(height: 10),
                     Text(
-                      'Комиссия будет списана после принятия заявки',
+                      'Комиссия будет списана после подтверждения пассажира',
                       style: TextStyle(
                         color: theme.colorScheme.onSurfaceVariant,
                         fontSize: 12,
@@ -3179,13 +3255,13 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
               ),
               const SizedBox(height: 20),
               ICGradientButton(
-                label: 'Принять заявку',
-                onPressed: () => _goTripBoard('commission'),
+                label: 'Предложить цену',
+                onPressed: () => _showOfferDialog(order),
               ),
               const SizedBox(height: 10),
               Center(
                 child: Text(
-                  'У вас есть 00:45 чтобы принять заявку',
+                  'Поездка будет назначена после подтверждения пассажира',
                   style: TextStyle(
                     color: theme.colorScheme.onSurfaceVariant,
                     fontSize: 12,
@@ -3351,95 +3427,34 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
     );
   }
 
-  Widget _boardAvailableOrderCard(Map<String, dynamic> order) {
-    final theme = Theme.of(context);
-    final from = (order['fromAddress'] ?? '').toString();
-    final to = (order['toAddress'] ?? '').toString();
-    final price = (order['price'] as num?)?.toInt() ?? 0;
-    final distance = (order['distanceKm'] as num?)?.toInt() ?? 0;
-    final isIntercity = order['requestType'] == requestTypeIntercity;
-    return InkWell(
-      onTap: () {
-        setState(() => _boardSelectedOrder = order);
-        _goTripBoard('detail');
-      },
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
-        decoration: BoxDecoration(
-          color: theme.brightness == Brightness.dark
-              ? const Color(0xFF111426)
-              : Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: AppTheme.primaryColor.withValues(alpha: 0.18),
-          ),
-          boxShadow: [
-            if (theme.brightness == Brightness.light)
-              BoxShadow(
-                color: const Color(0xFF4B2A84).withValues(alpha: 0.06),
-                blurRadius: 18,
-                offset: const Offset(0, 8),
-              ),
-          ],
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.circle, color: AppTheme.primaryColor, size: 10),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '$from → $to',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: theme.colorScheme.onSurface,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    'Сегодня, 10:30        $distance км        ${isIntercity ? 'Комфорт+' : 'Бизнес'}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 58,
-              child: Text(
-                '$price ${rideCurrencySymbol(order)}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                  color: AppTheme.primaryColor,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 12,
-                ),
-              ),
-            ),
-            Icon(
-              Icons.chevron_right_rounded,
-              color: theme.colorScheme.onSurfaceVariant,
-              size: 20,
-            ),
-          ],
-        ),
-      ),
-    );
+  Future<void> _acceptPassengerPrice(Map<String, dynamic> request) async {
+    if (_loading) return;
+    setState(() => _loading = true);
+    try {
+      await _api
+          .post('/intercity/requests/${request['id']}/accept-passenger-price');
+      if (mounted) context.go('/driver/home');
+    } catch (error) {
+      if (mounted) setState(() => _message = errorMessageRu(error));
+      await _loadDriverIntercityData(silent: true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
+
+  Widget _boardAvailableOrderCard(Map<String, dynamic> order) =>
+      IntercityRequestCard(
+        request: order,
+        accepting: _loading,
+        onAccept: order['requestType'] == requestTypeIntercity
+            ? () => _acceptPassengerPrice(order)
+            : null,
+        onOffer: () => _showOfferDialog(order),
+        onTap: () {
+          setState(() => _boardSelectedOrder = order);
+          _goTripBoard('detail');
+        },
+      );
 
   bool _isTopTrip(Map<String, dynamic> trip) {
     final raw = (trip['topUntil'] ?? '').toString();
