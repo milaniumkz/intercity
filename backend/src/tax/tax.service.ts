@@ -79,17 +79,35 @@ export class TaxService {
         });
     }
     async verify(userId: string, dto: VerifyTaxProfileDto, adminId: string) {
-        if (dto.reference.trim().length < 5) throw new BadRequestException('Укажите документ проверки статуса и льгот');
+        if (!dto.quickApproval && (!dto.reference || dto.reference.trim().length < 5)) throw new BadRequestException('Укажите документ проверки статуса и льгот');
         return this.prisma.$transaction(async tx => {
             await lockIncomeAccounting(tx);
             await tx.$executeRaw`SELECT id FROM "User" WHERE id=${userId} FOR UPDATE`;
             const profile = await tx.taxProfile.findUnique({ where: { userId } });
             if (!profile) throw new NotFoundException('Налоговый профиль не найден');
+            // Manual administrator approval, not a government verification. No
+            // backdating or invented external-income declarations are performed.
+            if (dto.quickApproval) {
+                dto = { ...dto, reference: 'Ручное решение администратора по заявленному профилю',
+                    exemptions: profile.exemptions,
+                    effectiveFrom: profile.effectiveFrom?.toISOString() || new Date().toISOString() };
+                if (!profile.birthDate && profile.kind === 'SELF_EMPLOYED' && dto.status === 'VERIFIED') {
+                    const iin = this.decryptIin(profile.iinEncrypted);
+                    const century = { '1': 1800, '2': 1800, '3': 1900, '4': 1900, '5': 2000, '6': 2000 }[iin[6]];
+                    const year = century + Number(iin.slice(0,2));
+                    const date = `${year}-${iin.slice(2,4)}-${iin.slice(4,6)}`;
+                    const parsed = new Date(date);
+                    if (!century || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0,10) !== date || parsed > new Date()) {
+                        throw new BadRequestException('Не удалось определить дату рождения по ИИН. Проверьте данные налогового профиля');
+                    }
+                    dto.birthDate = date;
+                }
+            }
             const birthDate = dto.birthDate ? new Date(dto.birthDate) : profile.birthDate;
             const effectiveFrom = dto.effectiveFrom ? this.kazakhstanDate(dto.effectiveFrom) : profile.effectiveFrom;
             if (dto.status === 'VERIFIED' && (!effectiveFrom || !Number.isFinite(effectiveFrom.getTime()) || effectiveFrom > new Date())) throw new BadRequestException('Укажите подтверждённую дату начала налогового режима');
             if (dto.status === 'VERIFIED' && profile.kind === 'SELF_EMPLOYED' && (!birthDate || !Number.isFinite(birthDate.getTime()) || birthDate > new Date())) throw new BadRequestException('Подтвердите дату рождения для расчёта ОПВР');
-            const exemptions = [...new Set([...dto.exemptions, ...(birthDate && birthDate < new Date('1975-01-01T00:00:00Z') ? ['OPVR'] : [])])];
+            const exemptions = [...new Set([...(dto.exemptions || profile.exemptions), ...(birthDate && birthDate < new Date('1975-01-01T00:00:00Z') ? ['OPVR'] : [])])];
             if (dto.status === 'VERIFIED' && JSON.stringify([...exemptions].sort()) !== JSON.stringify([...profile.exemptions].sort()) &&
                 await tx.taxIncomeEntry.count({ where: { ownerKey: userId, period: kazakhstanPeriod(new Date()), status: 'ACCOUNTED' } })) throw new BadRequestException('Льготы месяца уже использованы. Изменение требует бухгалтерской сверки');
             const updated = await tx.taxProfile.update({ where: { userId }, data: { status: dto.status,

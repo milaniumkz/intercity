@@ -42,7 +42,7 @@ export class AdminController {
     @Post('tax/profiles/:id/verify')
     async verifyTax(@Request() req, @Param('id') id: string, @Body() dto: VerifyTaxProfileDto) {
         await this.ensurePermission(req, 'tax.manage');
-        return this.runTracked(req, 'tax.profile.verify', id, { status: dto.status, reference: dto.reference }, () => this.taxService.verify(id, dto, req.user.sub));
+        return this.runTracked(req, 'tax.profile.verify', id, { status: dto.status, reference: dto.reference, quickApproval: dto.quickApproval }, () => this.taxService.verify(id, dto, req.user.sub));
     }
     @Post('tax/profiles/:id/basis')
     async taxBasis(@Request() req, @Param('id') id: string, @Body() dto: MonthlyBasisDto) {

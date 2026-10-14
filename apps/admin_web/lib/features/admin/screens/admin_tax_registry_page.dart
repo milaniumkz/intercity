@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 import '../../../core/api/admin_api_client.dart';
 import 'admin_dashboard_page.dart';
@@ -17,6 +18,25 @@ class _AdminTaxRegistryPageState extends State<AdminTaxRegistryPage> {
   Map<String, dynamic> _registry = {};
   String _error = '';
   bool _loading = false;
+  String _status = 'PENDING';
+  final Set<String> _savingProfiles = {};
+  static const _statuses = {
+    'PENDING': 'На проверке',
+    'VERIFIED': 'Активные',
+    'REJECTED': 'Отклонённые'
+  };
+  List<Map> get _visibleRows => _rows
+      .where((row) => (row['profile'] as Map?)?['status'] == _status)
+      .toList();
+  String _errorMessage(Object error) {
+    if (error is DioException && error.response?.data is Map) {
+      final message = (error.response!.data as Map)['message'];
+      if (message is List) return message.join('\n');
+      if (message is String) return message;
+    }
+    return 'Не удалось сохранить. Проверьте соединение и попробуйте ещё раз.';
+  }
+
   List<Map> get _rows =>
       ((_registry['rows'] as List?) ?? []).whereType<Map>().toList();
   String _money(dynamic value) =>
@@ -108,7 +128,7 @@ class _AdminTaxRegistryPageState extends State<AdminTaxRegistryPage> {
                                   if (ctx.mounted) {
                                     update(() {
                                       saving = false;
-                                      error = 'Не удалось сохранить: $e';
+                                      error = _errorMessage(e);
                                     });
                                   }
                                 }
@@ -121,45 +141,29 @@ class _AdminTaxRegistryPageState extends State<AdminTaxRegistryPage> {
     }
   }
 
-  Future<void> _verify(Map row, bool approve) => _form(
-          approve
-              ? 'Подтвердить налоговый статус'
-              : 'Вернуть статус на уточнение',
-          {
-            'Документ проверки и пояснение': '',
-            'Режим действует с YYYY-MM-DD':
-                ((row['profile'] as Map?)?['effectiveFromDate'] ?? '')
-                    .toString()
-                    .split('T')
-                    .first,
-            'Подтверждённая дата рождения YYYY-MM-DD':
-                ((row['profile'] as Map?)?['birthDate'] ?? '')
-                    .toString()
-                    .split('T')
-                    .first,
-            'Льготы: OPV, OPVR, SO, OSMS (через запятую)':
-                ((row['profile'] as Map?)?['exemptions'] as List? ?? [])
-                    .join(','),
-          }, (values) async {
-        await AdminApiClient.instance
-            .post('/admin/tax/profiles/${row['ownerKey']}/verify', data: {
-          'status': approve ? 'VERIFIED' : 'REJECTED',
-          if (values['Режим действует с YYYY-MM-DD']!.isNotEmpty)
-            'effectiveFrom': values['Режим действует с YYYY-MM-DD'],
-          if (values['Подтверждённая дата рождения YYYY-MM-DD']!.isNotEmpty)
-            'birthDate': values['Подтверждённая дата рождения YYYY-MM-DD'],
-          'reference': values['Документ проверки и пояснение'],
-          'exemptions': values['Льготы: OPV, OPVR, SO, OSMS (через запятую)']!
-              .split(',')
-              .map((v) => v.trim().toUpperCase())
-              .where((v) => v.isNotEmpty)
-              .toList(),
-        });
-      },
-          extra: const Padding(
-              padding: EdgeInsets.only(bottom: 14),
-              child: Text(
-                  'Проверьте действующий режим, ИИН и разрешённую деятельность. Льготы устанавливаются только по подтверждённым основаниям.')));
+  Future<void> _verify(Map row, bool approve) async {
+    final id = '${row['ownerKey']}';
+    if (_savingProfiles.contains(id)) return;
+    setState(() => _savingProfiles.add(id));
+    try {
+      await AdminApiClient.instance
+          .post('/admin/tax/profiles/$id/verify', data: {
+        'status': approve ? 'VERIFIED' : 'REJECTED',
+        'quickApproval': true,
+      });
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(approve ? 'Профиль подтверждён' : 'Профиль отклонён')));
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = _errorMessage(error));
+    } finally {
+      if (mounted) setState(() => _savingProfiles.remove(id));
+    }
+  }
+
   Future<void> _basis(Map row) => _form('Внешний доход за месяц', {
         'Сумма внешнего дохода, тг': '0',
         'Документ подтверждения': ''
@@ -380,10 +384,28 @@ class _AdminTaxRegistryPageState extends State<AdminTaxRegistryPage> {
                               ])))),
           ]),
           const SizedBox(height: 20),
+          Wrap(spacing: 10, runSpacing: 10, children: [
+            for (final entry in _statuses.entries)
+              ChoiceChip(
+                label: Text(
+                    '${entry.value} (${_rows.where((row) => (row['profile'] as Map?)?['status'] == entry.key).length})'),
+                selected: _status == entry.key,
+                onSelected: (_) => setState(() => _status = entry.key),
+              ),
+          ]),
+          const SizedBox(height: 12),
+          if (_visibleRows.isEmpty && !_loading)
+            const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('В этой вкладке пока нет профилей')),
           Card(
               child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: DataTable(
+                      columnSpacing: 16,
+                      horizontalMargin: 16,
+                      dataTextStyle: Theme.of(context).textTheme.bodySmall,
+                      headingTextStyle: Theme.of(context).textTheme.labelMedium,
                       columns: [
                         for (final label in [
                           'Пользователь / статус',
@@ -398,7 +420,7 @@ class _AdminTaxRegistryPageState extends State<AdminTaxRegistryPage> {
                         ])
                           DataColumn(label: Text(label)),
                       ],
-                      rows: _rows.map((row) {
+                      rows: _visibleRows.map((row) {
                         final profile = row['profile'] as Map?;
                         final user = profile?['user'] as Map?;
                         return DataRow(cells: [
@@ -408,7 +430,7 @@ class _AdminTaxRegistryPageState extends State<AdminTaxRegistryPage> {
                               children: [
                                 Text('${user?['name'] ?? 'Удалённый аккаунт'}'),
                                 Text(
-                                    '${user?['phone'] ?? ''} · ${profile?['status'] == 'VERIFIED' ? 'Подтверждён' : 'На проверке'}',
+                                    '${user?['phone'] ?? ''} · ${_statuses[profile?['status']] ?? 'Не указан'}',
                                     style: const TextStyle(fontSize: 11))
                               ])),
                           DataCell(Text('${row['trips']}')),
@@ -420,58 +442,75 @@ class _AdminTaxRegistryPageState extends State<AdminTaxRegistryPage> {
                           DataCell(Text(_money(row['withheld']))),
                           DataCell(Text(_money(row['debt']))),
                           DataCell(Text(_money(row['paid']))),
-                          DataCell(Text('${row['reviewCount']}')),
-                          DataCell(PopupMenuButton<String>(
-                              tooltip: 'Действия',
-                              onSelected: (value) {
-                                switch (value) {
-                                  case 'identity':
-                                    _identity(row);
-                                  case 'approve':
-                                    _verify(row, true);
-                                  case 'reject':
-                                    _verify(row, false);
-                                  case 'basis':
-                                    _basis(row);
-                                  case 'collect':
-                                    _collect(row);
-                                  case 'release':
-                                    _release(row);
-                                  case 'payment':
-                                    _payment(row);
-                                }
-                              },
-                              itemBuilder: (_) => [
-                                    const PopupMenuItem(
-                                        value: 'identity',
-                                        child: Text(
-                                            'Проверить ИИН (доступ с аудитом)')),
-                                    if (profile != null)
+                          DataCell(Text('${row['reviewCount'] ?? 0}')),
+                          DataCell(
+                              Row(mainAxisSize: MainAxisSize.min, children: [
+                            if (profile?['status'] != 'VERIFIED')
+                              FilledButton(
+                                  onPressed: _savingProfiles
+                                          .contains('${row['ownerKey']}')
+                                      ? null
+                                      : () => _verify(row, true),
+                                  child: const Text('Подтвердить')),
+                            if (profile?['status'] != 'REJECTED')
+                              TextButton(
+                                  onPressed: _savingProfiles
+                                          .contains('${row['ownerKey']}')
+                                      ? null
+                                      : () => _verify(row, false),
+                                  child: const Text('Отклонить')),
+                            PopupMenuButton<String>(
+                                tooltip: 'Действия',
+                                onSelected: (value) {
+                                  switch (value) {
+                                    case 'identity':
+                                      _identity(row);
+                                    case 'approve':
+                                      _verify(row, true);
+                                    case 'reject':
+                                      _verify(row, false);
+                                    case 'basis':
+                                      _basis(row);
+                                    case 'collect':
+                                      _collect(row);
+                                    case 'release':
+                                      _release(row);
+                                    case 'payment':
+                                      _payment(row);
+                                  }
+                                },
+                                itemBuilder: (_) => [
                                       const PopupMenuItem(
-                                          value: 'approve',
-                                          child: Text('Подтвердить статус')),
-                                    if (profile != null)
-                                      const PopupMenuItem(
-                                          value: 'reject',
-                                          child: Text('Вернуть на уточнение')),
-                                    const PopupMenuItem(
-                                        value: 'basis',
-                                        child:
-                                            Text('Подтвердить внешний доход')),
-                                    const PopupMenuItem(
-                                        value: 'collect',
-                                        child: Text(
-                                            'Удержать долг из собственных денег')),
-                                    const PopupMenuItem(
-                                        value: 'release',
-                                        child: Text(
-                                            'Учесть ожидающие начисления')),
-                                    if (self)
-                                      const PopupMenuItem(
-                                          value: 'payment',
+                                          value: 'identity',
                                           child: Text(
-                                              'Зафиксировать перечисление')),
-                                  ])),
+                                              'Проверить ИИН (доступ с аудитом)')),
+                                      if (profile != null)
+                                        const PopupMenuItem(
+                                            value: 'approve',
+                                            child: Text('Подтвердить статус')),
+                                      if (profile != null)
+                                        const PopupMenuItem(
+                                            value: 'reject',
+                                            child: Text('Отклонить статус')),
+                                      const PopupMenuItem(
+                                          value: 'basis',
+                                          child: Text(
+                                              'Подтвердить внешний доход')),
+                                      const PopupMenuItem(
+                                          value: 'collect',
+                                          child: Text(
+                                              'Удержать долг из собственных денег')),
+                                      const PopupMenuItem(
+                                          value: 'release',
+                                          child: Text(
+                                              'Учесть ожидающие начисления')),
+                                      if (self)
+                                        const PopupMenuItem(
+                                            value: 'payment',
+                                            child: Text(
+                                                'Зафиксировать перечисление')),
+                                    ]),
+                          ])),
                         ]);
                       }).toList()))),
           if (_rows.isEmpty && !_loading)
