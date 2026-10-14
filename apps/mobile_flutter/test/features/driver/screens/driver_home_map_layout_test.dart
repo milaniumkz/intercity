@@ -40,6 +40,33 @@ class _HomeApi extends ApiClient {
 
 void main() {
   testWidgets(
+      'registered route request appears on the map and accepts a price offer',
+      (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final api = _MatchingRouteApi();
+    await tester.pumpWidget(MaterialApp(
+        home: DriverHomePage(
+            apiClient: api,
+            mapTileProvider: MemoryTileProvider(),
+            realtimeConnector: (_) async => null)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Усть-Каменогорск, Назарбаева 8/1'), findsOneWidget);
+    expect(find.text('Семей, Абая 10'), findsOneWidget);
+    await tester.ensureVisible(find.text('Предложить цену'));
+    await tester.tap(find.text('Предложить цену'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '7500');
+    await tester.tap(find.text('Отправить предложение'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(api.sentPrice, 7500);
+    expect(api.sentSeats, 2);
+    expect(find.textContaining('Моё предложение: 7500'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
       'intercity leaving reaches a driver on the map without opening the trip',
       (tester) async {
     FlutterSecureStorage.setMockInitialValues({});
@@ -298,5 +325,50 @@ class _IntercityApi extends _HomeApi {
       ]);
     }
     return super.get(path, queryParameters: queryParameters, options: options);
+  }
+}
+
+class _MatchingRouteApi extends _HomeApi {
+  num? sentPrice;
+  dynamic sentSeats;
+  @override
+  Future<Response<dynamic>> get(String path,
+      {Map<String, dynamic>? queryParameters, Options? options}) async {
+    if (path == '/driver/profile') {
+      final result = await super.get(path);
+      (result.data as Map)['acceptIntercity'] = true;
+      return result;
+    }
+    if (path == '/ridesharing/trips/my') {
+      return Response(requestOptions: RequestOptions(path: path), data: []);
+    }
+    if (path == '/driver/intercity/matching') {
+      return Response(requestOptions: RequestOptions(path: path), data: [
+        {
+          'id': 'planned',
+          'fromCity': 'Усть-Каменогорск',
+          'toCity': 'Семей',
+          'fromManualAddress': 'Назарбаева 8/1',
+          'toAddressLabel': 'Абая 10',
+          'date': '2026-10-15T05:00:00Z',
+          'seats': 2,
+          'price': 7000,
+          'currency': 'KZT',
+          if (sentPrice != null)
+            'myOffer': {'price': sentPrice, 'status': 'PENDING'},
+        }
+      ]);
+    }
+    return super.get(path, queryParameters: queryParameters, options: options);
+  }
+
+  @override
+  Future<Response<dynamic>> post(String path,
+      {dynamic data, Options? options}) async {
+    if (path == '/intercity/requests/planned/offers') {
+      sentPrice = data['price'];
+      sentSeats = data['seats'];
+    }
+    return Response(requestOptions: RequestOptions(path: path), data: {});
   }
 }

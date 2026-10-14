@@ -53,6 +53,13 @@ export class IntercityController {
     return this.intercityService.getRequest(req.user.sub, id);
   }
 
+  @Post('requests/:id/accept-passenger-price')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async acceptPassengerPrice(@Request() req,@Param('id') id:string) {
+    return this.intercityService.acceptPassengerPrice(req.user.sub,id);
+  }
+
   @Post("requests/:id/offers")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

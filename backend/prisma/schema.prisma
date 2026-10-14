@@ -297,6 +297,7 @@ model DriverProfile {
 }
 
 model DriverIntercityRoute {
+  topUntil DateTime?
   id             String        @id @default(uuid())
   driverId       String
   driver         DriverProfile @relation(fields: [driverId], references: [id], onDelete: Cascade)
@@ -672,6 +673,7 @@ model TariffDelivery {
 }
 
 model IntercityRequest {
+  priorityWindow IntercityRoutePriorityWindow?
   id          String           @id @default(uuid())
   passengerLeavingAt DateTime?
   passengerId String
@@ -980,4 +982,13 @@ model TaxPeriodBasis {
   createdAt     DateTime @default(now())
 
   @@unique([ownerKey, period])
+}
+
+model IntercityRoutePriorityWindow {
+  requestId String @id
+  request IntercityRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  routeIds String[] @default([])
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([expiresAt])
 }

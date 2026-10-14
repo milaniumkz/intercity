@@ -1,3 +1,4 @@
+import { ROUTE_TOP_POLICY_KEY, DEFAULT_ROUTE_TOP_POLICY, parseRouteTopPolicy, routeTopPrice, ensureRouteTopWindow, canSeePriorityRequest } from '../common/driver-route-top';
 import { appendTripPoint } from '../common/trip-verification';
 import { driverDailyBonusProgress, serviceDay } from '../common/driver-daily-bonus';
 import { applyDriverActivity, driverOfferActivityKey } from '../common/driver-activity';
@@ -8,7 +9,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { promises as fs } from 'fs';
 import { extname, join } from 'path';
 import { PrismaService } from '../prisma.service';
-import { CreateDriverProfileDto, UpdateLocationDto, SetOnlineDto, DriverDocsUploadUrlDto, CompleteDriverDocsDto, DriverIntercityRouteDto } from './dto/driver.dto';
+import { CreateDriverProfileDto, UpdateLocationDto, SetOnlineDto, DriverDocsUploadUrlDto, CompleteDriverDocsDto, DriverIntercityRouteDto, PromoteDriverRouteDto } from './dto/driver.dto';
 import { v4 as uuidv4 } from 'uuid';
 import { GeoService } from '../geo/geo.service';
 import { RealtimeService } from '../realtime/realtime.service';
@@ -111,15 +112,47 @@ export class DriverService {
     }
 
     async getIntercityRoutes(driverUserId: string) {
-        const profile = await this.prisma.driverProfile.findUnique({
-            where: { userId: driverUserId },
-            select: { id: true },
+        const profile=await this.prisma.driverProfile.findUnique({where:{userId:driverUserId},select:{id:true}});
+        if(!profile) throw new NotFoundException('Driver profile not found');
+        const routes=await this.prisma.driverIntercityRoute.findMany({where:{driverId:profile.id,isActive:true},orderBy:{createdAt:'desc'}});
+        const policy=parseRouteTopPolicy((await this.prisma.appSettings.findUnique({where:{key:ROUTE_TOP_POLICY_KEY}}))?.value);
+        return Promise.all(routes.map(async route=>{
+            const currency=await this.geoService.departureCurrency(null,null,route.fromCity);
+            return {...route,currency,topPrice:routeTopPrice(policy,currency),topDurationHours:policy.durationHours,firstAccessSeconds:policy.firstAccessSeconds};
+        }));
+    }
+
+    async promoteIntercityRoute(driverUserId: string,routeId: string,dto: PromoteDriverRouteDto) {
+        const route=await this.prisma.driverIntercityRoute.findFirst({where:{id:routeId,driver:{userId:driverUserId},isActive:true}});
+        if(!route) throw new NotFoundException('Маршрут не найден');
+        const currency=await this.geoService.departureCurrency(null,null,route.fromCity);
+        const result=await this.prisma.$transaction(async tx=>{
+            await lockIncomeAccounting(tx);
+            await tx.$executeRaw`SELECT id FROM "User" WHERE id=${driverUserId} FOR UPDATE`;
+            await tx.$executeRaw`SELECT id FROM "DriverIntercityRoute" WHERE id=${routeId} FOR UPDATE`;
+            const fresh=await tx.driverIntercityRoute.findFirst({where:{id:routeId,driver:{userId:driverUserId,status:'APPROVED'},isActive:true},include:{driver:{include:{serviceStats:true}}}});
+            if(!fresh || fresh.seatsAvailable<=0 || driverPerformance(fresh.driver).activity.blocked) throw new BadRequestException('Нужен активный одобренный маршрут со свободными местами');
+            const wallet=await tx.wallet.findUnique({where:{userId:driverUserId}});
+            if(!wallet) throw new BadRequestException('Пополните баланс для поднятия маршрута в топ');
+            await tx.$executeRaw`SELECT id FROM "Wallet" WHERE id=${wallet.id} FOR UPDATE`;
+            const key=`driver-route-top:${routeId}:${dto.requestKey}`;
+            if(await tx.walletTransaction.findFirst({where:{walletId:wallet.id,idempotencyKey:key}})) return fresh;
+            if(fresh.topUntil && fresh.topUntil>new Date()) throw new BadRequestException('Маршрут уже в топе. Повторная оплата до окончания срока не нужна');
+            await tx.appSettings.upsert({where:{key:ROUTE_TOP_POLICY_KEY},create:{key:ROUTE_TOP_POLICY_KEY,value:JSON.stringify(DEFAULT_ROUTE_TOP_POLICY)},update:{}});
+            await tx.$queryRaw`SELECT key FROM "AppSettings" WHERE key=${ROUTE_TOP_POLICY_KEY} FOR SHARE`;
+            const policy=parseRouteTopPolicy((await tx.appSettings.findUnique({where:{key:ROUTE_TOP_POLICY_KEY}}))?.value);
+            const price=routeTopPrice(policy,currency);
+            if(currency!==dto.currency || price!==dto.expectedPrice) throw new BadRequestException('Стоимость изменилась. Обновите маршрут и подтвердите актуальную цену');
+            const current=await tx.wallet.findUniqueOrThrow({where:{id:wallet.id}});
+            const field=moneyField(currency),locked=currency==='RUB'?current.lockedBonusRub:current.lockedBonus;
+            if(current[field]-locked<price) throw new BadRequestException('Недостаточно собственных средств на балансе');
+            await tx.wallet.update({where:{id:wallet.id},data:{[field]:{decrement:price}}});
+            await tx.walletTransaction.create({data:{walletId:wallet.id,type:'DRIVER_ROUTE_TOP',direction:'DEBIT',balanceSource:'MONEY',currency,amount:price,
+                actorUserId:driverUserId,idempotencyKey:key,note:`Маршрут ${route.fromCity} → ${route.toCity}: ${policy.durationHours} ч, базовая цена ${policy.priceKzt} KZT, курс ${policy.kztPerRub} KZT/RUB`}});
+            return tx.driverIntercityRoute.update({where:{id:routeId},data:{topUntil:new Date(Date.now()+policy.durationHours*3600000)}});
         });
-        if (!profile) throw new NotFoundException('Driver profile not found');
-        return this.prisma.driverIntercityRoute.findMany({
-            where: { driverId: profile.id, isActive: true },
-            orderBy: { createdAt: 'desc' },
-        });
+        this.realtimeService?.publish?.({type:'driver.route.top.updated',entity:'driver',entityId:route.driverId,at:new Date().toISOString(),payload:{routeId,topUntil:result.topUntil}});
+        return result;
     }
 
     async addIntercityRoute(driverUserId: string, dto: DriverIntercityRouteDto) {
@@ -475,11 +508,40 @@ export class DriverService {
             .sort((a, b) => b.rankScore - a.rankScore);
 
         const intercityRequests = profile.acceptIntercity
-            ? await this.getNearbyIntercityRequestsForDriver(profile.id, driverLat, driverLng, searchRadiusKm, offerAcceptSec, nowMs)
+            ? await this.getNearbyIntercityRequestsForDriver(profile.id, driverLat, driverLng, searchRadiusKm, offerAcceptSec, nowMs, driverUserId)
             : [];
 
         return [...nearbyOrders, ...intercityRequests]
             .sort((a: any, b: any) => (b.rankScore ?? 0) - (a.rankScore ?? 0));
+    }
+
+    async getMatchingIntercityRequests(driverUserId: string) {
+        const profile = await this.prisma.driverProfile.findUnique({ where: { userId: driverUserId },include:{serviceStats:true} });
+        if (!profile || profile.status!=='APPROVED' || !profile.acceptIntercity || driverPerformance(profile).activity.blocked) return [];
+        const routes = await this.prisma.driverIntercityRoute.findMany({
+            where: { driverId: profile.id, isActive: true, seatsAvailable: { gt: 0 } },
+        });
+        if (!routes.length) return [];
+        // Registered routes are explicit driver intent. Match before limiting;
+        // proximity to pickup must not hide a planned intercity departure.
+        const requests = await this.prisma.intercityRequest.findMany({
+            where: { status: 'OPEN', requestType: { in: ['INTERCITY','DELIVERY_INTERCITY','DELIVERY_RF'] },
+                OR: routes.map(route => ({
+                    fromCity: { equals: route.fromCity, mode: 'insensitive' },
+                    toCity: { equals: route.toCity, mode: 'insensitive' },
+                    seats: { lte: route.seatsAvailable },
+                })) },
+            include: { offers: { where: { driverId: driverUserId, status: 'PENDING' },
+                select: { id: true, price: true, seats: true, status: true } } },
+            orderBy: [{ date: 'asc' }, { createdAt: 'desc' }], take: 100,
+        });
+        const visible=[];
+        for(const {offers,...request} of requests) {
+            const window=await this.prisma.$transaction(tx=>ensureRouteTopWindow(tx,request));
+            if(canSeePriorityRequest(window,profile.id)) visible.push({...request,myOffer:offers[0] ?? null,
+                priorityAccessUntil:window?.activeDriverIds?.includes(profile.id) && window.expiresAt>new Date()?window.expiresAt:null});
+        }
+        return visible;
     }
 
     async getActiveIntercity(driverUserId: string) {
@@ -547,6 +609,7 @@ export class DriverService {
         searchRadiusKm: number,
         offerAcceptSec: number,
         nowMs: number,
+        driverUserId: string,
     ) {
         const routeApplications = await this.prisma.driverIntercityRoute.findMany({
             where: { driverId, isActive: true },
@@ -560,15 +623,22 @@ export class DriverService {
             ]),
         );
 
-        const requests = await this.prisma.intercityRequest.findMany({
+        const allRequests = await this.prisma.intercityRequest.findMany({
             where: {
                 status: 'OPEN',
                 requestType: { in: ['INTERCITY', 'DELIVERY_INTERCITY', 'DELIVERY_RF'] },
-                offers: { none: { driverId, status: { in: ['PENDING', 'ACCEPTED'] } } },
+                offers: { none: { driverId: driverUserId, status: { in: ['PENDING', 'ACCEPTED'] } } },
             },
             take: 50,
             orderBy: { createdAt: 'desc' },
         });
+        const requests=[];
+        for(const request of allRequests) {
+            const route=allowedRoutes.get(`${this.routeKey(request.fromCity)}→${this.routeKey(request.toCity)}`);
+            if(!route || route.seatsAvailable<request.seats) continue;
+            const window=await this.prisma.$transaction(tx=>ensureRouteTopWindow(tx,request));
+            if(canSeePriorityRequest(window,driverId)) requests.push(request);
+        }
         return requests
             .filter((request: any) => {
                 const route = allowedRoutes.get(`${this.routeKey(request.fromCity)}→${this.routeKey(request.toCity)}`);
