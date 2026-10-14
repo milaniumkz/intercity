@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:intercity_shared/intercity_shared.dart';
 
 import 'admin_token_store.dart';
@@ -45,6 +46,7 @@ class AdminApiClient implements AdminApi {
 
   static final AdminApiClient _defaultInstance = AdminApiClient();
   static AdminApi? _overrideInstance;
+  static final sessionExpired = ValueNotifier<int>(0);
 
   static const String _accessTokenKey = 'admin_access_token';
   static const String _refreshTokenKey = 'admin_refresh_token';
@@ -90,6 +92,11 @@ class AdminApiClient implements AdminApi {
     DioException error,
     ErrorInterceptorHandler handler,
   ) async {
+    if (error.response?.statusCode == 401 &&
+        error.requestOptions.extra[_retriedRequestKey] == true) {
+      await logout();
+      sessionExpired.value++;
+    }
     if (!_shouldAttemptRefresh(error)) {
       handler.next(error);
       return;
@@ -103,6 +110,7 @@ class AdminApiClient implements AdminApi {
       final retried = await _retryRequestWithToken(error.requestOptions, token);
       handler.resolve(retried);
     } on AuthSessionExpiredException catch (sessionError) {
+      sessionExpired.value++;
       handler.reject(
         _buildManagedAuthError(error.requestOptions, sessionError),
       );
@@ -170,7 +178,7 @@ class AdminApiClient implements AdminApi {
       try {
         final refreshToken = await _storage.read(_refreshTokenKey);
         if (refreshToken == null || refreshToken.isEmpty) {
-          throw const AuthSessionExpiredException('Refresh token is missing.');
+          throw const AuthSessionExpiredException();
         }
 
         final response = await _refreshDio.post<dynamic>(

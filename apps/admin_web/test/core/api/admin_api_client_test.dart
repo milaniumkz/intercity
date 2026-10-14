@@ -8,6 +8,28 @@ import 'package:intercity_shared/intercity_shared.dart';
 
 void main() {
   group('AdminApiClient refresh flow', () {
+    test('missing refresh token clears stale session and notifies the app',
+        () async {
+      final store = _MemoryAdminTokenStore()
+        ..values['admin_access_token'] = 'stale-access';
+      final before = AdminApiClient.sessionExpired.value;
+      var refreshCalls = 0;
+      final client = AdminApiClient(
+        dio: _buildMockDio((_) async => _jsonBody({}, statusCode: 401)),
+        refreshDio: _buildMockDio((_) async {
+          refreshCalls++;
+          return _jsonBody({});
+        }),
+        tokenStore: store,
+        baseUrl: 'https://api.intercity.invalid/api',
+      );
+      await expectLater(
+          client.get('/admin/dashboard'), throwsA(isA<DioException>()));
+      expect(store.values, isEmpty);
+      expect(refreshCalls, 0);
+      expect(AdminApiClient.sessionExpired.value, greaterThan(before));
+    });
+
     test('reuses one refresh request for concurrent unauthorized calls',
         () async {
       final store = _MemoryAdminTokenStore()

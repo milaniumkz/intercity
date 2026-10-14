@@ -2,6 +2,7 @@ import 'features/admin/screens/admin_tax_registry_page.dart';
 import 'features/admin/screens/admin_trip_reviews_page.dart';
 import 'features/admin/screens/admin_rating_reviews_page.dart';
 import 'package:flutter/material.dart';
+import 'core/api/admin_api_client.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'features/admin/screens/admin_login_page.dart';
 import 'features/admin/screens/admin_dashboard_page.dart';
@@ -10,8 +11,40 @@ void main() {
   runApp(const ProviderScope(child: IntercityAdminApp()));
 }
 
-class IntercityAdminApp extends StatelessWidget {
+class IntercityAdminApp extends StatefulWidget {
   const IntercityAdminApp({super.key});
+
+  @override
+  State<IntercityAdminApp> createState() => _IntercityAdminAppState();
+}
+
+class _IntercityAdminAppState extends State<IntercityAdminApp> {
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  bool _redirectScheduled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    AdminApiClient.sessionExpired.addListener(_onSessionExpired);
+  }
+
+  void _onSessionExpired() {
+    if (_redirectScheduled) return;
+    _redirectScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _redirectScheduled = false;
+      if (!mounted) return;
+      _navigatorKey.currentState
+          ?.pushNamedAndRemoveUntil('/login', (_) => false);
+    });
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
+  @override
+  void dispose() {
+    AdminApiClient.sessionExpired.removeListener(_onSessionExpired);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -20,6 +53,7 @@ class IntercityAdminApp extends StatelessWidget {
       brightness: Brightness.light,
     );
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       title: 'INTERCITY Админка',
       theme: ThemeData(
         useMaterial3: true,
