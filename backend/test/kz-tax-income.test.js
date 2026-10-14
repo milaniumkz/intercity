@@ -81,6 +81,17 @@ test('KZ monetary referrals: verified status, no duplicate money, caps, IP, curr
     await credit(u,'rub',1000,'RUB');
     assert.equal((await p.taxIncomeEntry.findUnique({where:{eventKey:`${key}:rub`}})).status,'REVIEW');
     assert.equal((await p.wallet.findUnique({where:{userId:u.id}})).referralMoney.toString(),'9600');
+    const quick=await user();
+    await p.taxPeriodBasis.deleteMany({where:{ownerKey:quick.id}});
+    await p.taxProfile.update({where:{userId:quick.id},data:{status:'PENDING',birthDate:null,effectiveFrom:null}});
+    const quickProfile=await tax.verify(quick.id,{status:'VERIFIED',quickApproval:true},'test-admin');
+    assert.equal(quickProfile.status,'VERIFIED');
+    assert.equal(quickProfile.birthDate.toISOString().slice(0,10),'1990-01-01');
+    assert.equal(quickProfile.verifiedBy,'test-admin');
+    assert.ok(quickProfile.effectiveFrom <= new Date());
+    assert.equal(await p.taxPeriodBasis.count({where:{ownerKey:quick.id}}),0);
+    const rejected=await tax.verify(quick.id,{status:'REJECTED',quickApproval:true},'test-admin');
+    assert.equal(rejected.status,'REJECTED');
     const ie=await user('IE'); await credit(ie,'ie');
     assert.equal((await p.wallet.findUnique({where:{userId:ie.id}})).referralMoney.toString(),'10000');
     assert.equal((await p.taxIncomeEntry.findUnique({where:{eventKey:`${key}:ie`}})).withheld.toString(),'0');

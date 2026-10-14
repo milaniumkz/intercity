@@ -8,11 +8,12 @@ export class DeclareTaxProfileDto {
     @IsBoolean() consent: boolean;
 }
 export class VerifyTaxProfileDto {
+    @IsOptional() @IsBoolean() quickApproval?: boolean;
     @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/) @IsISO8601({ strict: true }) birthDate?: string;
     @IsOptional() @IsISO8601() effectiveFrom?: string;
     @IsIn(['VERIFIED', 'REJECTED']) status: string;
-    @IsString() @MaxLength(500) reference: string;
-    @IsArray() @IsIn(['OPV', 'OPVR', 'SO', 'OSMS'], { each: true }) exemptions: string[];
+    @IsOptional() @IsString() @MaxLength(500) reference: string;
+    @IsOptional() @IsArray() @IsIn(['OPV', 'OPVR', 'SO', 'OSMS'], { each: true }) exemptions: string[];
 }
 export class MonthlyBasisDto {
     @IsString() @Matches(/^20\d{2}-(0[1-9]|1[0-2])$/) period: string;
