@@ -116,6 +116,20 @@ SELECT key, value ~ '^[0-9]+$' AS numeric_value_present FROM "AppSettings" WHERE
 SQLPAYMENTCONFIG
       exit 0
     fi
+    if [[ "$TARGET" == driver-account:* ]]; then
+      account_phone="${TARGET#driver-account:}"
+      [[ "$account_phone" =~ ^[78][0-9]{10}$ ]] || { echo "Invalid account phone" >&2; exit 1; }
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 -v account_phone="$1"' sh "$account_phone" <<'SQLACCOUNT'
+SELECT json_build_object('userId',u.id,'role',u.role,'phoneCanonical',u.phone=('+'||:'account_phone'),'driverStatus',d.status,'activityScore',s."activityScore",'blockedUntil',s."activityBlockedUntil",'moneyKzt',w.money,'lockedKzt',w."lockedBonus",'bonusKzt',w.bonus,'moneyRub',w."moneyRub",'lockedRub',w."lockedBonusRub",'acceptIntercity',d."acceptIntercity")
+FROM "User" u LEFT JOIN "DriverProfile" d ON d."userId"=u.id LEFT JOIN "DriverServiceStats" s ON s."driverId"=d.id LEFT JOIN "Wallet" w ON w."userId"=u.id
+WHERE right(regexp_replace(u.phone,'[^0-9]','','g'),10)=right(:'account_phone',10);
+SELECT json_build_object('routeId',r.id,'from',r."fromCity",'to',r."toCity",'active',r."isActive",'seats',r."seatsAvailable",'topUntil',r."topUntil") FROM "DriverIntercityRoute" r JOIN "DriverProfile" d ON d.id=r."driverId" JOIN "User" u ON u.id=d."userId" WHERE right(regexp_replace(u.phone,'[^0-9]','','g'),10)=right(:'account_phone',10);
+SELECT json_build_object('paymentType',t.type,'amount',t.amount,'currency',t.currency,'createdAt',t."createdAt") FROM "WalletTransaction" t JOIN "Wallet" w ON w.id=t."walletId" JOIN "User" u ON u.id=w."userId" WHERE right(regexp_replace(u.phone,'[^0-9]','','g'),10)=right(:'account_phone',10) AND t.type='DRIVER_ROUTE_TOP' ORDER BY t."createdAt" DESC LIMIT 5;
+SELECT key,value FROM "AppSettings" WHERE key='driverRouteTopPolicy';
+SQLACCOUNT
+      exit 0
+    fi
     if [[ "$TARGET" == driver-offers:* ]]; then
       driver_phone="${TARGET#driver-offers:}"
       [[ "$driver_phone" =~ ^[78][0-9]{10}$ ]] || { echo "Invalid driver phone" >&2; exit 1; }
