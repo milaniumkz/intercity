@@ -116,6 +116,14 @@ SELECT key, value ~ '^[0-9]+$' AS numeric_value_present FROM "AppSettings" WHERE
 SQLPAYMENTCONFIG
       exit 0
     fi
+    if [[ "$TARGET" == "intercity-requests" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQLINTERCITY'
+SELECT json_build_object('requestId',id,'from',"fromCity",'to',"toCity",'type',"requestType",'status',status,'date',date,'seats',seats,'createdAt',"createdAt") FROM "IntercityRequest" WHERE "fromCity" ~* 'жетек' OR "toCity" ~* '(каменогор|оскемен|өскемен)' ORDER BY "createdAt" DESC LIMIT 15;
+SELECT json_build_object('routeId',r.id,'from',r."fromCity",'to',r."toCity",'active',r."isActive",'seats',r."seatsAvailable",'driverStatus',d.status,'acceptIntercity',d."acceptIntercity",'activityScore',s."activityScore") FROM "DriverIntercityRoute" r JOIN "DriverProfile" d ON d.id=r."driverId" LEFT JOIN "DriverServiceStats" s ON s."driverId"=d.id WHERE r."isActive" AND (r."fromCity" ~* 'жетек' OR r."toCity" ~* '(каменогор|оскемен|өскемен)');
+SQLINTERCITY
+      exit 0
+    fi
     if [[ "$TARGET" == driver-account:* ]]; then
       account_phone="${TARGET#driver-account:}"
       [[ "$account_phone" =~ ^[78][0-9]{10}$ ]] || { echo "Invalid account phone" >&2; exit 1; }
