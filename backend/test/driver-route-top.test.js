@@ -13,9 +13,17 @@ test('paid route priority charges once, expires after 12 hours and broadcasts to
   await p.appSettings.upsert({where:{key:ROUTE_TOP_POLICY_KEY},create:{key:ROUTE_TOP_POLICY_KEY,value:JSON.stringify(DEFAULT_ROUTE_TOP_POLICY)},update:{value:JSON.stringify(DEFAULT_ROUTE_TOP_POLICY)}});
   for(let i=0;i<5;i++) {
    const u=await p.user.create({data:{phone:`test:${key}:${i}`,password:'test',name:'Top fixture',refCode:randomUUID(),refLink:'test',role:'DRIVER',wallet:{create:{money:5000,moneyRub:5000}}},include:{wallet:true}});users.push(u);wallets.push(u.wallet.id);
-   const d=await p.driverProfile.create({data:{userId:u.id,status:'APPROVED',acceptIntercity:true,serviceStats:{create:{activityScore:80+i}},rating:{create:{ratingAvg:i===2?3:5,ratingCount:10}},priorityFlags:{create:{hasBranding:i===0}}}});drivers.push(d.id);
+   const d=await p.driverProfile.create({data:{userId:u.id,status:'ACTIVE',acceptIntercity:true,serviceStats:{create:{activityScore:80+i}},rating:{create:{ratingAvg:i===2?3:5,ratingCount:10}},priorityFlags:{create:{hasBranding:i===0}}}});drivers.push(d.id);
    u.route=await p.driverIntercityRoute.create({data:{driverId:d.id,fromCity:i===3?'RU '+from:from,toCity:to,seatsTotal:2,seatsAvailable:2}});
   }
+  for(const status of ['PENDING','REJECTED']) {
+    await p.driverProfile.update({where:{id:drivers[4]},data:{status}});
+    await assert.rejects(service.promoteIntercityRoute(users[4].id,users[4].route.id,{requestKey:randomUUID(),expectedPrice:1000,currency:'KZT'}),/ещё не одобрен/);
+    assert.deepEqual(await service.getMatchingIntercityRequests(users[4].id),[]);
+    assert.equal((await p.wallet.findUnique({where:{id:wallets[4]}})).money,5000);
+  }
+  await p.driverProfile.update({where:{id:drivers[4]},data:{status:'ACTIVE'}});
+  await p.driverProfile.update({where:{id:drivers[3]},data:{status:'APPROVED'}});
   const started=Date.now(),purchase={requestKey:randomUUID(),expectedPrice:1000,currency:'KZT'};
   const results=await Promise.all([service.promoteIntercityRoute(users[0].id,users[0].route.id,purchase),service.promoteIntercityRoute(users[0].id,users[0].route.id,purchase)]);
   assert.equal(results[0].topUntil.getTime(),results[1].topUntil.getTime());assert.ok(results[0].topUntil.getTime()-started>=43200000);assert.ok(results[0].topUntil.getTime()-started<43205000);
@@ -42,6 +50,16 @@ test('paid route priority charges once, expires after 12 hours and broadcasts to
   await p.intercityRoutePriorityWindow.update({where:{requestId:ids[0]},data:{expiresAt:new Date(Date.now()-1000)}});
   assert.ok((await service.getMatchingIntercityRequests(users[4].id)).some(r=>r.id===ids[0]));
   await intercity.createOffer(users[4].id,ids[0],{price:7200,seats:2});
+  const review=await intercity.createOffer(users[4].id,ids[0],{price:7300,seats:2});
+  await assert.rejects(intercity.rejectOffer(users[2].id,review.id),/не найдено/);
+  await intercity.rejectOffer('top-test',review.id);
+  assert.equal((await p.intercityOffer.findUnique({where:{id:review.id}})).status,'REJECTED');
+  await assert.rejects(intercity.acceptOffer('top-test',review.id),/отклонено/);
+  const expired=await intercity.createOffer(users[4].id,ids[0],{price:7400,seats:2});
+  await p.intercityOffer.update({where:{id:expired.id},data:{updatedAt:new Date(Date.now()-31000)}});
+  await assert.rejects(intercity.acceptOffer('top-test',expired.id),/истекло/);
+  await intercity.getRequest('top-test',ids[0]);
+  assert.equal((await p.intercityOffer.findUnique({where:{id:expired.id}})).status,'EXPIRED');
   const race=await Promise.allSettled([intercity.acceptPassengerPrice(users[0].id,ids[1]),intercity.acceptPassengerPrice(users[1].id,ids[1])]);
   assert.equal(race.filter(r=>r.status==='fulfilled').length,1);
   const assigned=await p.intercityRequest.findUnique({where:{id:ids[1]}});

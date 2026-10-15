@@ -130,8 +130,11 @@ export class DriverService {
             await lockIncomeAccounting(tx);
             await tx.$executeRaw`SELECT id FROM "User" WHERE id=${driverUserId} FOR UPDATE`;
             await tx.$executeRaw`SELECT id FROM "DriverIntercityRoute" WHERE id=${routeId} FOR UPDATE`;
-            const fresh=await tx.driverIntercityRoute.findFirst({where:{id:routeId,driver:{userId:driverUserId,status:'APPROVED'},isActive:true},include:{driver:{include:{serviceStats:true}}}});
-            if(!fresh || fresh.seatsAvailable<=0 || driverPerformance(fresh.driver).activity.blocked) throw new BadRequestException('Нужен активный одобренный маршрут со свободными местами');
+            const fresh=await tx.driverIntercityRoute.findFirst({where:{id:routeId,driver:{userId:driverUserId},isActive:true},include:{driver:{include:{serviceStats:true}}}});
+            if(!fresh) throw new BadRequestException('Маршрут удалён или отключён. Обновите список маршрутов');
+            if(!['ACTIVE','APPROVED'].includes(fresh.driver.status)) throw new BadRequestException('Профиль водителя ещё не одобрен. Дождитесь проверки в админке');
+            if(fresh.seatsAvailable<=0) throw new BadRequestException('На маршруте нет свободных мест');
+            if(driverPerformance(fresh.driver).activity.blocked) throw new BadRequestException('Поднятие в топ недоступно: водитель заблокирован по активности');
             const wallet=await tx.wallet.findUnique({where:{userId:driverUserId}});
             if(!wallet) throw new BadRequestException('Пополните баланс для поднятия маршрута в топ');
             await tx.$executeRaw`SELECT id FROM "Wallet" WHERE id=${wallet.id} FOR UPDATE`;
@@ -517,7 +520,7 @@ export class DriverService {
 
     async getMatchingIntercityRequests(driverUserId: string) {
         const profile = await this.prisma.driverProfile.findUnique({ where: { userId: driverUserId },include:{serviceStats:true} });
-        if (!profile || profile.status!=='APPROVED' || !profile.acceptIntercity || driverPerformance(profile).activity.blocked) return [];
+        if (!profile || !['ACTIVE','APPROVED'].includes(profile.status) || !profile.acceptIntercity || driverPerformance(profile).activity.blocked) return [];
         const routes = await this.prisma.driverIntercityRoute.findMany({
             where: { driverId: profile.id, isActive: true, seatsAvailable: { gt: 0 } },
         });
@@ -531,7 +534,7 @@ export class DriverService {
                     toCity: { equals: route.toCity, mode: 'insensitive' },
                     seats: { lte: route.seatsAvailable },
                 })) },
-            include: { offers: { where: { driverId: driverUserId, status: 'PENDING' },
+            include: { offers: { where: { driverId: driverUserId, status: 'PENDING', updatedAt: {gt: new Date(Date.now()-30000)} },
                 select: { id: true, price: true, seats: true, status: true } } },
             orderBy: [{ date: 'asc' }, { createdAt: 'desc' }], take: 100,
         });
