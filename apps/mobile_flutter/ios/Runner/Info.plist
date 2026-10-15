@@ -30,6 +30,10 @@
 		<string>Камера нужна для загрузки документов водителя.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>Галерея нужна для выбора документов водителя.</string>
+		<key>NSLocationWhenInUseUsageDescription</key>
+		<string>Геопозиция нужна для выбора адреса подачи, построения маршрута и отображения водителя на карте.</string>
+		<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+		<string>Геопозиция нужна для отображения местоположения водителя и обновления маршрута во время активной поездки.</string>
 		<key>UIApplicationSceneManifest</key>
 		<dict>
 			<key>UIApplicationSupportsMultipleScenes</key>
