@@ -53,7 +53,9 @@ class ApiClient {
       final alternative = fallbackBaseUrl ??
           (resolvedBaseUrl == _buildTimeBaseUrl
               ? AppConstants.fallbackBaseUrl
-              : resolvedBaseUrl);
+              : resolvedBaseUrl == AppConstants.fallbackBaseUrl
+                  ? _buildTimeBaseUrl
+                  : resolvedBaseUrl);
       _configureDio(_loginFallbackDio!,
           baseUrl: _normalizeBaseUrl(alternative));
       _loginFallbackDio!.options.connectTimeout = const Duration(seconds: 10);
@@ -268,12 +270,21 @@ class ApiClient {
   Future<void> _rememberReachableEndpoint(String baseUrl) async {
     _dio.options.baseUrl = baseUrl;
     _refreshDio.options.baseUrl = baseUrl;
-    if (baseUrl != AppConstants.fallbackBaseUrl) return;
+    if (baseUrl != AppConstants.fallbackBaseUrl &&
+        baseUrl != _buildTimeBaseUrl) {
+      return;
+    }
     _resolvedBaseUrl = baseUrl;
     try {
-      await _storage
-          .write(AppConstants.preferredApiBaseUrlKey, baseUrl)
-          .timeout(const Duration(seconds: 2));
+      if (baseUrl == _buildTimeBaseUrl) {
+        await _storage
+            .delete(AppConstants.preferredApiBaseUrlKey)
+            .timeout(const Duration(seconds: 2));
+      } else {
+        await _storage
+            .write(AppConstants.preferredApiBaseUrlKey, baseUrl)
+            .timeout(const Duration(seconds: 2));
+      }
     } catch (_) {
       // A working connection must not depend on persisting the preference.
     }

@@ -9,6 +9,26 @@ import 'package:intercity_shared/intercity_shared.dart';
 
 void main() {
   group('Sign-in transport recovery', () {
+    test('returns from a persisted fallback to the primary endpoint', () async {
+      final store = _MemoryTokenStore()
+        ..values[AppConstants.preferredApiBaseUrlKey] =
+            AppConstants.fallbackBaseUrl;
+      final client = ApiClient(
+        dio: _buildMockDio((options) async =>
+            throw DioException.connectionError(
+                requestOptions: options, reason: 'DNS')),
+        loginFallbackDio: _buildMockDio((options) async {
+          expect(options.uri.origin, Uri.parse(AppConstants.baseUrl).origin);
+          return _jsonBody({'accessToken': 'access'});
+        }),
+        tokenStore: store,
+        baseUrl: AppConstants.fallbackBaseUrl,
+      );
+      await client.post('/auth/login');
+      expect(store.values[AppConstants.preferredApiBaseUrlKey], isNull);
+      expect(ApiClient.currentBaseUrl, AppConstants.baseUrl);
+    });
+
     test('switches to the alternate origin and keeps it for following requests',
         () async {
       var fallbackCalls = 0;
