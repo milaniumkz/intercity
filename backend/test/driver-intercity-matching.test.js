@@ -11,7 +11,7 @@ test('registered route matches distant requests and permits a real price offer, 
  let user,profile;const ids=[];
  try {
   user=await p.user.create({data:{phone:'test-route:'+key,password:'test',name:'Route fixture',refCode:key,refLink:'test',role:'DRIVER'}});
-  profile=await p.driverProfile.create({data:{userId:user.id,status:'APPROVED',acceptIntercity:true}});
+  profile=await p.driverProfile.create({data:{userId:user.id,status:'ACTIVE',acceptIntercity:true}});
   const from='Route From '+key,to='Route To '+key;
   await p.driverIntercityRoute.create({data:{driverId:profile.id,fromCity:from,toCity:to,seatsAvailable:2,seatsTotal:2}});
   async function request(data={}) {const r=await p.intercityRequest.create({data:{passengerId:'test-passenger',fromCity:from,toCity:to,fromLat:49.96,fromLng:82.61,toLat:50.4,toLng:80.2,fromManualAddress:'Назарбаева 8/1',toAddressLabel:'Абая 10',price:7000,currency:'KZT',seats:2,date:new Date(Date.now()+86400000),...data}});ids.push(r.id);return r;}

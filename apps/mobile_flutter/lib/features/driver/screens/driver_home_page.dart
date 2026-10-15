@@ -1,3 +1,4 @@
+import '../widgets/driver_idle_map.dart';
 import '../../../core/services/trip_status_sound.dart';
 import '../../../core/services/payment_fallback_notifier.dart';
 import '../../../core/services/text_to_speech_service.dart';
@@ -67,6 +68,7 @@ class DriverHomePage extends StatefulWidget {
 
 class _DriverHomePageState extends State<DriverHomePage>
     with WidgetsBindingObserver {
+  final _idleMapKey = GlobalKey<DriverIdleMapState>();
   final _carModelCtrl = TextEditingController(text: 'Toyota Camry');
   final _carNumberCtrl = TextEditingController(text: 'A123BC');
   final _latCtrl = TextEditingController(text: '43.2220');
@@ -4457,45 +4459,11 @@ class _DriverHomePageState extends State<DriverHomePage>
     return Stack(
       children: [
         Positioned.fill(
-          child: FlutterMap(
-            key: ValueKey(
-              'driver-home-osm-${center.latitude.toStringAsFixed(5)}-${center.longitude.toStringAsFixed(5)}-$isDark',
-            ),
-            options: MapOptions(
-              initialCenter: center,
-              initialZoom: 16.5,
-              minZoom: 3,
-              maxZoom: 19,
-              interactionOptions: const InteractionOptions(
-                flags: InteractiveFlag.drag |
-                    InteractiveFlag.pinchZoom |
-                    InteractiveFlag.doubleTapZoom |
-                    InteractiveFlag.scrollWheelZoom,
-              ),
-            ),
-            children: [
-              TileLayer(
-                tileProvider: widget.mapTileProvider,
-                urlTemplate: AppConstants.osmTileUrl,
-                subdomains: AppConstants.mapTileSubdomains,
-                userAgentPackageName: 'com.milanium.intercity',
-                retinaMode: true,
-              ),
-              const Padding(
-                  padding: EdgeInsets.only(bottom: 90),
-                  child: MapDataAttribution()),
-              MarkerLayer(
-                markers: [
-                  Marker(
-                    point: center,
-                    width: 58,
-                    height: 58,
-                    child: _driverLocationMarker(),
-                  ),
-                ],
-              ),
-            ],
-          ),
+          child: DriverIdleMap(
+              key: _idleMapKey,
+              point: center,
+              tileProvider: widget.mapTileProvider,
+              marker: _driverLocationMarker()),
         ),
         Positioned.fill(
           child: IgnorePointer(
@@ -4514,7 +4482,10 @@ class _DriverHomePageState extends State<DriverHomePage>
             icon: Icons.my_location_rounded,
             onTap: _updatingLocation
                 ? null
-                : () => _updateLocation(autoDetect: true),
+                : () async {
+                    await _updateLocation(autoDetect: true);
+                    _idleMapKey.currentState?.recenter();
+                  },
           ),
         ),
       ],

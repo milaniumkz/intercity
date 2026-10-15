@@ -1,4 +1,4 @@
-api.intercity.89-207-255-27.sslip.io {
+api.intercity.89-207-255-27.sslip.io, api.intercity.89-207-255-27.nip.io {
 	encode gzip
 
 	handle /api/* {

@@ -1,3 +1,4 @@
+import '../widgets/passenger_offers_panel.dart';
 import '../../../core/services/trip_status_sound.dart';
 import '../../../core/services/push_notifications_service.dart';
 import '../../../core/services/payment_fallback_notifier.dart';
@@ -55,6 +56,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
   final Set<String> _notifiedOffers = {};
   String _message = 'Ищем отклики исполнителей на вашу заявку...';
   Timer? _pollTimer;
+  Timer? _offerTickTimer;
   LatLng? _fromPoint;
   LatLng? _toPoint;
 
@@ -73,11 +75,15 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     }
     _loadRequest();
     _startPolling();
+    _offerTickTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && _request?['status'] == 'OPEN') setState(() {});
+    });
   }
 
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _offerTickTimer?.cancel();
     _mapController.dispose();
     _sheetController.dispose();
     super.dispose();
@@ -1134,6 +1140,163 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     );
   }
 
+  int _intercityOfferSeconds(Map<String, dynamic> offer) {
+    final at = DateTime.tryParse('${offer['updatedAt'] ?? offer['createdAt']}');
+    if (at == null) return 0;
+    return ((at
+                    .add(const Duration(seconds: 30))
+                    .difference(DateTime.now())
+                    .inMilliseconds /
+                1000)
+            .ceil())
+        .clamp(0, 30);
+  }
+
+  Future<void> _rejectIntercityOffer(Map<String, dynamic> offer) async {
+    if (_actionBusy) return;
+    setState(() => _actionBusy = true);
+    try {
+      await _api.post('/intercity/offers/${offer['id']}/reject');
+      await _loadRequest();
+    } catch (e) {
+      if (mounted) setState(() => _message = errorMessageRu(e));
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
+    }
+  }
+
+  Widget _intercityOfferButton(
+      {required String label,
+      required IconData icon,
+      VoidCallback? onPressed,
+      bool danger = false,
+      bool filled = false}) {
+    final child = FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 18),
+              const SizedBox(width: 6),
+              Text(label)
+            ]));
+    return filled
+        ? FilledButton(onPressed: onPressed, child: child)
+        : OutlinedButton(
+            onPressed: onPressed,
+            style: OutlinedButton.styleFrom(
+                foregroundColor: danger ? Colors.redAccent : Colors.white),
+            child: child);
+  }
+
+  Widget _intercityOfferTile(Map<String, dynamic> offer) {
+    final user = offer['driver'] is Map
+        ? Map<String, dynamic>.from(offer['driver'] as Map)
+        : <String, dynamic>{};
+    final driver = user['driverProfile'] is Map
+        ? Map<String, dynamic>.from(user['driverProfile'] as Map)
+        : <String, dynamic>{};
+    final rating = driver['rating'] is Map
+        ? Map<String, dynamic>.from(driver['rating'] as Map)
+        : <String, dynamic>{};
+    final name = (user['name'] ?? 'Водитель').toString();
+    final car = (driver['carModel'] ?? 'Авто не указано').toString();
+    final carNumber = (driver['carNumber'] ?? '').toString();
+    final ratingText =
+        ((rating['ratingAvg'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(1);
+    final price = (offer['price'] as num?)?.toDouble() ?? 0;
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+      ),
+      child: Column(
+        children: [
+          Row(children: [
+            const CircleAvatar(
+                radius: 20, child: Icon(Icons.local_taxi_rounded)),
+            const SizedBox(width: 10),
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  Text(car,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 12)),
+                  Text(
+                      '$carNumber · Рейтинг ${rating['ratingCount'] == 0 || rating.isEmpty ? '—' : ratingText}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 12)),
+                ])),
+            const SizedBox(width: 8),
+            ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 105),
+                child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                        '${price.toStringAsFixed(price == price.roundToDouble() ? 0 : 2)} ${_request?['currency'] == 'RUB' ? 'руб.' : 'тг'}',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900)))),
+          ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            const Icon(Icons.timer_outlined, size: 15, color: Colors.white70),
+            const SizedBox(width: 6),
+            Text('Ответьте за ${_intercityOfferSeconds(offer)} сек.',
+                style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          ]),
+          const SizedBox(height: 6),
+          LinearProgressIndicator(
+              value: _intercityOfferSeconds(offer) / 30,
+              minHeight: 3,
+              color: AppTheme.primaryColor,
+              backgroundColor: Colors.white12),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: _intercityOfferButton(
+                  label: 'Отклонить',
+                  icon: Icons.close_rounded,
+                  danger: true,
+                  onPressed:
+                      _actionBusy ? null : () => _rejectIntercityOffer(offer),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _intercityOfferButton(
+                  label: 'Принять',
+                  icon: Icons.check_rounded,
+                  filled: true,
+                  onPressed: _actionBusy ? null : () => _acceptOffer(offer),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _offerCard(
     Map<String, dynamic> offer, {
     required String status,
@@ -1655,6 +1818,14 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
         (hasUnconfirmedLocation(request, isFrom: true) ||
             hasUnconfirmedLocation(request, isFrom: false));
     final normalizedStatus = status.toUpperCase();
+    final topOffers = requestType == 'INTERCITY' && normalizedStatus == 'OPEN'
+        ? offers
+            .where((o) =>
+                o['status'] == 'PENDING' && _intercityOfferSeconds(o) > 0)
+            .toList()
+        : <Map<String, dynamic>>[];
+    final useTopOffers =
+        requestType == 'INTERCITY' && normalizedStatus == 'OPEN';
 
     if (request != null &&
         const {
@@ -1731,7 +1902,11 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            status.isEmpty ? 'Загружаем...' : 'Статус: $status',
+                            status.isEmpty
+                                ? 'Загружаем...'
+                                : status == 'OPEN'
+                                    ? 'Поиск водителя'
+                                    : 'Статус: $status',
                             style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 12,
@@ -1773,11 +1948,11 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
             Positioned.fill(
               child: DraggableScrollableSheet(
                 controller: _sheetController,
-                initialChildSize: 0.50,
+                initialChildSize: topOffers.isNotEmpty ? 0.32 : 0.50,
                 minChildSize: 0.18,
                 maxChildSize: 0.90,
                 snap: true,
-                snapSizes: const [0.18, 0.50, 0.90],
+                snapSizes: const [0.18, 0.32, 0.50, 0.90],
                 builder: (context, scrollController) => Container(
                   decoration: BoxDecoration(
                     color: isDark
@@ -1875,16 +2050,16 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                       const SizedBox(height: 8),
                       if (offers.isEmpty)
                         _searchingOffersHero(requestType: requestType),
-                      ...offers.map(
-                        (offer) => _offerCard(
-                          offer,
-                          status: status,
-                          requestType: requestType,
-                          isBestPrice: bestPendingOffer != null &&
-                              (bestPendingOffer['id'] ?? '').toString() ==
-                                  (offer['id'] ?? '').toString(),
-                        ),
-                      ),
+                      ...offers.where((_) => !useTopOffers).map(
+                            (offer) => _offerCard(
+                              offer,
+                              status: status,
+                              requestType: requestType,
+                              isBestPrice: bestPendingOffer != null &&
+                                  (bestPendingOffer['id'] ?? '').toString() ==
+                                      (offer['id'] ?? '').toString(),
+                            ),
+                          ),
                       if (status == 'DRIVER_ARRIVED') ...[
                         const SizedBox(height: 10),
                         _leavingButton()
@@ -1920,6 +2095,17 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                 ),
               ),
             ),
+            if (topOffers.isNotEmpty)
+              Positioned(
+                  top: 78,
+                  left: 16,
+                  right: 16,
+                  child: PassengerOffersPanel(
+                      panelKey:
+                          const ValueKey('passenger-top-intercity-offers'),
+                      offerCount: topOffers.length,
+                      itemBuilder: (_, index) =>
+                          _intercityOfferTile(topOffers[index]))),
           ],
         ),
       ),
