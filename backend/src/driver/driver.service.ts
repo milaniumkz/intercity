@@ -4,7 +4,7 @@ import { driverDailyBonusProgress, serviceDay } from '../common/driver-daily-bon
 import { applyDriverActivity, driverOfferActivityKey } from '../common/driver-activity';
 import { driverPerformance, DRIVER_ACTIVITY_RULES } from '../common/driver-performance';
 import { AutoDispatchService } from '../orders/auto-dispatch.service';
-import { currencyForCountry, moneyField } from '../common/currency';
+import { currencyForCountry, moneyField, consumeLockedBonus } from '../common/currency';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { promises as fs } from 'fs';
 import { extname, join } from 'path';
@@ -147,9 +147,10 @@ export class DriverService {
             const price=routeTopPrice(policy,currency);
             if(currency!==dto.currency || price!==dto.expectedPrice) throw new BadRequestException('Стоимость изменилась. Обновите маршрут и подтвердите актуальную цену');
             const current=await tx.wallet.findUniqueOrThrow({where:{id:wallet.id}});
-            const field=moneyField(currency),locked=currency==='RUB'?current.lockedBonusRub:current.lockedBonus;
-            if(current[field]-locked<price) throw new BadRequestException('Недостаточно собственных средств на балансе');
+            const field=moneyField(currency);
+            if(current[field]<price) throw new BadRequestException('Недостаточно средств на балансе');
             await tx.wallet.update({where:{id:wallet.id},data:{[field]:{decrement:price}}});
+            await consumeLockedBonus(tx,wallet.id,currency,price);
             await tx.walletTransaction.create({data:{walletId:wallet.id,type:'DRIVER_ROUTE_TOP',direction:'DEBIT',balanceSource:'MONEY',currency,amount:price,
                 actorUserId:driverUserId,idempotencyKey:key,note:`Маршрут ${route.fromCity} → ${route.toCity}: ${policy.durationHours} ч, базовая цена ${policy.priceKzt} KZT, курс ${policy.kztPerRub} KZT/RUB`}});
             return tx.driverIntercityRoute.update({where:{id:routeId},data:{topUntil:new Date(Date.now()+policy.durationHours*3600000)}});

@@ -71,9 +71,17 @@ test('paid route priority charges once, expires after 12 hours and broadcasts to
   const exact=await p.intercityOffer.findFirst({where:{requestId:rubRequest.id,status:'ACCEPTED'}});assert.equal(exact.price,123.45);
   await p.driverIntercityRoute.updateMany({where:{driverId:{in:drivers}},data:{topUntil:new Date(Date.now()-1000)}});
   assert.ok((await service.getMatchingIntercityRequests(users[4].id)).some(r=>r.id===ids[3]));
-  await p.wallet.update({where:{id:wallets[4]},data:{money:5000,lockedBonus:4500}});
-  await assert.rejects(service.promoteIntercityRoute(users[4].id,users[4].route.id,{...purchase,requestKey:randomUUID()}),/собственных средств/);
-  assert.equal((await p.wallet.findUnique({where:{id:wallets[4]}})).money,5000);
+  await p.wallet.update({where:{id:wallets[4]},data:{money:9940,lockedBonus:9720}});
+  const bonusPurchase={...purchase,requestKey:randomUUID()};
+  await Promise.all([1,2].map(()=>service.promoteIntercityRoute(users[4].id,users[4].route.id,bonusPurchase)));
+  const paid=await p.wallet.findUnique({where:{id:wallets[4]}});
+  assert.equal(paid.money,8940);assert.equal(paid.lockedBonus,8720);
+  assert.equal(paid.money-paid.lockedBonus,220,'promotion spending must not unlock bonus funds for withdrawal');
+  assert.equal(await p.walletTransaction.count({where:{walletId:wallets[4],type:'DRIVER_ROUTE_TOP'}}),1);
+  await p.driverIntercityRoute.update({where:{id:users[4].route.id},data:{topUntil:new Date(Date.now()-1000)}});
+  await p.wallet.update({where:{id:wallets[4]},data:{money:500,lockedBonus:500}});
+  await assert.rejects(service.promoteIntercityRoute(users[4].id,users[4].route.id,{...purchase,requestKey:randomUUID()}),/Недостаточно средств/);
+  assert.equal((await p.wallet.findUnique({where:{id:wallets[4]}})).money,500);
  } finally {
   await p.intercityOffer.deleteMany({where:{requestId:{in:ids}}});await p.intercityRequest.deleteMany({where:{id:{in:ids}}});
   await p.walletTransaction.deleteMany({where:{walletId:{in:wallets}}});await p.driverIntercityRoute.deleteMany({where:{driverId:{in:drivers}}});
