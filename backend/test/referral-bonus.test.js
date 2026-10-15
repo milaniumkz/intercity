@@ -80,9 +80,15 @@ test('completed city and intercity rides credit both inviters once in the ride c
         }
         const request = await db.intercityRequest.create({ data: {
             passengerId: users[2].id, selectedDriverId: users[3].id, status: 'IN_PROGRESS',
-            fromCity: 'Москва', toCity: 'Казань', price: 2000, currency: 'RUB', date: new Date(),
+            fromCity: 'Москва', toCity: 'Казань', fromLat:55,fromLng:37,toLat:55.01,toLng:37.01, price: 2000, currency: 'RUB', date: new Date(),
         } });
         requestIds.push(request.id);
+        // Completed rides without GPS stay on review; a valid trajectory is
+        // required before automatic referral rewards can be credited.
+        const {startTripVerification}=require('../dist/src/common/trip-verification');
+        await db.$transaction(tx=>startTripVerification(tx,'INTERCITY',request,driver.id,users[3].id));
+        const now=Date.now();
+        await db.tripVerification.update({where:{id:'INTERCITY:'+request.id},data:{startedAt:new Date(now-180000),points:[{lat:55,lng:37,accuracy:10,at:new Date(now-180000).toISOString()},{lat:55.01,lng:37.01,accuracy:10,at:new Date(now).toISOString()}]}});
         const intercity = new IntercityService(db, {});
         await Promise.all([intercity.updateDriverRequestStatus(users[3].id, request.id, 'COMPLETED'), intercity.updateDriverRequestStatus(users[3].id, request.id, 'COMPLETED')]);
         const ledger = await db.walletTransaction.findMany({ where: { intercityRequestId: request.id, type: 'REFERRAL_ORDER_BONUS' } });
@@ -107,6 +113,7 @@ test('completed city and intercity rides credit both inviters once in the ride c
         await db.rideEvent.deleteMany({ where: { orderId: { in: orderIds } } });
         await db.order.deleteMany({ where: { id: { in: orderIds } } });
         await db.intercityRequest.deleteMany({ where: { id: { in: requestIds } } });
+        await db.tripVerification.deleteMany({where:{driverUserId:{in:ids}}});
         await db.driverProfile.deleteMany({ where: { userId: { in: ids } } });
         await db.wallet.deleteMany({ where: { userId: { in: ids } } });
         await db.refreshToken.deleteMany({ where: { userId: { in: ids } } });

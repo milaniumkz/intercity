@@ -15,6 +15,9 @@ export class TopupRequestDto extends CurrencyDto {
 }
 
 export class PayoutRequestDto extends CurrencyDto {
+    @IsOptional()
+    @IsIn(['MONEY', 'REFERRAL'])
+    source?: 'MONEY' | 'REFERRAL';
     @ApiProperty()
     @IsNumber()
     amount: number;

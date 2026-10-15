@@ -1,6 +1,6 @@
 import '../../../core/utils/localization_service.dart';
 import '../../../core/widgets/account_deletion_dialog.dart';
-import '../../referral/widgets/referral_profile_card.dart';
+import '../../referral/widgets/referral_profile_entry.dart';
 import 'dart:async';
 import 'package:dio/dio.dart';
 
@@ -605,7 +605,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
             children: [
-              ReferralProfileCard(user: _user),
+              const ReferralProfileEntry(),
               const SizedBox(height: 12),
               Row(
                 children: [

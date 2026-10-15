@@ -64,13 +64,15 @@ test('start schedules charge, ambiguous result reuses transaction, three confirm
  await p.intercityRequest.update({where:{id:request.id},data:{selectedOfferId:offer.id}});
  await intercity.updateDriverRequestStatus(driver.id,request.id,'IN_PROGRESS');
  assert.equal((await p.tripCardPayment.findUnique({where:{id:'INTERCITY:'+request.id}})).amount,1200);
- await intercity.cancelRequest(passenger.id,request.id);
+ await assert.rejects(intercity.cancelRequest(passenger.id,request.id),/нельзя отменить/);
+ // Only an administrative correction may invalidate an already-started ride.
+ await p.intercityRequest.update({where:{id:request.id},data:{status:'CANCELLED'}});
  await payments.processPayment('INTERCITY:'+request.id);
  assert.equal((await p.tripCardPayment.findUnique({where:{id:'INTERCITY:'+request.id}})).status,'CANCELLED');
  // A stale cancellation read must not overwrite a completion committed by another request.
  await p.intercityRequest.update({where:{id:request.id},data:{status:'COMPLETED'}});
  const owned=intercity.requireOwnedRequest.bind(intercity);
- intercity.requireOwnedRequest=async()=>({...request,status:'IN_PROGRESS'});
+ intercity.requireOwnedRequest=async()=>({...request,status:'DRIVER_ARRIVED'});
  await assert.rejects(intercity.cancelRequest(passenger.id,request.id),/нельзя отменить/);
  assert.equal((await p.intercityRequest.findUnique({where:{id:request.id}})).status,'COMPLETED');
  intercity.requireOwnedRequest=owned;

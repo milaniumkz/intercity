@@ -50,6 +50,7 @@ enum PayoutStatus {
 enum WalletBalanceSource {
   MONEY
   BONUS
+  REFERRAL
 }
 
 enum PromoDiscountType {
@@ -77,6 +78,7 @@ model User {
   cityId             String?
   city               City?          @relation(fields: [cityId], references: [id])
   wallet             Wallet?
+  taxProfile         TaxProfile?
   driverProfile      DriverProfile?
   pushToken          String?
   pushPlatform       String?
@@ -223,6 +225,7 @@ model Wallet {
   bonusRub  Float           @default(0)
   lockedBonus Float @default(0)
   lockedBonusRub Float @default(0)
+  referralMoney Decimal @default(0) @db.Decimal(18, 2)
   topups    TopupRequest[]
   payouts   PayoutRequest[]
   transactions WalletTransaction[]
@@ -294,6 +297,7 @@ model DriverProfile {
 }
 
 model DriverIntercityRoute {
+  topUntil DateTime?
   id             String        @id @default(uuid())
   driverId       String
   driver         DriverProfile @relation(fields: [driverId], references: [id], onDelete: Cascade)
@@ -669,6 +673,7 @@ model TariffDelivery {
 }
 
 model IntercityRequest {
+  priorityWindow IntercityRoutePriorityWindow?
   id          String           @id @default(uuid())
   passengerLeavingAt DateTime?
   passengerId String
@@ -887,4 +892,103 @@ model AccountDeletionFileJob {
   id String @id @default(uuid())
   directory String
   createdAt DateTime @default(now())
+}
+
+// Separate, encrypted identity and immutable financial events. Deleting a user
+// erases the declaration; required accounting identity is protected separately.
+model TaxProfile {
+  id                    String    @id @default(uuid())
+  userId                String    @unique
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  countryCode           String    @default("KZ")
+  kind                  String
+  status                String    @default("PENDING")
+  iinEncrypted          String
+  iinHash               String @unique
+  iinLast4              String
+  activities            String[]  @default([])
+  exemptions            String[]  @default([])
+  consentVersion        String
+  consentAt             DateTime
+  verifiedAt            DateTime?
+  birthDate             DateTime?
+  effectiveFrom         DateTime?
+  verifiedBy            String?
+  verificationReference String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+// Minimal protected identity for statutory financial records, separate from the
+// account/declaration. Access is audited; it is never in normal user responses.
+model TaxAccountingIdentity {
+  ownerKey String @id
+  iinEncrypted String
+  iinHash String
+  iinLast4 String
+  firstIncomeAt DateTime
+  @@index([iinHash])
+}
+
+model TaxIncomeEntry {
+  id              String   @id @default(uuid())
+  eventKey        String   @unique
+  ownerKey        String
+  taxpayerKey     String?
+  sourceKind      String
+  sourceId        String
+  currency        String
+  occurredAt      DateTime
+  period          String
+  profileKind     String?
+  profileSnapshot Json?
+  status          String
+  reviewReason    String?
+  gross           Decimal  @db.Decimal(18, 2)
+  opv             Decimal  @default(0) @db.Decimal(18, 2)
+  opvr            Decimal  @default(0) @db.Decimal(18, 2)
+  so              Decimal  @default(0) @db.Decimal(18, 2)
+  osms            Decimal  @default(0) @db.Decimal(18, 2)
+  withheld        Decimal  @default(0) @db.Decimal(18, 2)
+  createdAt       DateTime @default(now())
+
+  @@index([ownerKey, period, status])
+  @@index([taxpayerKey, period, status])
+  @@index([period, profileKind, status])
+}
+
+model TaxRemittance {
+  id         String   @id @default(uuid())
+  reference  String   @unique
+  period     String
+  ownerKey   String
+  component  String
+  amount     Decimal  @db.Decimal(18, 2)
+  paidAt     DateTime
+  recordedBy String
+  note       String
+  createdAt  DateTime @default(now())
+
+  @@index([period, ownerKey])
+}
+
+model TaxPeriodBasis {
+  id            String   @id @default(uuid())
+  ownerKey      String
+  period        String
+  externalGross Decimal  @db.Decimal(18, 2)
+  reference     String
+  recordedBy    String
+  createdAt     DateTime @default(now())
+
+  @@unique([ownerKey, period])
+}
+
+model IntercityRoutePriorityWindow {
+  requestId String @id
+  request IntercityRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  routeIds String[] @default([])
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([expiresAt])
 }

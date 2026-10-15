@@ -11,6 +11,38 @@ compose() {
 }
 
 case "$ACTION" in
+  enable-kz-tax-accounting)
+    [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || { echo 'Expected deployed commit SHA is required' >&2; exit 1; }
+    test "$(cat "$APP_ROOT/current_commit")" = "$TARGET"
+    umask 077
+    backup="$APP_ROOT/backups/$(date -u +%Y%m%d-%H%M%S)-enable-kz-tax-accounting"
+    mkdir -p "$backup"
+    docker exec intercity-postgres sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup/database.dump"
+    test -s "$backup/database.dump"
+    docker exec -i intercity-postgres pg_restore --list < "$backup/database.dump" > "$backup/contents.txt"
+    test -s "$backup/contents.txt"
+    echo "Verified database backup: $backup/database.dump"
+    docker exec -i intercity-backend node <<'JSENABLETAX'
+const { PrismaClient } = require('@prisma/client');
+const { TaxService } = require('./dist/src/tax/tax.service');
+(async () => {
+  const p = new PrismaClient();
+  try {
+    const tax = new TaxService(p);
+    const config = await tax.configuration();
+    if (config.year !== '2026') throw new Error('Review annual parameters for the new year');
+    await tax.configure({enabled:true,operatorReference:config.operatorReference,
+      referralContractReference:config.referralContractReference,minPayout:Number(config.minPayout),
+      year:'2026',mrp:config.mrp || 4325,mzp:config.mzp || 85000,
+      policyReference:config.reference || '2026 test configuration: MRP 4325 KZT, MZP 85000 KZT; no government remittance'});
+    console.log(JSON.stringify({taxEnabled:(await tax.configuration()).enabled,
+      governmentIntegration:false,automaticRemittance:false,
+      verifiedProfiles:await p.taxProfile.count({where:{countryCode:'KZ',status:'VERIFIED'}}),
+      pendingProfiles:await p.taxProfile.count({where:{countryCode:'KZ',status:'PENDING'}})}));
+  } finally {await p.$disconnect();}
+})().catch(e => {console.error(e.message);process.exitCode=1;});
+JSENABLETAX
+    ;;
   seed-city-tariffs)
     [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || { echo 'Expected deployed commit SHA is required' >&2; exit 1; }
     test "$(cat "$APP_ROOT/current_commit")" = "$TARGET"
@@ -26,6 +58,24 @@ case "$ACTION" in
     docker exec -i intercity-backend node < /tmp/seed-all-city-tariffs.cjs
     ;;
   status)
+    if [[ "$TARGET" == "tax" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSTAXSTATUS'
+const { PrismaClient } = require('@prisma/client');
+(async () => {
+  const p = new PrismaClient();
+  try {
+    const tables = await p.$queryRaw`SELECT to_regclass('public."TaxIncomeEntry"') IS NOT NULL AS ready`;
+    const enabled = await p.appSettings.findUnique({where:{key:'kzTaxEnabled'}});
+    const threshold = await p.appSettings.findUnique({where:{key:'referralMinPayoutKzt'}});
+    const identityKey = process.env.TAX_ID_ENCRYPTION_KEY || process.env.JWT_SECRET || '';
+    console.log(JSON.stringify({taxTablesReady:tables[0].ready,taxEnabled:enabled?.value==='true',referralMinimumKzt:threshold?.value || '5000',identityEncryptionReady:identityKey.length>=32}));
+    if (tables[0].ready) console.log(JSON.stringify({taxProfiles:await p.taxProfile.count(),taxIncomeEvents:await p.taxIncomeEntry.count(),taxRemittances:await p.taxRemittance.count()}));
+  } finally {await p.$disconnect();}
+})().catch(() => {console.error('Tax readiness check failed');process.exitCode=1;});
+JSTAXSTATUS
+      exit 0
+    fi
     if [[ "$TARGET" == "city-tariffs" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQLTARIFFAUDIT'

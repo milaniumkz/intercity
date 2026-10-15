@@ -17,6 +17,7 @@ import { RealtimeController } from './realtime/realtime.controller';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AppRuntimeController } from './app-runtime.controller';
 import { VehicleCatalogModule } from './vehicle-catalog/vehicle-catalog.module';
+import { TaxModule } from './tax/tax.module';
 
 @Module({
     imports: [
@@ -41,6 +42,7 @@ import { VehicleCatalogModule } from './vehicle-catalog/vehicle-catalog.module';
         PrismaModule,
         NotificationsModule,
         VehicleCatalogModule,
+        TaxModule,
     ],
     controllers: [RealtimeController, AppRuntimeController],
 })

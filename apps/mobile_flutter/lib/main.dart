@@ -1,3 +1,4 @@
+import 'features/referral/screens/referral_account_page.dart';
 import 'core/services/trip_status_sound.dart';
 import 'features/passenger/screens/shared_trip_page.dart';
 import 'dart:async';
@@ -148,6 +149,10 @@ GoRouter createRouter({
           builder: (context, state) => IntercityRequestPage(
             requestId: state.pathParameters['id'] ?? '',
           ),
+        ),
+        GoRoute(
+          path: '/referral-account',
+          builder: (context, state) => const ReferralAccountPage(),
         ),
         GoRoute(
           path: '/profile',

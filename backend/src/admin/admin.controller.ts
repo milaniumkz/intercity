@@ -1,14 +1,69 @@
-import { Controller, Get, Post, Body, Param, Patch, Delete, UseGuards, Request, ForbiddenException, Query, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Patch, Delete, UseGuards, Request, ForbiddenException, Query, BadRequestException, Header } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { TaxService } from '../tax/tax.service';
+import { MonthlyBasisDto, RemittanceDto, TaxSettingsDto, VerifyTaxProfileDto } from '../tax/tax.dto';
 
 @ApiTags('admin')
 @Controller('admin')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class AdminController {
-    constructor(private adminService: AdminService) { }
+    constructor(private adminService: AdminService, private taxService: TaxService) { }
+
+    @Get('tax/registry')
+    async taxRegistry(@Request() req, @Query('period') period: string, @Query('kind') kind?: string) {
+        await this.ensurePermission(req, 'tax.view');
+        return this.taxService.registry(period, kind);
+    }
+    @Get('tax/profiles/:id/identity')
+    @Header('Cache-Control', 'no-store')
+    async taxIdentity(@Request() req, @Param('id') id: string) {
+        await this.ensurePermission(req, 'tax.manage');
+        return this.runTracked(req, 'tax.identity.read', id, undefined, () => this.taxService.protectedIdentity(id));
+    }
+    @Get('tax/registry/csv')
+    @Header('Cache-Control', 'no-store')
+    async taxRegistryCsv(@Request() req, @Query('period') period: string, @Query('kind') kind?: string) {
+        await this.ensurePermission(req, 'tax.manage');
+        return this.runTracked(req, 'tax.registry.export', period, { kind }, () => this.taxService.exportRegistry(period, kind));
+    }
+    @Get('tax/settings')
+    async taxConfiguration(@Request() req) {
+        await this.ensurePermission(req, 'tax.manage');
+        return this.taxService.configuration();
+    }
+    @Post('tax/settings')
+    async saveTaxConfiguration(@Request() req, @Body() dto: TaxSettingsDto) {
+        await this.ensurePermission(req, 'tax.manage');
+        return this.runTracked(req, 'tax.configure', 'TaxPolicy', { year: dto.year, enabled: dto.enabled }, () => this.taxService.configure(dto));
+    }
+    @Post('tax/profiles/:id/verify')
+    async verifyTax(@Request() req, @Param('id') id: string, @Body() dto: VerifyTaxProfileDto) {
+        await this.ensurePermission(req, 'tax.manage');
+        return this.runTracked(req, 'tax.profile.verify', id, { status: dto.status, reference: dto.reference, quickApproval: dto.quickApproval }, () => this.taxService.verify(id, dto, req.user.sub));
+    }
+    @Post('tax/profiles/:id/basis')
+    async taxBasis(@Request() req, @Param('id') id: string, @Body() dto: MonthlyBasisDto) {
+        await this.ensurePermission(req, 'tax.manage');
+        return this.runTracked(req, 'tax.monthly.basis', id, { period: dto.period, reference: dto.reference }, () => this.taxService.monthlyBasis(id, dto, req.user.sub));
+    }
+    @Post('tax/profiles/:id/release')
+    async taxRelease(@Request() req, @Param('id') id: string) {
+        await this.ensurePermission(req, 'tax.manage');
+        return this.runTracked(req, 'tax.income.release', id, undefined, () => this.taxService.release(id));
+    }
+    @Post('tax/profiles/:id/collect-debt')
+    async taxCollect(@Request() req, @Param('id') id: string) {
+        await this.ensurePermission(req, 'tax.manage');
+        return this.runTracked(req, 'tax.debt.collect', id, undefined, () => this.taxService.collectDebt(id));
+    }
+    @Post('tax/remittances')
+    async recordTaxPayment(@Request() req, @Body() dto: RemittanceDto) {
+        await this.ensurePermission(req, 'tax.manage');
+        return this.runTracked(req, 'tax.remittance.record', dto.ownerKey, { period: dto.period, component: dto.component, amount: dto.amount, reference: dto.reference }, () => this.taxService.remittance(dto, req.user.sub));
+    }
 
     private ensureAdmin(req: any) {
         if (req.user?.role !== 'ADMIN') {

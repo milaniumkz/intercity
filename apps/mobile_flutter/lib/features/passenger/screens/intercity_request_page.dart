@@ -52,6 +52,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
   bool _actionBusy = false;
   bool _leavingBusy = false;
   String? _lastNotifiedStatus;
+  final Set<String> _notifiedOffers = {};
   String _message = 'Ищем отклики исполнителей на вашу заявку...';
   Timer? _pollTimer;
   LatLng? _fromPoint;
@@ -120,6 +121,25 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
             'route': '/intercity/request/${widget.requestId}'
           },
         ));
+      }
+      if (status == 'OPEN') {
+        for (final raw in offers.whereType<Map>()) {
+          if (raw['status'] != 'PENDING') continue;
+          final key =
+              '${raw['id']}:${raw['price']}:${raw['updatedAt'] ?? raw['createdAt']}';
+          if (!_notifiedOffers.add(key)) continue;
+          unawaited(TripStatusSound.playOnce(widget.requestId, 'OFFER:$key'));
+          unawaited(PushNotificationsService.instance.showOrderStatusNotification(
+              orderId: widget.requestId,
+              title: 'Водитель предложил цену',
+              body:
+                  'Новое предложение: ${raw['price']} ${rideCurrencySymbol(request)}',
+              data: {
+                'isIntercity': true,
+                'offerId': raw['id'],
+                'route': '/intercity/request/${widget.requestId}'
+              }));
+        }
       }
       _lastNotifiedStatus = status;
       setState(() {

@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:intercity_shared/intercity_shared.dart';
 
 import '../../../core/api/admin_api_client.dart';
+import '../widgets/driver_route_top_settings_card.dart';
 
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({super.key});
@@ -1343,6 +1344,8 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
         children: [
           _StatusBanner(message: _message),
           const SizedBox(height: 16),
+          const DriverRouteTopSettingsCard(),
+          const SizedBox(height: 16),
           const _DriverDailyBonusSettingsCard(),
           const SizedBox(height: 16),
           _SectionCard(
@@ -2234,6 +2237,8 @@ class AdminShell extends StatelessWidget {
     ('/payouts', 'Выплаты', Icons.payments_outlined),
     ('/notifications', 'Уведомления', Icons.notifications_active_outlined),
     ('/finance-audit', 'Финансовый аудит', Icons.receipt_long_outlined),
+    ('/tax-self-employed', 'Самозанятые', Icons.person_outline),
+    ('/tax-ie', 'ИП', Icons.business_center_outlined),
     ('/orders', 'Заказы', Icons.local_taxi_outlined),
     ('/trip-reviews', 'Проверка поездок', Icons.route_outlined),
     ('/rating-reviews', 'Разбор оценок', Icons.rate_review_outlined),

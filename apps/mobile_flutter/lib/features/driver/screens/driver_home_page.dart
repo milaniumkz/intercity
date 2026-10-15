@@ -6,6 +6,8 @@ import '../widgets/navigation_instruction.dart';
 import '../utils/navigation_distance.dart';
 import '../utils/pickup_departure_tracker.dart';
 import '../widgets/driver_daily_bonus_card.dart';
+import '../widgets/intercity_request_card.dart';
+import '../widgets/intercity_price_proposal_dialog.dart';
 import '../widgets/driver_offer_expiry_watcher.dart';
 import '../widgets/driver_navigation_map.dart';
 import '../../../core/services/driver_offer_sound.dart';
@@ -83,6 +85,8 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _acceptIntercity = true;
   List<dynamic> _nearby = [];
   List<Map<String, dynamic>> _activeIntercityRequests = const [];
+  List<Map<String, dynamic>> _matchingIntercityRequests = const [];
+  final Set<String> _acceptingIntercityRequests = {};
   List<Map<String, dynamic>> _myIntercityTrips = const [];
   Map<String, dynamic>? _activeOrder;
   String _message = '';
@@ -166,6 +170,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       unawaited(_loadDriverProfileState(metricsOnly: true));
       unawaited(_loadDriverWallet());
+      unawaited(_loadIntercityMainState());
       if (_driverSse == null) unawaited(_connectDriverRealtime());
     });
     _notificationTapSub = PushNotificationsService
@@ -322,6 +327,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         _acceptIntercity = (profile['acceptIntercity'] ?? true) == true;
         if (!_acceptIntercity) {
           _activeIntercityRequests = const [];
+          _matchingIntercityRequests = const [];
           _myIntercityTrips = const [];
         }
         final carModelRaw = (profile['carModel'] ?? '').toString();
@@ -379,6 +385,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     } else {
       setState(() {
         _activeIntercityRequests = const [];
+        _matchingIntercityRequests = const [];
         _myIntercityTrips = const [];
       });
     }
@@ -672,6 +679,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (mounted) {
         setState(() {
           _activeIntercityRequests = const [];
+          _matchingIntercityRequests = const [];
           _myIntercityTrips = const [];
         });
       }
@@ -681,6 +689,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final responses = await Future.wait([
         _api.get('/driver/intercity/active'),
         _api.get('/ridesharing/trips/my'),
+        _api.get('/driver/intercity/matching'),
       ]);
       if (!mounted) return;
       final active = List<dynamic>.from(responses[0].data as List)
@@ -697,6 +706,12 @@ class _DriverHomePageState extends State<DriverHomePage>
       setState(() {
         _activeIntercityRequests = active;
         _myIntercityTrips = trips;
+        _matchingIntercityRequests = responses[2].data is List
+            ? (responses[2].data as List)
+                .whereType<Map>()
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList()
+            : [];
       });
       for (final request in active) {
         _notifyPassengerLeaving(request);
@@ -705,6 +720,39 @@ class _DriverHomePageState extends State<DriverHomePage>
       // Межгородний блок вспомогательный, не мешаем основному экрану.
     }
   }
+
+  Future<void> _acceptMatchedPassengerPrice(
+      Map<String, dynamic> request) async {
+    final id = '${request['id']}';
+    if (_acceptingIntercityRequests.contains(id)) return;
+    setState(() => _acceptingIntercityRequests.add(id));
+    try {
+      await _api.post('/intercity/requests/$id/accept-passenger-price');
+      await _loadActiveIntercityById(id);
+      if (_activeOrder != null) _startActiveOrderPolling(id);
+      await _loadIntercityMainState();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(errorMessageRu(error))));
+      }
+      await _loadIntercityMainState();
+    } finally {
+      if (mounted) setState(() => _acceptingIntercityRequests.remove(id));
+    }
+  }
+
+  Future<void> _showMatchedIntercityOffer(Map<String, dynamic> request) =>
+      showDialog<void>(
+        context: context,
+        builder: (_) => IntercityPriceProposalDialog(
+            request: request,
+            onSubmit: (price) async {
+              await _api.post('/intercity/requests/${request['id']}/offers',
+                  data: {'price': price, 'seats': request['seats'] ?? 1});
+              await _loadIntercityMainState();
+            }),
+      );
 
   Future<void> _handleIncomingOffers(
     Set<String> oldIds,
@@ -2174,6 +2222,17 @@ class _DriverHomePageState extends State<DriverHomePage>
     } catch (_) {
       // optional
     }
+    if (_activeOrder == null && _acceptIntercity) {
+      try {
+        final response = await _api.get('/driver/intercity/active');
+        if (response.data is List && (response.data as List).isNotEmpty) {
+          final request = (response.data as List).first as Map;
+          final id = '${request['id']}';
+          await _loadActiveIntercityById(id);
+          if (_activeOrder != null) _startActiveOrderPolling(id);
+        }
+      } catch (_) {}
+    }
   }
 
   void _startActiveOrderPolling(String id) {
@@ -2354,6 +2413,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       final payload = data['payload'] is Map
           ? Map<String, dynamic>.from(data['payload'] as Map)
           : <String, dynamic>{};
+      if (type == 'intercity.requests.changed' ||
+          type == 'driver.route.top.updated') {
+        unawaited(_loadIntercityMainState());
+        return;
+      }
       if (type == 'driver.passenger.leaving') {
         final id = '${payload['tripId'] ?? ''}';
         if (_activeOrder?['id'] == id) {
@@ -4284,6 +4348,28 @@ class _DriverHomePageState extends State<DriverHomePage>
                     : null),
           ]),
         )),
+        if (_acceptIntercity && _matchingIntercityRequests.isNotEmpty)
+          Positioned(
+              left: 16,
+              right: 16,
+              bottom: 12,
+              child: SafeArea(
+                  top: false,
+                  child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                          maxHeight: MediaQuery.sizeOf(context).height * .50),
+                      child: ListView(shrinkWrap: true, children: [
+                        for (final request in _matchingIntercityRequests)
+                          IntercityRequestCard(
+                              request: request,
+                              accepting: _acceptingIntercityRequests
+                                  .contains('${request['id']}'),
+                              onAccept: request['requestType'] == 'INTERCITY'
+                                  ? () => _acceptMatchedPassengerPrice(request)
+                                  : null,
+                              onOffer: () =>
+                                  _showMatchedIntercityOffer(request)),
+                      ])))),
       ]),
     );
   }

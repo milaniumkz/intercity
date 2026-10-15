@@ -16,6 +16,25 @@ void main() {
     AdminApiClient.debugOverride(null);
   });
 
+  testWidgets('expired session returns to login and removes protected routes',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(const IntercityAdminApp());
+    await tester.pumpAndSettle();
+    await tester.tap(_buttonFinder('Войти'));
+    await tester.pumpAndSettle();
+    expect(find.text('Панель'), findsWidgets);
+    AdminApiClient.sessionExpired.value++;
+    AdminApiClient.sessionExpired.value++;
+    await tester.pumpAndSettle();
+    expect(_buttonFinder('Войти'), findsOneWidget);
+    expect(find.text('Панель'), findsNothing);
+    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+    expect(navigator.canPop(), isFalse);
+  });
+
   testWidgets('admin interface main buttons are wired', (tester) async {
     tester.view.physicalSize = const Size(1600, 1800);
     tester.view.devicePixelRatio = 1;

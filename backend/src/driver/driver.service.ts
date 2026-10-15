@@ -1,3 +1,4 @@
+import { ROUTE_TOP_POLICY_KEY, DEFAULT_ROUTE_TOP_POLICY, parseRouteTopPolicy, routeTopPrice, ensureRouteTopWindow, canSeePriorityRequest } from '../common/driver-route-top';
 import { appendTripPoint } from '../common/trip-verification';
 import { driverDailyBonusProgress, serviceDay } from '../common/driver-daily-bonus';
 import { applyDriverActivity, driverOfferActivityKey } from '../common/driver-activity';
@@ -8,12 +9,14 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { promises as fs } from 'fs';
 import { extname, join } from 'path';
 import { PrismaService } from '../prisma.service';
-import { CreateDriverProfileDto, UpdateLocationDto, SetOnlineDto, DriverDocsUploadUrlDto, CompleteDriverDocsDto, DriverIntercityRouteDto } from './dto/driver.dto';
+import { CreateDriverProfileDto, UpdateLocationDto, SetOnlineDto, DriverDocsUploadUrlDto, CompleteDriverDocsDto, DriverIntercityRouteDto, PromoteDriverRouteDto } from './dto/driver.dto';
 import { v4 as uuidv4 } from 'uuid';
 import { GeoService } from '../geo/geo.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { clientUserSelect } from '../common/public-user-select';
 import { PushService } from '../notifications/push.service';
+import { TaxService } from '../tax/tax.service';
+import { lockIncomeAccounting } from '../tax/tax-ledger';
 
 @Injectable()
 export class DriverService {
@@ -23,9 +26,16 @@ export class DriverService {
         private realtimeService: RealtimeService,
         private pushService: PushService,
         private autoDispatchService: AutoDispatchService,
+        private taxService: TaxService,
     ) { }
 
     async createProfile(userId: string, dto: CreateDriverProfileDto) {
+        const rollout = (await this.prisma.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
+        if (rollout && !dto.taxCountry && !await this.prisma.driverProfile.findUnique({ where: { userId } })) throw new BadRequestException('Укажите страну налогового статуса');
+        if (rollout && dto.taxCountry === 'KZ') {
+            const tax = await this.prisma.taxProfile.findUnique({ where: { userId } });
+            if (!tax || tax.status === 'REJECTED') throw new BadRequestException('Выберите и сохраните налоговый статус: самозанятый или ИП');
+        }
         await this.prisma.user.update({
             where: { id: userId },
             data: { role: 'DRIVER' },
@@ -102,15 +112,47 @@ export class DriverService {
     }
 
     async getIntercityRoutes(driverUserId: string) {
-        const profile = await this.prisma.driverProfile.findUnique({
-            where: { userId: driverUserId },
-            select: { id: true },
+        const profile=await this.prisma.driverProfile.findUnique({where:{userId:driverUserId},select:{id:true}});
+        if(!profile) throw new NotFoundException('Driver profile not found');
+        const routes=await this.prisma.driverIntercityRoute.findMany({where:{driverId:profile.id,isActive:true},orderBy:{createdAt:'desc'}});
+        const policy=parseRouteTopPolicy((await this.prisma.appSettings.findUnique({where:{key:ROUTE_TOP_POLICY_KEY}}))?.value);
+        return Promise.all(routes.map(async route=>{
+            const currency=await this.geoService.departureCurrency(null,null,route.fromCity);
+            return {...route,currency,topPrice:routeTopPrice(policy,currency),topDurationHours:policy.durationHours,firstAccessSeconds:policy.firstAccessSeconds};
+        }));
+    }
+
+    async promoteIntercityRoute(driverUserId: string,routeId: string,dto: PromoteDriverRouteDto) {
+        const route=await this.prisma.driverIntercityRoute.findFirst({where:{id:routeId,driver:{userId:driverUserId},isActive:true}});
+        if(!route) throw new NotFoundException('Маршрут не найден');
+        const currency=await this.geoService.departureCurrency(null,null,route.fromCity);
+        const result=await this.prisma.$transaction(async tx=>{
+            await lockIncomeAccounting(tx);
+            await tx.$executeRaw`SELECT id FROM "User" WHERE id=${driverUserId} FOR UPDATE`;
+            await tx.$executeRaw`SELECT id FROM "DriverIntercityRoute" WHERE id=${routeId} FOR UPDATE`;
+            const fresh=await tx.driverIntercityRoute.findFirst({where:{id:routeId,driver:{userId:driverUserId,status:'APPROVED'},isActive:true},include:{driver:{include:{serviceStats:true}}}});
+            if(!fresh || fresh.seatsAvailable<=0 || driverPerformance(fresh.driver).activity.blocked) throw new BadRequestException('Нужен активный одобренный маршрут со свободными местами');
+            const wallet=await tx.wallet.findUnique({where:{userId:driverUserId}});
+            if(!wallet) throw new BadRequestException('Пополните баланс для поднятия маршрута в топ');
+            await tx.$executeRaw`SELECT id FROM "Wallet" WHERE id=${wallet.id} FOR UPDATE`;
+            const key=`driver-route-top:${routeId}:${dto.requestKey}`;
+            if(await tx.walletTransaction.findFirst({where:{walletId:wallet.id,idempotencyKey:key}})) return fresh;
+            if(fresh.topUntil && fresh.topUntil>new Date()) throw new BadRequestException('Маршрут уже в топе. Повторная оплата до окончания срока не нужна');
+            await tx.appSettings.upsert({where:{key:ROUTE_TOP_POLICY_KEY},create:{key:ROUTE_TOP_POLICY_KEY,value:JSON.stringify(DEFAULT_ROUTE_TOP_POLICY)},update:{}});
+            await tx.$queryRaw`SELECT key FROM "AppSettings" WHERE key=${ROUTE_TOP_POLICY_KEY} FOR SHARE`;
+            const policy=parseRouteTopPolicy((await tx.appSettings.findUnique({where:{key:ROUTE_TOP_POLICY_KEY}}))?.value);
+            const price=routeTopPrice(policy,currency);
+            if(currency!==dto.currency || price!==dto.expectedPrice) throw new BadRequestException('Стоимость изменилась. Обновите маршрут и подтвердите актуальную цену');
+            const current=await tx.wallet.findUniqueOrThrow({where:{id:wallet.id}});
+            const field=moneyField(currency),locked=currency==='RUB'?current.lockedBonusRub:current.lockedBonus;
+            if(current[field]-locked<price) throw new BadRequestException('Недостаточно собственных средств на балансе');
+            await tx.wallet.update({where:{id:wallet.id},data:{[field]:{decrement:price}}});
+            await tx.walletTransaction.create({data:{walletId:wallet.id,type:'DRIVER_ROUTE_TOP',direction:'DEBIT',balanceSource:'MONEY',currency,amount:price,
+                actorUserId:driverUserId,idempotencyKey:key,note:`Маршрут ${route.fromCity} → ${route.toCity}: ${policy.durationHours} ч, базовая цена ${policy.priceKzt} KZT, курс ${policy.kztPerRub} KZT/RUB`}});
+            return tx.driverIntercityRoute.update({where:{id:routeId},data:{topUntil:new Date(Date.now()+policy.durationHours*3600000)}});
         });
-        if (!profile) throw new NotFoundException('Driver profile not found');
-        return this.prisma.driverIntercityRoute.findMany({
-            where: { driverId: profile.id, isActive: true },
-            orderBy: { createdAt: 'desc' },
-        });
+        this.realtimeService?.publish?.({type:'driver.route.top.updated',entity:'driver',entityId:route.driverId,at:new Date().toISOString(),payload:{routeId,topUntil:result.topUntil}});
+        return result;
     }
 
     async addIntercityRoute(driverUserId: string, dto: DriverIntercityRouteDto) {
@@ -223,19 +265,40 @@ export class DriverService {
             throw new BadRequestException('Driver profile not approved');
         }
         if (dto.isOnline) {
+            const city = await this.prisma.city.findUnique({ where: { id: dto.cityId ?? profile.online?.cityId ?? profile.user?.cityId ?? '' } });
+            const rollout = (await this.prisma.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
+            if (rollout && city?.countryCode === 'KZ') {
+                const tax = await this.prisma.taxProfile.findUnique({ where: { userId: driverUserId } });
+                if (tax?.countryCode !== 'KZ' || tax.status !== 'VERIFIED' || !tax.activities.includes('49320')) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');
+                await this.taxService.collectDebt(driverUserId);
+                const totals = await this.prisma.taxIncomeEntry.aggregate({ where: { ownerKey: driverUserId, status: 'ACCOUNTED', currency: 'KZT' },
+                    _sum: { opv: true, opvr: true, so: true, osms: true, withheld: true } });
+                const debt = ['opv','opvr','so','osms'].reduce((sum,key) => sum + Number(totals._sum[key] ?? 0), 0) - Number(totals._sum.withheld ?? 0);
+                if (debt > 0.005) throw new BadRequestException('Пополните основной баланс для удержания социальных платежей за прошлые поездки');
+            }
             const stats = await this.ensureDriverActivityState(profile.id);
             if (stats.activityScore <= 0 || (stats.activityBlockedUntil && stats.activityBlockedUntil > new Date())) throw new BadRequestException('Driver temporarily blocked due to low activity');
             await this.ensureDriverCanStayOnline(driverUserId, profile.id, dto.cityId);
         }
 
         const resolvedCityId = dto.cityId ?? profile.online?.cityId ?? profile.user?.cityId ?? null;
-        const updated = await this.prisma.driverOnline.update({
+        const updateOnline = (db: any) => db.driverOnline.update({
             where: { driverId: profile.id },
             data: {
                 isOnline: dto.isOnline,
                 cityId: resolvedCityId,
             },
         });
+        const updated = dto.isOnline ? await this.prisma.$transaction(async tx => {
+            await lockIncomeAccounting(tx);
+            const city = resolvedCityId ? await tx.city.findUnique({ where: { id: resolvedCityId } }) : null;
+            const enabled = (await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
+            if (enabled && city?.countryCode === 'KZ') {
+                const tax = await tx.taxProfile.findUnique({ where: { userId: driverUserId } });
+                if (tax?.countryCode !== 'KZ' || tax.status !== 'VERIFIED' || !tax.activities.includes('49320')) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');
+            }
+            return updateOnline(tx);
+        }) : await updateOnline(this.prisma);
         this.realtimeService.publish({
             type: 'driver.online.changed',
             entity: 'driver',
@@ -445,11 +508,40 @@ export class DriverService {
             .sort((a, b) => b.rankScore - a.rankScore);
 
         const intercityRequests = profile.acceptIntercity
-            ? await this.getNearbyIntercityRequestsForDriver(profile.id, driverLat, driverLng, searchRadiusKm, offerAcceptSec, nowMs)
+            ? await this.getNearbyIntercityRequestsForDriver(profile.id, driverLat, driverLng, searchRadiusKm, offerAcceptSec, nowMs, driverUserId)
             : [];
 
         return [...nearbyOrders, ...intercityRequests]
             .sort((a: any, b: any) => (b.rankScore ?? 0) - (a.rankScore ?? 0));
+    }
+
+    async getMatchingIntercityRequests(driverUserId: string) {
+        const profile = await this.prisma.driverProfile.findUnique({ where: { userId: driverUserId },include:{serviceStats:true} });
+        if (!profile || profile.status!=='APPROVED' || !profile.acceptIntercity || driverPerformance(profile).activity.blocked) return [];
+        const routes = await this.prisma.driverIntercityRoute.findMany({
+            where: { driverId: profile.id, isActive: true, seatsAvailable: { gt: 0 } },
+        });
+        if (!routes.length) return [];
+        // Registered routes are explicit driver intent. Match before limiting;
+        // proximity to pickup must not hide a planned intercity departure.
+        const requests = await this.prisma.intercityRequest.findMany({
+            where: { status: 'OPEN', requestType: { in: ['INTERCITY','DELIVERY_INTERCITY','DELIVERY_RF'] },
+                OR: routes.map(route => ({
+                    fromCity: { equals: route.fromCity, mode: 'insensitive' },
+                    toCity: { equals: route.toCity, mode: 'insensitive' },
+                    seats: { lte: route.seatsAvailable },
+                })) },
+            include: { offers: { where: { driverId: driverUserId, status: 'PENDING' },
+                select: { id: true, price: true, seats: true, status: true } } },
+            orderBy: [{ date: 'asc' }, { createdAt: 'desc' }], take: 100,
+        });
+        const visible=[];
+        for(const {offers,...request} of requests) {
+            const window=await this.prisma.$transaction(tx=>ensureRouteTopWindow(tx,request));
+            if(canSeePriorityRequest(window,profile.id)) visible.push({...request,myOffer:offers[0] ?? null,
+                priorityAccessUntil:window?.activeDriverIds?.includes(profile.id) && window.expiresAt>new Date()?window.expiresAt:null});
+        }
+        return visible;
     }
 
     async getActiveIntercity(driverUserId: string) {
@@ -517,6 +609,7 @@ export class DriverService {
         searchRadiusKm: number,
         offerAcceptSec: number,
         nowMs: number,
+        driverUserId: string,
     ) {
         const routeApplications = await this.prisma.driverIntercityRoute.findMany({
             where: { driverId, isActive: true },
@@ -530,15 +623,22 @@ export class DriverService {
             ]),
         );
 
-        const requests = await this.prisma.intercityRequest.findMany({
+        const allRequests = await this.prisma.intercityRequest.findMany({
             where: {
                 status: 'OPEN',
                 requestType: { in: ['INTERCITY', 'DELIVERY_INTERCITY', 'DELIVERY_RF'] },
-                offers: { none: { driverId, status: { in: ['PENDING', 'ACCEPTED'] } } },
+                offers: { none: { driverId: driverUserId, status: { in: ['PENDING', 'ACCEPTED'] } } },
             },
             take: 50,
             orderBy: { createdAt: 'desc' },
         });
+        const requests=[];
+        for(const request of allRequests) {
+            const route=allowedRoutes.get(`${this.routeKey(request.fromCity)}→${this.routeKey(request.toCity)}`);
+            if(!route || route.seatsAvailable<request.seats) continue;
+            const window=await this.prisma.$transaction(tx=>ensureRouteTopWindow(tx,request));
+            if(canSeePriorityRequest(window,driverId)) requests.push(request);
+        }
         return requests
             .filter((request: any) => {
                 const route = allowedRoutes.get(`${this.routeKey(request.fromCity)}→${this.routeKey(request.toCity)}`);
