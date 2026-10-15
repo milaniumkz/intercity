@@ -479,6 +479,7 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _intercitySmokingAllowed = false;
   bool _manualAddressForFrom = true;
   DateTime _intercityTripDate = _defaultIntercityTripDate();
+  bool _intercityDateConfirmed = false;
   List<Map<String, dynamic>> _intercityReadyTrips = const [];
   bool _intercityReadyTripsLoading = false;
   bool _passengerMapHomeEnabled = true;
@@ -567,7 +568,8 @@ class _OrderScreenState extends State<OrderScreen> {
 
   static DateTime _defaultIntercityTripDate() {
     final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day + 1, 9);
+    return DateTime(now.year, now.month, now.day, now.hour, now.minute)
+        .add(const Duration(minutes: 30));
   }
 
   void _resetOrderStep() {
@@ -731,6 +733,15 @@ class _OrderScreenState extends State<OrderScreen> {
       'fromLng': from?.longitude,
       'toLat': to?.latitude,
       'toLng': to?.longitude,
+      'intercityTripDate': _intercityTripDate.toUtc().toIso8601String(),
+      'intercityDateConfirmed': _intercityDateConfirmed,
+      'intercitySeats': _intercitySeats,
+      'intercityWholeCabin': _intercityWholeCabin,
+      'intercityBaggage': _intercityBaggage,
+      'intercityPets': _intercityPets,
+      'intercityChildSeats': _intercityChildSeats,
+      'intercitySmokingAllowed': _intercitySmokingAllowed,
+      'comment': _commentController.text,
       'intercityFromCityId': _intercityFromCityId,
       'intercityToCityId': _intercityToCityId,
       'intercityFromCityName': _intercityFromCityName,
@@ -781,6 +792,20 @@ class _OrderScreenState extends State<OrderScreen> {
                         : _cityModeIndex == 1
                             ? 1
                             : 0);
+        final savedTripDate =
+            DateTime.tryParse('${draft['intercityTripDate']}');
+        if (savedTripDate != null) _intercityTripDate = savedTripDate.toLocal();
+        _intercityDateConfirmed =
+            savedTripDate != null && draft['intercityDateConfirmed'] == true;
+        _intercitySeats =
+            ((draft['intercitySeats'] as num?)?.toInt() ?? 1).clamp(1, 4);
+        _intercityWholeCabin = draft['intercityWholeCabin'] == true;
+        _intercityBaggage = (draft['intercityBaggage'] as num?)?.toInt() ?? 1;
+        _intercityPets = (draft['intercityPets'] ?? 'Нет').toString();
+        _intercityChildSeats =
+            (draft['intercityChildSeats'] as num?)?.toInt() ?? 0;
+        _intercitySmokingAllowed = draft['intercitySmokingAllowed'] == true;
+        _commentController.text = (draft['comment'] ?? '').toString();
         _vehicleClass = (draft['vehicleClass'] ?? _vehicleClass).toString();
         _auctionPriceController.text = (draft['auctionPrice'] ?? '').toString();
         _paymentMethod = (draft['paymentMethod'] ?? _paymentMethod).toString();
@@ -1093,6 +1118,12 @@ class _OrderScreenState extends State<OrderScreen> {
         _statusText =
             'Укажите точные адреса отправления и назначения: через поиск или на карте.';
       });
+      return;
+    }
+    if (!_intercityDateConfirmed) await _pickIntercityDate();
+    if (!mounted || !_intercityDateConfirmed) return;
+    if (!_intercityTripDate.isAfter(DateTime.now())) {
+      setState(() => _statusText = 'Выберите будущие дату и время поездки');
       return;
     }
     final resolved = await _resolveIntercityDraftBeforeCreate();
@@ -5518,193 +5549,174 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
+  Widget _intercitySetupFrame(
+      {required int step,
+      required String title,
+      required List<Widget> children,
+      required String action,
+      required VoidCallback onContinue}) {
+    final theme = Theme.of(context);
+    return Scaffold(
+        backgroundColor: theme.scaffoldBackgroundColor,
+        bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: ICGradientButton(
+                  label: action,
+                  icon: Icons.arrow_forward_rounded,
+                  loading: _loading,
+                  onPressed: _loading ? null : onContinue)),
+          const PassengerBottomNav(currentIndex: 0)
+        ]),
+        body: SafeArea(
+            bottom: false,
+            child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                children: [
+                  Row(children: [
+                    IconButton(
+                        onPressed: () => step == 1
+                            ? context.go('/order')
+                            : _goOrderBoard('intercity_start'),
+                        icon: const Icon(Icons.arrow_back_rounded)),
+                    const Expanded(
+                        child: Text('Межгород',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.w800))),
+                    Text('$step из 2',
+                        style: TextStyle(
+                            color: theme.colorScheme.onSurfaceVariant,
+                            fontSize: 12))
+                  ]),
+                  const SizedBox(height: 8),
+                  Text(title,
+                      style: theme.textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 12),
+                  ...children,
+                  if (_statusText.isNotEmpty &&
+                      !_statusText.startsWith('Маршрут подтверждён'))
+                    Padding(
+                        padding: const EdgeInsets.only(top: 10),
+                        child: ICPremiumInfoBanner(text: _statusText)),
+                ])));
+  }
+
+  Widget _intercityDateTimeRow() => Row(children: [
+        Expanded(
+            child: OutlinedButton.icon(
+                onPressed: _pickIntercityDate,
+                icon: const Icon(Icons.calendar_month_rounded, size: 18),
+                label: Text(_formatIntercityDate(_intercityTripDate)
+                    .split(' ')
+                    .first))),
+        const SizedBox(width: 8),
+        Expanded(
+            child: OutlinedButton.icon(
+                onPressed: _pickIntercityTime,
+                icon: const Icon(Icons.schedule_rounded, size: 18),
+                label: Text(
+                    '${_intercityTripDate.hour.toString().padLeft(2, '0')}:${_intercityTripDate.minute.toString().padLeft(2, '0')}'))),
+      ]);
+
+  Future<void> _pickIntercityTime() async {
+    final time = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay.fromDateTime(_intercityTripDate),
+        helpText: 'Время отправления',
+        cancelText: 'Отмена',
+        confirmText: 'Выбрать');
+    if (time == null || !mounted) return;
+    final chosen = DateTime(_intercityTripDate.year, _intercityTripDate.month,
+        _intercityTripDate.day, time.hour, time.minute);
+    if (!chosen.isAfter(DateTime.now())) {
+      setState(() => _statusText = 'Выберите будущее время поездки');
+      return;
+    }
+    setState(() {
+      _intercityTripDate = chosen;
+      _intercityDateConfirmed = true;
+      _statusText = '';
+    });
+    await _saveBoardDraft();
+    _scheduleIntercityReadyTripsSearch();
+  }
+
   Widget _boardIntercityStartScreen() {
     _modeIndex = 1;
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    return Scaffold(
-      bottomNavigationBar: const PassengerBottomNav(currentIndex: 0),
-      backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    _homeIconButton(Icons.arrow_back_rounded),
-                    const Expanded(
-                      child: Text(
-                        'Межгород',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontWeight: FontWeight.w900),
-                      ),
-                    ),
-                    const SizedBox(width: 46),
-                  ],
-                ),
-                const SizedBox(height: 22),
-                Text(
-                  'Куда поедем?',
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Создайте запрос, и мы подберем лучших водителей на вашем маршруте.',
-                  style: TextStyle(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w700,
-                    height: 1.3,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: SizedBox(
-                    height: 176,
-                    child: Stack(
-                      children: [
-                        Positioned.fill(child: _routeMapPreview(isDark)),
-                        const Positioned(
-                          left: 34,
-                          bottom: 32,
-                          child: _MiniPremiumCar(width: 112),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                _intercityCitySelectorCard(),
-                const SizedBox(height: 12),
-                _routeAddressPanel(),
-                if (_statusText.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  ICPremiumInfoBanner(text: _statusText),
-                ],
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: AppTheme.primaryColor.withValues(alpha: 0.12),
-                    ),
-                  ),
-                  child: Column(
-                    children: [
-                      _boardIntercityInfoRow(
-                        icon: Icons.calendar_month_rounded,
-                        label: 'Дата',
-                        value: _formatIntercityDate(_intercityTripDate),
-                        onTap: _pickIntercityDate,
-                      ),
-                      const Divider(height: 18),
-                      _boardIntercityInfoRow(
-                        icon: Icons.schedule_rounded,
-                        label: 'Время',
-                        value:
-                            '${_intercityTripDate.hour.toString().padLeft(2, '0')}:${_intercityTripDate.minute.toString().padLeft(2, '0')}',
-                        onTap: _pickIntercityDate,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  height: 58,
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: AppTheme.primaryColor.withValues(alpha: 0.12),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Пассажиры',
-                              style: TextStyle(
-                                color: theme.colorScheme.onSurfaceVariant,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            Text(
-                              '$_intercitySeats пассажир(а)',
-                              style: TextStyle(
-                                color: theme.colorScheme.onSurface,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      _boardRoundControl(
-                        Icons.remove_rounded,
-                        onTap: () => setState(
-                          () => _intercitySeats = (_intercitySeats - 1).clamp(
-                            1,
-                            4,
-                          ),
-                        ),
-                      ),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 14),
-                        child: Text(
-                          '',
-                          style: TextStyle(fontWeight: FontWeight.w900),
-                        ),
-                      ),
-                      Text(
-                        '$_intercitySeats',
-                        style: const TextStyle(fontWeight: FontWeight.w900),
-                      ),
-                      const SizedBox(width: 14),
-                      _boardRoundControl(
-                        Icons.add_rounded,
-                        onTap: () => setState(
-                          () => _intercitySeats = (_intercitySeats + 1).clamp(
-                            1,
-                            4,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                _boardAuctionField(
-                  label: 'Способ оплаты',
-                  value: paymentMethodLabel(_paymentMethod),
-                  icon: _paymentMethodIcon(_paymentMethod),
-                  onTap: () => setState(
-                    () => _paymentMethod = _nextPaymentMethod(_paymentMethod),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                ICGradientButton(
-                  label: 'Далее',
-                  icon: Icons.arrow_forward_rounded,
-                  onPressed: _continueBoardIntercityStart,
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
+    return _intercitySetupFrame(
+        step: 1,
+        title: 'Маршрут и время',
+        action: 'Далее: параметры поездки',
+        onContinue: _continueBoardIntercityStart,
+        children: [
+          Row(children: [
+            Expanded(
+                child: _intercityCityButton(
+                    label: 'Город отправления',
+                    value: _intercityCityName(isFrom: true),
+                    icon: Icons.trip_origin_rounded,
+                    onTap: () => _openIntercityCitySearch(isFrom: true))),
+            const SizedBox(width: 8),
+            Expanded(
+                child: _intercityCityButton(
+                    label: 'Город назначения',
+                    value: _intercityCityName(isFrom: false),
+                    icon: Icons.location_on_rounded,
+                    onTap: () => _openIntercityCitySearch(isFrom: false)))
+          ]),
+          const SizedBox(height: 12),
+          _surfaceCard(
+              padding: const EdgeInsets.all(12),
+              child: Column(children: [
+                _compactAddressField(
+                    label: 'Откуда',
+                    controller: _fromController,
+                    suggestions: _fromSuggestions,
+                    onChanged: (v) => _onAddressChanged(v, isFrom: true),
+                    onSearchTap: () => _searchAndSetAddress(isFrom: true),
+                    onSuggestionTap: (item) =>
+                        _applySuggestionAndContinue(item, isFrom: true),
+                    icon: Icons.trip_origin_rounded),
+                const SizedBox(height: 8),
+                _compactAddressField(
+                    label: 'Куда',
+                    controller: _toController,
+                    suggestions: _toSuggestions,
+                    onChanged: (v) => _onAddressChanged(v, isFrom: false),
+                    onSearchTap: () => _searchAndSetAddress(isFrom: false),
+                    onSuggestionTap: (item) =>
+                        _applySuggestionAndContinue(item, isFrom: false),
+                    icon: Icons.location_on_rounded),
+              ])),
+          Row(children: [
+            Expanded(
+                child: TextButton.icon(
+                    onPressed: () => _pickBoardAddressOnMap(
+                        isFrom: true, returnStage: 'intercity_start'),
+                    icon: const Icon(Icons.map_outlined, size: 16),
+                    label: const Text('Откуда на карте',
+                        style: TextStyle(fontSize: 12)))),
+            Expanded(
+                child: TextButton.icon(
+                    onPressed: () => _pickBoardAddressOnMap(
+                        isFrom: false, returnStage: 'intercity_start'),
+                    icon: const Icon(Icons.map_outlined, size: 16),
+                    label: const Text('Куда на карте',
+                        style: TextStyle(fontSize: 12)))),
+          ]),
+          const SizedBox(height: 12),
+          const Text('Дата и время отправления',
+              style: TextStyle(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 6),
+          _intercityDateTimeRow(),
+          const SizedBox(height: 6),
+          Text('Проверьте маршрут и время, затем нажмите «Далее».',
+              style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        ]);
   }
 
   Widget _boardIntercityInfoRow({
@@ -5756,347 +5768,128 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-  Widget _boardRoundControl(IconData icon, {VoidCallback? onTap}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        width: 28,
-        height: 28,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: AppTheme.primaryColor.withValues(alpha: 0.18),
-          ),
-        ),
-        child: Icon(icon, color: AppTheme.primaryColor, size: 18),
-      ),
-    );
-  }
-
   Widget _boardIntercityOptionsScreen() {
     _modeIndex = 1;
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    return Scaffold(
-      bottomNavigationBar: const PassengerBottomNav(currentIndex: 0),
-      backgroundColor:
-          isDark ? AppTheme.darkBackground : AppTheme.lightBackground,
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _homeIconButton(Icons.arrow_back_rounded),
-                const SizedBox(height: 26),
-                Text(
-                  'Дополнительные опции',
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Выберите опции, которые важны для вашей поездки.',
-                  style: TextStyle(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w700,
-                    height: 1.25,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                _boardOptionTitle('Багаж'),
-                Row(
+    return _intercitySetupFrame(
+        step: 2,
+        title: 'Параметры поездки',
+        action: 'Найти водителя',
+        onContinue: () async {
+          if (!_intercityDateConfirmed ||
+              !_intercityTripDate.isAfter(DateTime.now())) {
+            setState(() => _statusText = 'Проверьте дату и время отправления');
+            await _goOrderBoard('intercity_start');
+            return;
+          }
+          await _create();
+        },
+        children: [
+          _surfaceCard(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: _boardOptionChip(
-                        'Без багажа',
-                        _intercityBaggage == 0,
-                        onTap: () => setState(() => _intercityBaggage = 0),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _boardOptionChip(
-                        '1 чемодан',
-                        _intercityBaggage == 1,
-                        onTap: () => setState(() => _intercityBaggage = 1),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _boardOptionChip(
-                        '2 чемодана',
-                        _intercityBaggage == 2,
-                        onTap: () => setState(() => _intercityBaggage = 2),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                _boardOptionTitle('Перевозка животных'),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _boardIconOption(
-                        icon: Icons.pets_rounded,
-                        label: 'Нет',
-                        selected: _intercityPets == 'Нет',
-                        onTap: () => setState(() => _intercityPets = 'Нет'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _boardIconOption(
-                        icon: Icons.cruelty_free_rounded,
-                        label: 'Маленькие',
-                        selected: _intercityPets == 'Маленькие',
-                        onTap: () =>
-                            setState(() => _intercityPets = 'Маленькие'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _boardIconOption(
-                        icon: Icons.pets_rounded,
-                        label: 'Средние',
-                        selected: _intercityPets == 'Средние',
-                        onTap: () => setState(() => _intercityPets = 'Средние'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _boardIconOption(
-                        icon: Icons.pets_rounded,
-                        label: 'Большие',
-                        selected: _intercityPets == 'Большие',
-                        onTap: () => setState(() => _intercityPets = 'Большие'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                _boardOptionTitle('Детское кресло'),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _boardOptionChip(
-                        'Не нужно',
-                        _intercityChildSeats == 0,
-                        onTap: () => setState(() => _intercityChildSeats = 0),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _boardOptionChip(
-                        '1 кресло',
-                        _intercityChildSeats == 1,
-                        onTap: () => setState(() => _intercityChildSeats = 1),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _boardOptionChip(
-                        '2 кресла',
-                        _intercityChildSeats == 2,
-                        onTap: () => setState(() => _intercityChildSeats = 2),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                _boardOptionTitle('Курение в салоне'),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _boardOptionChip(
-                        'Не курить',
-                        !_intercitySmokingAllowed,
-                        icon: Icons.smoke_free_rounded,
-                        onTap: () =>
-                            setState(() => _intercitySmokingAllowed = false),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _boardOptionChip(
-                        'Можно курить',
-                        _intercitySmokingAllowed,
-                        onTap: () =>
-                            setState(() => _intercitySmokingAllowed = true),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                _boardOptionTitle('Комментарий для водителей'),
-                TextField(
-                  controller: _commentController,
-                  maxLength: 200,
-                  minLines: 3,
-                  maxLines: 4,
-                  decoration: InputDecoration(
-                    hintText: 'Пожелания, остановки, примечания...',
-                    filled: true,
-                    fillColor: theme.colorScheme.surface,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide(
-                        color: AppTheme.primaryColor.withValues(alpha: 0.12),
-                      ),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide(
-                        color: AppTheme.primaryColor.withValues(alpha: 0.12),
-                      ),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(
-                        color: AppTheme.primaryColor,
-                      ),
-                    ),
-                  ),
-                ),
-                if (_statusText.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  ICPremiumInfoBanner(text: _statusText),
-                ],
-                const SizedBox(height: 18),
-                ICGradientButton(
-                  label: 'Далее',
-                  icon: Icons.arrow_forward_rounded,
-                  loading: _loading,
-                  onPressed: _loading ? null : _create,
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _boardOptionTitle(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: Theme.of(context).colorScheme.onSurface,
-          fontWeight: FontWeight.w900,
-        ),
-      ),
-    );
-  }
-
-  Widget _boardOptionChip(
-    String label,
-    bool selected, {
-    IconData? icon,
-    VoidCallback? onTap,
-  }) {
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        height: 38,
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        decoration: BoxDecoration(
-          gradient: selected
-              ? const LinearGradient(
-                  colors: [AppTheme.secondaryColor, AppTheme.primaryColor],
-                )
-              : null,
-          color: selected ? null : theme.colorScheme.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: selected
-                ? Colors.transparent
-                : AppTheme.primaryColor.withValues(alpha: 0.14),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (icon != null) ...[
-              Icon(
-                icon,
-                color: selected ? Colors.white : AppTheme.primaryColor,
-                size: 16,
-              ),
-              const SizedBox(width: 5),
-            ],
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: selected ? Colors.white : theme.colorScheme.onSurface,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _boardIconOption({
-    required IconData icon,
-    required String label,
-    required bool selected,
-    VoidCallback? onTap,
-  }) {
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        height: 58,
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        decoration: BoxDecoration(
-          gradient: selected
-              ? const LinearGradient(
-                  colors: [AppTheme.secondaryColor, AppTheme.primaryColor],
-                )
-              : null,
-          color: selected ? null : theme.colorScheme.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: selected
-                ? Colors.transparent
-                : AppTheme.primaryColor.withValues(alpha: 0.14),
-          ),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: selected ? Colors.white : AppTheme.primaryColor),
-            const SizedBox(height: 3),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+                    Text(
+                        '${_intercityCityName(isFrom: true)} — ${_intercityCityName(isFrom: false)}',
+                        style: const TextStyle(fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 6),
+                    Text(_fromController.text,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12)),
+                    Text(_toController.text,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12)),
+                    const SizedBox(height: 8),
+                    _intercityDateTimeRow(),
+                  ])),
+          const SizedBox(height: 12),
+          const Text('Места', style: TextStyle(fontWeight: FontWeight.w800)),
+          Wrap(spacing: 8, children: [
+            for (final count in [1, 2, 3, 4])
+              ChoiceChip(
+                  label: Text('$count'),
+                  selected: !_intercityWholeCabin && _intercitySeats == count,
+                  onSelected: (_) => setState(() {
+                        _intercityWholeCabin = false;
+                        _intercitySeats = count;
+                      })),
+            ChoiceChip(
+                label: const Text('Вся машина'),
+                selected: _intercityWholeCabin,
+                onSelected: (_) => setState(() => _intercityWholeCabin = true))
+          ]),
+          const SizedBox(height: 8),
+          const Text('Оплата', style: TextStyle(fontWeight: FontWeight.w800)),
+          Wrap(spacing: 8, children: [
+            for (final item in [
+              (paymentMethodCash, 'Наличные'),
+              (paymentMethodCard, 'Карта'),
+              (paymentMethodBonus, 'Бонусы')
+            ])
+              ChoiceChip(
+                  label: Text(item.$2),
+                  selected: _paymentMethod == item.$1,
+                  onSelected: (_) => _selectPaymentAndContinue(item.$1))
+          ]),
+          const SizedBox(height: 8),
+          Text(
+              'Водители предложат стоимость. Вы выберете подходящее предложение.',
               style: TextStyle(
-                color: selected ? Colors.white : theme.colorScheme.onSurface,
-                fontSize: 10,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          const SizedBox(height: 8),
+          Card(
+              child: ExpansionTile(
+                  title: const Text('Багаж и пожелания',
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                  childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  children: [
+                Wrap(spacing: 8, children: [
+                  for (final count in [0, 1, 2])
+                    ChoiceChip(
+                        label: Text(
+                            count == 0 ? 'Без багажа' : '$count чемодан(а)'),
+                        selected: _intercityBaggage == count,
+                        onSelected: (_) =>
+                            setState(() => _intercityBaggage = count))
+                ]),
+                Wrap(spacing: 8, children: [
+                  for (final pets in ['Нет', 'Кошка', 'Собака'])
+                    ChoiceChip(
+                        label: Text(pets == 'Нет' ? 'Без животных' : pets),
+                        selected: _intercityPets == pets,
+                        onSelected: (_) =>
+                            setState(() => _intercityPets = pets))
+                ]),
+                Wrap(spacing: 8, children: [
+                  for (final count in [0, 1, 2])
+                    ChoiceChip(
+                        label: Text(count == 0
+                            ? 'Без детского кресла'
+                            : '$count кресло(а)'),
+                        selected: _intercityChildSeats == count,
+                        onSelected: (_) =>
+                            setState(() => _intercityChildSeats = count))
+                ]),
+                SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Можно курить',
+                        style: TextStyle(fontSize: 13)),
+                    value: _intercitySmokingAllowed,
+                    onChanged: (v) =>
+                        setState(() => _intercitySmokingAllowed = v)),
+                TextField(
+                    controller: _commentController,
+                    minLines: 1,
+                    maxLines: 3,
+                    maxLength: 200,
+                    decoration: const InputDecoration(
+                        labelText: 'Комментарий водителю')),
+              ])),
+        ]);
   }
 
   Widget _boardIntercityManualAddressScreen() {
@@ -8181,7 +7974,7 @@ class _OrderScreenState extends State<OrderScreen> {
                   const SizedBox(height: 3),
                   Text(
                     text,
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
@@ -11582,10 +11375,17 @@ class _OrderScreenState extends State<OrderScreen> {
       cancelText: 'Отмена',
       confirmText: 'Выбрать',
     );
-    if (!mounted) return;
-    final nextHour = time?.hour ?? _intercityTripDate.hour;
-    final nextMinute = time?.minute ?? _intercityTripDate.minute;
+    if (!mounted || time == null) return;
+    final nextHour = time.hour;
+    final nextMinute = time.minute;
+    final chosen =
+        DateTime(picked.year, picked.month, picked.day, nextHour, nextMinute);
+    if (!chosen.isAfter(DateTime.now())) {
+      setState(() => _statusText = 'Выберите будущее время поездки');
+      return;
+    }
     setState(() {
+      _intercityDateConfirmed = true;
       _intercityTripDate = DateTime(
         picked.year,
         picked.month,
@@ -11594,6 +11394,7 @@ class _OrderScreenState extends State<OrderScreen> {
         nextMinute,
       );
     });
+    await _saveBoardDraft();
     _scheduleIntercityReadyTripsSearch();
   }
 
@@ -11857,6 +11658,7 @@ class _OrderScreenState extends State<OrderScreen> {
       _boardDistance = null;
       _boardDuration = null;
       _intercityTripDate = _defaultIntercityTripDate();
+      _intercityDateConfirmed = false;
       _intercityBaggage = 1;
       _intercityPets = 'Нет';
       _intercityChildSeats = 0;
@@ -12314,13 +12116,6 @@ class _OrderScreenState extends State<OrderScreen> {
     await _saveBoardDraft();
     _scheduleAutoBoard();
     _scheduleIntercityReadyTripsSearch();
-    if (!isFrom &&
-        _requestType() == requestTypeIntercity &&
-        _fromLocation != null &&
-        _toLocation != null) {
-      await _board();
-      if (mounted) _goOrderBoard('intercity_options');
-    }
   }
 
   Future<Map<String, dynamic>> _reversePoint(LatLng point) =>
@@ -13073,13 +12868,6 @@ class _OrderScreenState extends State<OrderScreen> {
           await _board();
           if (mounted) _goOrderBoard('routeprice');
         }
-        if (navigateAfterApply &&
-            _requestType() == requestTypeIntercity &&
-            _fromLocation != null &&
-            _toLocation != null) {
-          await _board();
-          if (mounted) _goOrderBoard('intercity_options');
-        }
       }
     } catch (e) {
       setState(
@@ -13179,13 +12967,6 @@ class _OrderScreenState extends State<OrderScreen> {
       await _board();
       if (mounted) _goOrderBoard('routeprice');
       return;
-    }
-
-    if (_requestType() == requestTypeIntercity &&
-        _fromLocation != null &&
-        _toLocation != null) {
-      await _board();
-      if (mounted) _goOrderBoard('intercity_options');
     }
   }
 

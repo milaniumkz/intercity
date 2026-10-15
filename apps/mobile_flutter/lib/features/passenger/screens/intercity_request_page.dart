@@ -45,6 +45,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
   final _paymentNotifier = PaymentFallbackNotifier();
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   final MapController _mapController = MapController();
+  bool _mapReady = false;
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
 
@@ -148,6 +149,10 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
         }
       }
       _lastNotifiedStatus = status;
+      final routeChanged = _fromPoint?.latitude != fromLat ||
+          _fromPoint?.longitude != fromLng ||
+          _toPoint?.latitude != toLat ||
+          _toPoint?.longitude != toLng;
       setState(() {
         _request = request;
         _loading = false;
@@ -163,7 +168,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
           offers.length,
         );
       });
-      _fitMap();
+      if (routeChanged && _mapReady) _fitMap();
       if (_isFinalStatus((request['status'] ?? '').toString())) {
         _stopPolling();
       }
@@ -275,25 +280,26 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
   }
 
   void _fitMap() {
+    if (!widget.enableLiveMap) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final points = <LatLng>[
         if (_fromPoint != null) _fromPoint!,
-        if (_toPoint != null) _toPoint!,
+        if (_toPoint != null) _toPoint!
       ];
       if (points.isEmpty) return;
       try {
         if (points.length == 1) {
-          _mapController.move(points.first, 10);
+          _mapController.move(points.first, 12);
           return;
         }
-        final lats = points.map((p) => p.latitude).toList();
-        final lngs = points.map((p) => p.longitude).toList();
-        final center = LatLng(
-          (lats.reduce((a, b) => a + b) / lats.length),
-          (lngs.reduce((a, b) => a + b) / lngs.length),
-        );
-        _mapController.move(center, 6.8);
-      } catch (_) {}
+        final height = MediaQuery.sizeOf(context).height;
+        _mapController.fitCamera(CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(points),
+            padding: EdgeInsets.fromLTRB(
+                36, 96, 36, (height * .32).clamp(100, 250).toDouble()),
+            maxZoom: 14));
+      } catch (_) {/* The map may be detached while the trip screen changes. */}
     });
   }
 
@@ -1721,7 +1727,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
   }
 
   Widget _mapLayer() {
-    if (!widget.enableLiveMap || (_isActiveTripBoard && _request == null)) {
+    if (!widget.enableLiveMap || _request == null) {
       return const IntercityMapFallback();
     }
 
@@ -1733,6 +1739,19 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
           options: MapOptions(
             initialCenter: _fromPoint ?? const LatLng(43.2220, 76.8512),
             initialZoom: 6.8,
+            initialCameraFit: _fromPoint != null && _toPoint != null
+                ? CameraFit.bounds(
+                    bounds: LatLngBounds.fromPoints([_fromPoint!, _toPoint!]),
+                    padding: EdgeInsets.fromLTRB(
+                        36,
+                        96,
+                        36,
+                        (MediaQuery.sizeOf(context).height * .32)
+                            .clamp(100, 250)
+                            .toDouble()),
+                    maxZoom: 14)
+                : null,
+            onMapReady: () => _mapReady = true,
           ),
           children: [
             TileLayer(
@@ -1773,6 +1792,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
               ),
             if (_fromPoint != null && _toPoint != null)
               RoadRouteLayer(
+                  fitCamera: false,
                   from: _fromPoint!,
                   to: _toPoint!,
                   strokeWidth: 5,
@@ -1781,6 +1801,108 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
         ),
       ],
     );
+  }
+
+  Widget _compactIntercitySearchScreen(
+      Map<String, dynamic> request, List<Map<String, dynamic>> offers) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+        bottomNavigationBar: const PassengerBottomNav(currentIndex: 1),
+        body: SafeArea(
+            child: Stack(children: [
+          Positioned.fill(child: _mapLayer()),
+          Positioned(
+              top: 10,
+              left: 16,
+              right: 16,
+              child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                      color: scheme.surface,
+                      borderRadius: BorderRadius.circular(18)),
+                  child: Row(children: [
+                    IconButton(
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => goBackOr(context, fallback: '/order'),
+                        icon: const Icon(Icons.arrow_back_rounded)),
+                    const SizedBox(width: 4),
+                    const Expanded(
+                        child: Text('Поиск водителя',
+                            style: TextStyle(
+                                fontSize: 17, fontWeight: FontWeight.w800))),
+                    if (offers.isNotEmpty)
+                      Text('${offers.length} предлож.',
+                          style: TextStyle(
+                              color: scheme.primary,
+                              fontWeight: FontWeight.w700)),
+                  ]))),
+          if (offers.isNotEmpty)
+            Positioned(
+                top: 78,
+                left: 16,
+                right: 16,
+                child: PassengerOffersPanel(
+                    panelKey: const ValueKey('passenger-top-intercity-offers'),
+                    offerCount: offers.length,
+                    itemBuilder: (_, index) =>
+                        _intercityOfferTile(offers[index]))),
+          Positioned(
+              left: 16,
+              right: 16,
+              bottom: 12,
+              child: _surfaceCard(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('${request['fromCity']} — ${request['toCity']}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 4),
+                        Text(
+                            '${formatLocationDisplay(request, isFrom: true)}\n${formatLocationDisplay(request, isFrom: false)}',
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 12, color: scheme.onSurfaceVariant)),
+                        const SizedBox(height: 8),
+                        Wrap(spacing: 12, runSpacing: 4, children: [
+                          Text(_formatDateOnly(request['date']),
+                              style: const TextStyle(
+                                  fontSize: 12, fontWeight: FontWeight.w700)),
+                          Text('${request['seats'] ?? 1} мест(а)',
+                              style: const TextStyle(fontSize: 12))
+                        ]),
+                        const SizedBox(height: 8),
+                        if (offers.isEmpty)
+                          const LinearProgressIndicator(minHeight: 3),
+                        const SizedBox(height: 6),
+                        Text(_message,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 12, color: scheme.onSurfaceVariant)),
+                        const SizedBox(height: 6),
+                        Row(children: [
+                          IconButton(
+                              tooltip: 'Обновить предложения',
+                              onPressed: _actionBusy ? null : _loadRequest,
+                              icon: const Icon(Icons.refresh_rounded)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                              child: OutlinedButton.icon(
+                                  onPressed:
+                                      _actionBusy ? null : _cancelRequest,
+                                  icon:
+                                      const Icon(Icons.close_rounded, size: 18),
+                                  label: const Text('Отменить заявку')))
+                        ]),
+                      ]))),
+        ])));
   }
 
   @override
@@ -1826,6 +1948,10 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
         : <Map<String, dynamic>>[];
     final useTopOffers =
         requestType == 'INTERCITY' && normalizedStatus == 'OPEN';
+
+    if (request != null && useTopOffers) {
+      return _compactIntercitySearchScreen(request, topOffers);
+    }
 
     if (request != null &&
         const {

@@ -105,7 +105,7 @@ void main() {
     ('/order/offers_list', 'Выберите лучшее'),
     ('/order/offer_confirm', 'Подтвердите выбор'),
     ('/order/intercity_start', 'Межгород'),
-    ('/order/intercity_options', 'Дополнительные опции'),
+    ('/order/intercity_options', 'Параметры поездки'),
     ('/order/intercity_manual', 'Укажите адрес вручную'),
     ('/order/intercity_wait', 'Ищем водителей'),
     ('/order/intercity_details', 'Детали поездки'),

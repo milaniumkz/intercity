@@ -27,6 +27,17 @@ test('registered route matches distant requests and permits a real price offer, 
   assert.equal(offer.status,'PENDING');assert.equal(offer.price,7250);
   assert.equal((await driver.getMatchingIntercityRequests(user.id))[0].myOffer.id,offer.id);
   await assert.rejects(intercity.createOffer(user.id,wanted.id,{price:7300,seats:3}),/свободных мест/);
+  // Exercise the public creation path: city matching must not use the address label.
+  const creator=new IntercityService(p,{departureCurrency:async()=> 'KZT'});
+  const departure='2030-10-15T12:45:00.000Z';
+  const published=await creator.createRequest(user.id,{requestType:'INTERCITY',fromCity:from,toCity:to,
+    fromAddressLabel:from+', Ауэзова улица, 8',toAddressLabel:to+', Назарбаева, 8/1',
+    fromLat:49.96,fromLng:82.61,toLat:50.4,toLng:80.2,date:departure,seats:1,paymentMethod:'CASH'});
+  ids.push(published.id);
+  assert.equal(published.fromCity,from);assert.equal(published.toCity,to);
+  assert.equal(published.fromAddressLabel,from+', Ауэзова улица, 8');
+  assert.equal(published.date.toISOString(),departure);
+  assert.ok((await driver.getMatchingIntercityRequests(user.id)).some(r=>r.id===published.id));
   await p.driverIntercityRoute.updateMany({where:{driverId:profile.id},data:{isActive:false}});
   assert.deepEqual(await driver.getMatchingIntercityRequests(user.id),[]);
  } finally {
