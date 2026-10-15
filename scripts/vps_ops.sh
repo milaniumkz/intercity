@@ -126,6 +126,7 @@ FROM "User" u LEFT JOIN "DriverProfile" d ON d."userId"=u.id LEFT JOIN "DriverSe
 WHERE right(regexp_replace(u.phone,'[^0-9]','','g'),10)=right(:'account_phone',10);
 SELECT json_build_object('routeId',r.id,'from',r."fromCity",'to',r."toCity",'active',r."isActive",'seats',r."seatsAvailable",'topUntil',r."topUntil") FROM "DriverIntercityRoute" r JOIN "DriverProfile" d ON d.id=r."driverId" JOIN "User" u ON u.id=d."userId" WHERE right(regexp_replace(u.phone,'[^0-9]','','g'),10)=right(:'account_phone',10);
 SELECT json_build_object('paymentType',t.type,'amount',t.amount,'currency',t.currency,'createdAt',t."createdAt") FROM "WalletTransaction" t JOIN "Wallet" w ON w.id=t."walletId" JOIN "User" u ON u.id=w."userId" WHERE right(regexp_replace(u.phone,'[^0-9]','','g'),10)=right(:'account_phone',10) AND t.type='DRIVER_ROUTE_TOP' ORDER BY t."createdAt" DESC LIMIT 5;
+SELECT json_build_object('activeSessions',count(*),'latestLogin',max(r."createdAt")) FROM "RefreshToken" r JOIN "User" u ON u.id=r."userId" WHERE right(regexp_replace(u.phone,'[^0-9]','','g'),10)=right(:'account_phone',10);
 SELECT key,value FROM "AppSettings" WHERE key='driverRouteTopPolicy';
 SQLACCOUNT
       exit 0
