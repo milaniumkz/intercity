@@ -249,6 +249,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.1.2"
+  cronet_http:
+    dependency: transitive
+    description:
+      name: cronet_http
+      sha256: d8aa6c72b4a3b6c9b299a53f0c4e10cfc87961b2c7496e6c9a7216157f9c529c
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.10.0"
   cross_file:
     dependency: transitive
     description:
@@ -273,6 +281,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.2"
+  cupertino_http:
+    dependency: transitive
+    description:
+      name: cupertino_http
+      sha256: "82cbec60c90bf785a047a9525688b6dacac444e177e1d5a5876963d3c50369e8"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.4.0"
   cupertino_icons:
     dependency: "direct main"
     description:
@@ -733,6 +749,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.1.2"
+  http_profile:
+    dependency: transitive
+    description:
+      name: http_profile
+      sha256: "7e679e355b09aaee2ab5010915c932cce3f2d1c11c3b2dc177891687014ffa78"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.1.0"
   image:
     dependency: transitive
     description:
@@ -833,6 +857,30 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.5"
+  jni:
+    dependency: transitive
+    description:
+      name: jni
+      sha256: "6b9ca0602fef0230e83149afbe3f9f8227e94f2bbe84a1da4f14d699742f402d"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.0"
+  jni_flutter:
+    dependency: transitive
+    description:
+      name: jni_flutter
+      sha256: "0dd33d67797560f66e961a6053882d4df54bd345bf063b8fe7ea133f7ad8b191"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.4+1"
+  jni_util:
+    dependency: transitive
+    description:
+      name: jni_util
+      sha256: "1ba86da04a5f2bf18fde2edb235587e70c5b0fc5bd4ba955f46b00942c3fc35f"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.0"
   js:
     dependency: transitive
     description:
@@ -961,6 +1009,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.0.0"
+  native_dio_adapter:
+    dependency: "direct main"
+    description:
+      name: native_dio_adapter
+      sha256: "7ca3d04c76095a02c3b0d2e6f3c90e7781373671f7aacad34b81f31074a7369b"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.8.0"
   native_toolchain_c:
     dependency: transitive
     description:

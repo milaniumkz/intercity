@@ -1,4 +1,10 @@
 PODS:
+  - audioplayers_darwin (0.0.1):
+    - Flutter
+    - FlutterMacOS
+  - cupertino_http (0.0.1):
+    - Flutter
+    - FlutterMacOS
   - Firebase/CoreOnly (11.15.0):
     - FirebaseCore (~> 11.15.0)
   - Firebase/Messaging (11.15.0):
@@ -86,6 +92,8 @@ PODS:
     - Flutter
 
 DEPENDENCIES:
+  - audioplayers_darwin (from `.symlinks/plugins/audioplayers_darwin/darwin`)
+  - cupertino_http (from `.symlinks/plugins/cupertino_http/darwin`)
   - firebase_core (from `.symlinks/plugins/firebase_core/ios`)
   - firebase_messaging (from `.symlinks/plugins/firebase_messaging/ios`)
   - Flutter (from `Flutter`)
@@ -112,6 +120,10 @@ SPEC REPOS:
     - PromisesObjC
 
 EXTERNAL SOURCES:
+  audioplayers_darwin:
+    :path: ".symlinks/plugins/audioplayers_darwin/darwin"
+  cupertino_http:
+    :path: ".symlinks/plugins/cupertino_http/darwin"
   firebase_core:
     :path: ".symlinks/plugins/firebase_core/ios"
   firebase_messaging:
@@ -138,6 +150,8 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/url_launcher_ios/ios"
 
 SPEC CHECKSUMS:
+  audioplayers_darwin: f15e209a3e856d1a7edcf98dc029f484fead2242
+  cupertino_http: 947a233f40cfea55167a49f2facc18434ea117ba
   Firebase: d99ac19b909cd2c548339c2241ecd0d1599ab02e
   firebase_core: 99a37263b3c27536063a7b601d9e2a49400a433c
   firebase_messaging: bf6697c61f31c7cc0f654131212ff04c0115c2c7

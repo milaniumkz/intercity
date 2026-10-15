@@ -7,7 +7,7 @@ class AppConstants {
   static String get baseUrl => IntercityApiConfig.normalize(
         const String.fromEnvironment(
           IntercityApiConfig.envKey,
-          defaultValue: IntercityApiConfig.safePlaceholderBaseUrl,
+          defaultValue: 'https://api.intercity.89-207-255-27.sslip.io/api',
         ),
       );
 
