@@ -4,8 +4,9 @@ import { PrismaService } from '../prisma.service';
 import { DeclareTaxProfileDto, MonthlyBasisDto, RemittanceDto, TaxSettingsDto, VerifyTaxProfileDto } from './tax.dto';
 import { kazakhstanPeriod, money } from './kz-social-calculator';
 import { lockIncomeAccounting, releasePendingIncome, taxSettings, totalLiability } from './tax-ledger';
+import { isIndividual } from './tax-profile-policy';
 
-export const TAX_CONSENT_VERSION = 'KZ-platform-income-2026-v1';
+export const TAX_CONSENT_VERSION = 'KZ-platform-income-2026-v2';
 export function validIin(iin: string) {
     if (!/^\d{12}$/.test(iin) || /^0{12}$/.test(iin)) return false;
     const digits = [...iin].map(Number);
@@ -41,6 +42,7 @@ export class TaxService {
         return this.prisma.$transaction(async tx => {
             const profile = await tx.taxProfile.findUnique({ where: { userId } });
             const driver = await tx.driverProfile.findUnique({ where: { userId }, select: { id: true } });
+            if (!driver || isIndividual(profile)) await releasePendingIncome(tx, userId, new Date(), true);
             const wallet = await tx.wallet.findUnique({ where: { userId } });
             const config = await taxSettings(tx);
             const income = await tx.taxIncomeEntry.findMany({ where: { ownerKey: userId }, orderBy: { occurredAt: 'desc' }, take: 100 });
@@ -52,7 +54,21 @@ export class TaxService {
         });
     }
     async declare(userId: string, dto: DeclareTaxProfileDto) {
-        if (!dto.consent || !validIin(dto.iin) || !dto.activities.length) throw new BadRequestException('Проверьте ИИН, вид деятельности и согласие');
+        if (dto.kind === 'INDIVIDUAL') {
+            if (!dto.consent) throw new BadRequestException('Подтвердите ознакомление с налоговым уведомлением');
+            return this.prisma.$transaction(async tx => {
+                await lockIncomeAccounting(tx);
+                await tx.$executeRaw`SELECT id FROM "User" WHERE id=${userId} FOR UPDATE`;
+                const data = { kind: 'INDIVIDUAL', countryCode: 'KZ', status: 'DECLARED',
+                    iinEncrypted: null, iinHash: null, iinLast4: null, activities: [], exemptions: [],
+                    birthDate: null, consentVersion: TAX_CONSENT_VERSION, consentAt: new Date(),
+                    effectiveFrom: new Date(), verifiedAt: null, verifiedBy: null, verificationReference: null };
+                const profile = await tx.taxProfile.upsert({ where: { userId }, create: { userId, ...data }, update: data });
+                await releasePendingIncome(tx, userId, new Date(), true);
+                return this.publicProfile(profile);
+            });
+        }
+        if (!dto.consent || !validIin(dto.iin || '') || !dto.activities?.length) throw new BadRequestException('Проверьте ИИН, вид деятельности и согласие');
         const encrypted = this.encryptIin(dto.iin);
         const secret = process.env.TAX_ID_ENCRYPTION_KEY || process.env.JWT_SECRET || '';
         const iinHash = createHmac('sha256', secret).update(`intercity:taxpayer:v1:${dto.iin}`).digest('hex');
@@ -85,6 +101,7 @@ export class TaxService {
             await tx.$executeRaw`SELECT id FROM "User" WHERE id=${userId} FOR UPDATE`;
             const profile = await tx.taxProfile.findUnique({ where: { userId } });
             if (!profile) throw new NotFoundException('Налоговый профиль не найден');
+            if (isIndividual(profile)) throw new BadRequestException('Физическому лицу не требуется налоговая проверка');
             // Manual administrator approval, not a government verification. No
             // backdating or invented external-income declarations are performed.
             if (dto.quickApproval) {
@@ -154,8 +171,9 @@ export class TaxService {
         });
     }
     async protectedIdentity(userId: string) {
-        const identity = await this.prisma.taxProfile.findUnique({ where: { userId } }) ?? await this.prisma.taxAccountingIdentity.findUnique({ where: { ownerKey: userId } });
-        if (!identity) throw new NotFoundException('ИИН не найден');
+        const profile = await this.prisma.taxProfile.findUnique({ where: { userId } });
+        const identity = profile?.iinEncrypted ? profile : await this.prisma.taxAccountingIdentity.findUnique({ where: { ownerKey: userId } });
+        if (!identity?.iinEncrypted) throw new NotFoundException('ИИН не найден');
         return { iin: this.decryptIin(identity.iinEncrypted) };
     }
     async registry(period: string, kind?: string) {
@@ -190,7 +208,10 @@ export class TaxService {
         const lines = [cells(['Месяц', 'Владелец учётной записи', 'ИИН', 'Статус', 'Поездки', 'Доход', 'Реферальный доход', 'ОПВ', 'ОПВР', 'СО', 'ОСМС', 'Удержано', 'Долг', 'Перечислено', 'К перечислению'])];
         for (const row of registry.rows) {
             let iin = '';
-            if (row.gross.gt(0)) iin = (await this.protectedIdentity(row.ownerKey)).iin;
+            if (row.gross.gt(0)) {
+                const identity = await this.prisma.taxAccountingIdentity.findUnique({ where: { ownerKey: row.ownerKey } });
+                if (row.profile?.iinLast4 || identity?.iinEncrypted) iin = (await this.protectedIdentity(row.ownerKey)).iin;
+            }
             lines.push(cells([period, row.ownerKey, iin, row.profile?.kind, row.trips, row.gross, row.referralGross,
                 row.opv, row.opvr, row.so, row.osms, row.withheld, row.debt, row.paid, row.payable]));
         }
@@ -237,9 +258,9 @@ export class TaxService {
     private offlineUnverifiedKazakhstanDrivers(tx: any) {
         return tx.driverOnline.updateMany({ where: { isOnline: true, AND: [
             { OR: [{ city: { countryCode: 'KZ' } }, { cityId: null, driver: { user: { city: { countryCode: 'KZ' } } } }] },
-            { driver: { user: { OR: [ { taxProfile: null }, { taxProfile: { is: { OR: [
+            { driver: { user: { OR: [ { taxProfile: null }, { taxProfile: { is: { AND: [{ kind: { not: 'INDIVIDUAL' } }, { OR: [
                 { status: { not: 'VERIFIED' } }, { countryCode: { not: 'KZ' } }, { NOT: { activities: { has: '49320' } } },
-            ] } } } ] } } },
+            ] }] } } } ] } } },
         ] }, data: { isOnline: false } });
     }
     async configuration() {

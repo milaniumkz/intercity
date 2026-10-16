@@ -17,6 +17,7 @@ import { clientUserSelect } from '../common/public-user-select';
 import { PushService } from '../notifications/push.service';
 import { TaxService } from '../tax/tax.service';
 import { lockIncomeAccounting } from '../tax/tax-ledger';
+import { canWorkInKazakhstan, isIndividual } from '../tax/tax-profile-policy';
 
 @Injectable()
 export class DriverService {
@@ -34,7 +35,7 @@ export class DriverService {
         if (rollout && !dto.taxCountry && !await this.prisma.driverProfile.findUnique({ where: { userId } })) throw new BadRequestException('Укажите страну налогового статуса');
         if (rollout && dto.taxCountry === 'KZ') {
             const tax = await this.prisma.taxProfile.findUnique({ where: { userId } });
-            if (!tax || tax.status === 'REJECTED') throw new BadRequestException('Выберите и сохраните налоговый статус: самозанятый или ИП');
+            if (!tax || tax.status === 'REJECTED') throw new BadRequestException('Выберите и сохраните статус: самозанятый, ИП или физическое лицо');
         }
         await this.prisma.user.update({
             where: { id: userId },
@@ -273,12 +274,14 @@ export class DriverService {
             const rollout = (await this.prisma.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
             if (rollout && city?.countryCode === 'KZ') {
                 const tax = await this.prisma.taxProfile.findUnique({ where: { userId: driverUserId } });
-                if (tax?.countryCode !== 'KZ' || tax.status !== 'VERIFIED' || !tax.activities.includes('49320')) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');
-                await this.taxService.collectDebt(driverUserId);
-                const totals = await this.prisma.taxIncomeEntry.aggregate({ where: { ownerKey: driverUserId, status: 'ACCOUNTED', currency: 'KZT' },
-                    _sum: { opv: true, opvr: true, so: true, osms: true, withheld: true } });
-                const debt = ['opv','opvr','so','osms'].reduce((sum,key) => sum + Number(totals._sum[key] ?? 0), 0) - Number(totals._sum.withheld ?? 0);
-                if (debt > 0.005) throw new BadRequestException('Пополните основной баланс для удержания социальных платежей за прошлые поездки');
+                if (!canWorkInKazakhstan(tax)) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');
+                if (!isIndividual(tax)) {
+                    await this.taxService.collectDebt(driverUserId);
+                    const totals = await this.prisma.taxIncomeEntry.aggregate({ where: { ownerKey: driverUserId, status: 'ACCOUNTED', currency: 'KZT' },
+                        _sum: { opv: true, opvr: true, so: true, osms: true, withheld: true } });
+                    const debt = ['opv','opvr','so','osms'].reduce((sum,key) => sum + Number(totals._sum[key] ?? 0), 0) - Number(totals._sum.withheld ?? 0);
+                    if (debt > 0.005) throw new BadRequestException('Пополните основной баланс для удержания социальных платежей за прошлые поездки');
+                }
             }
             const stats = await this.ensureDriverActivityState(profile.id);
             if (stats.activityScore <= 0 || (stats.activityBlockedUntil && stats.activityBlockedUntil > new Date())) throw new BadRequestException('Driver temporarily blocked due to low activity');
@@ -299,7 +302,7 @@ export class DriverService {
             const enabled = (await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
             if (enabled && city?.countryCode === 'KZ') {
                 const tax = await tx.taxProfile.findUnique({ where: { userId: driverUserId } });
-                if (tax?.countryCode !== 'KZ' || tax.status !== 'VERIFIED' || !tax.activities.includes('49320')) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');
+                if (!canWorkInKazakhstan(tax)) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');
             }
             return updateOnline(tx);
         }) : await updateOnline(this.prisma);

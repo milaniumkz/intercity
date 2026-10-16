@@ -903,9 +903,9 @@ model TaxProfile {
   countryCode           String    @default("KZ")
   kind                  String
   status                String    @default("PENDING")
-  iinEncrypted          String
-  iinHash               String @unique
-  iinLast4              String
+  iinEncrypted          String?
+  iinHash               String? @unique
+  iinLast4              String?
   activities            String[]  @default([])
   exemptions            String[]  @default([])
   consentVersion        String

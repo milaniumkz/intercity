@@ -3,10 +3,15 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/utils/error_message_ru.dart';
+import 'personal_income_tax_notice.dart';
 
 class TaxStatusPanel extends StatefulWidget {
-  const TaxStatusPanel(
-      {super.key, this.apiClient, this.driver = false, this.onSaved});
+  const TaxStatusPanel({
+    super.key,
+    this.apiClient,
+    this.driver = false,
+    this.onSaved,
+  });
   final ApiClient? apiClient;
   final bool driver;
   final VoidCallback? onSaved;
@@ -26,9 +31,12 @@ class _TaxStatusPanelState extends State<TaxStatusPanel> {
   }
 
   Future<void> _save() async {
-    if (_kind == null || _iin.text.length != 12 || !_consent) {
-      setState(() =>
-          _error = 'Выберите статус, укажите ИИН и подтвердите согласие.');
+    final individual = _kind == 'INDIVIDUAL';
+    if (_kind == null ||
+        (!individual && (_iin.text.length != 12 || !_consent))) {
+      setState(
+        () => _error = 'Выберите статус, укажите ИИН и подтвердите согласие.',
+      );
       return;
     }
     setState(() {
@@ -36,17 +44,27 @@ class _TaxStatusPanelState extends State<TaxStatusPanel> {
       _error = '';
     });
     try {
-      await (widget.apiClient ?? ApiClient()).post('/tax/profile', data: {
-        'countryCode': 'KZ',
-        'kind': _kind,
-        'iin': _iin.text,
-        'activities': [if (widget.driver) '49320', '82990'],
-        'consent': true,
-      });
+      await (widget.apiClient ?? ApiClient()).post(
+        '/tax/profile',
+        data: {
+          'countryCode': 'KZ',
+          'kind': _kind,
+          if (!individual) 'iin': _iin.text,
+          if (!individual) 'activities': [if (widget.driver) '49320', '82990'],
+          'consent': true,
+        },
+      );
       widget.onSaved?.call();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Статус отправлен на проверку')));
+          SnackBar(
+            content: Text(
+              individual
+                  ? 'Физическое лицо · статус сохранён без проверки'
+                  : 'Статус отправлен на проверку',
+            ),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -60,83 +78,122 @@ class _TaxStatusPanelState extends State<TaxStatusPanel> {
   }
 
   @override
-  Widget build(BuildContext context) => Card(
-      child: Padding(
-          padding: const EdgeInsets.all(16),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Icon(Icons.verified_user_outlined,
-                  color: Theme.of(context).colorScheme.primary),
-              const SizedBox(width: 10),
-              const Expanded(
-                  child: Text('Ваш налоговый статус',
-                      style:
-                          TextStyle(fontSize: 19, fontWeight: FontWeight.w700)))
-            ]),
-            const SizedBox(height: 8),
-            const Text('Казахстан · выберите свой действующий статус'),
-            const SizedBox(height: 16),
-            SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(
-                      value: 'SELF_EMPLOYED',
-                      label: Text('Самозанятый'),
-                      icon: Icon(Icons.person_outline)),
-                  ButtonSegment(
-                      value: 'IE',
-                      label: Text('ИП'),
-                      icon: Icon(Icons.business_center_outlined)),
+  Widget build(BuildContext context) => !widget.driver
+      ? const PersonalIncomeTaxNotice()
+      : Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.verified_user_outlined,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Ваш налоговый статус',
+                        style: TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text('Казахстан · выберите свой действующий статус'),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final option in const {
+                      'SELF_EMPLOYED': 'Самозанятый',
+                      'IE': 'ИП',
+                      'INDIVIDUAL': 'Физическое лицо',
+                    }.entries)
+                      ChoiceChip(
+                        label: Text(option.value),
+                        selected: _kind == option.key,
+                        onSelected: _saving
+                            ? null
+                            : (_) => setState(() => _kind = option.key),
+                      ),
+                  ],
+                ),
+                if (_kind == 'INDIVIDUAL') ...[
+                  const PersonalIncomeTaxNotice(),
+                  const Text(
+                    'Сохраняя статус, подтверждаю ознакомление с налоговым уведомлением.',
+                  ),
                 ],
-                selected: {
-                  if (_kind != null) _kind!
-                },
-                emptySelectionAllowed: true,
-                onSelectionChanged: _saving
-                    ? null
-                    : (value) => setState(
-                        () => _kind = value.isEmpty ? null : value.first)),
-            const SizedBox(height: 12),
-            Text(_kind == 'IE'
-                ? 'Социальные платежи самозанятого не удерживаются. Вы самостоятельно выдаёте чеки при расчётах и ведёте отчётность по своему налоговому режиму.'
-                : 'Обычно 4% дохода: ОПВ, ОПВР, СО и ОСМС — по 1%. Платформа удерживает и перечисляет платежи после проверки статуса и запуска учёта. Льготы и месячные ограничения учитываются отдельно.'),
-            const SizedBox(height: 12),
-            TextField(
-                controller: _iin,
-                maxLength: 12,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                    labelText: 'ИИН',
-                    helperText: 'Хранится в защищённом виде')),
-            TextButton.icon(
-                onPressed: () => showTaxGuide(context),
-                icon: const Icon(Icons.auto_stories_outlined),
-                label: const Text('Нет статуса? Как оформить самозанятость')),
-            CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                value: _consent,
-                onChanged: _saving
-                    ? null
-                    : (v) => setState(() => _consent = v ?? false),
-                controlAffinity: ListTileControlAffinity.leading,
-                title: const Text(
-                    'Подтверждаю статус и согласен на учёт дохода и удержание предусмотренных законом платежей.'),
-                subtitle: Text(_kind == 'IE'
-                    ? 'Подтверждаю действующее ИП и самостоятельное исполнение обязанностей по своему налоговому режиму.'
-                    : 'Самозанятость: без ИП и работников, разрешённая деятельность и лимит 300 МРП в месяц.')),
-            if (_error.isNotEmpty)
-              Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(_error,
+                if (_kind != 'INDIVIDUAL') ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    _kind == 'IE'
+                        ? 'Социальные платежи самозанятого не удерживаются. Вы самостоятельно выдаёте чеки при расчётах и ведёте отчётность по своему налоговому режиму.'
+                        : 'Обычно 4% дохода: ОПВ, ОПВР, СО и ОСМС — по 1%. Платформа удерживает и перечисляет платежи после проверки статуса и запуска учёта. Льготы и месячные ограничения учитываются отдельно.',
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _iin,
+                    maxLength: 12,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: const InputDecoration(
+                      labelText: 'ИИН',
+                      helperText: 'Хранится в защищённом виде',
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => showTaxGuide(context),
+                    icon: const Icon(Icons.auto_stories_outlined),
+                    label: const Text(
+                      'Нет статуса? Как оформить самозанятость',
+                    ),
+                  ),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: _consent,
+                    onChanged: _saving
+                        ? null
+                        : (v) => setState(() => _consent = v ?? false),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: const Text(
+                      'Подтверждаю статус и согласен на учёт дохода и удержание предусмотренных законом платежей.',
+                    ),
+                    subtitle: Text(
+                      _kind == 'IE'
+                          ? 'Подтверждаю действующее ИП и самостоятельное исполнение обязанностей по своему налоговому режиму.'
+                          : 'Самозанятость: без ИП и работников, разрешённая деятельность и лимит 300 МРП в месяц.',
+                    ),
+                  ),
+                ],
+                if (_error.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      _error,
                       style: TextStyle(
-                          color: Theme.of(context).colorScheme.error))),
-            SizedBox(
-                width: double.infinity,
-                child: FilledButton(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
                     onPressed: _saving ? null : _save,
-                    child: Text(_saving ? 'Сохраняем…' : 'Сохранить статус'))),
-          ])));
+                    child: Text(_saving ? 'Сохраняем…' : 'Сохранить статус'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
 }
 
 Future<void> showTaxGuide(BuildContext context) => showModalBottomSheet<void>(

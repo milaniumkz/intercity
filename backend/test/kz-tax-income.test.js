@@ -50,6 +50,8 @@ test('KZ monetary referrals: verified status, no duplicate money, caps, IP, curr
   async function user(kind='SELF_EMPLOYED') {
     const u=await p.user.create({data:{phone:`${key}:${owners.length}`,password:'test-only',name:'Tax fixture',refCode:randomUUID(),refLink:'test',wallet:{create:{money:0,bonus:123,lockedBonus:0}}},include:{wallet:true}});
     owners.push(u.id);
+    const driver = await p.driverProfile.create({data:{userId:u.id,status:'APPROVED'}});
+    driverProfiles.push(driver.id);
     const iin=syntheticIin(String(90010130001 + owners.length * 10));
     const declared=await tax.declare(u.id,{countryCode:'KZ',kind,iin,activities:['49320','82990'],consent:true});
     assert.equal(declared.iinEncrypted,undefined); assert.equal(declared.status,'PENDING');
@@ -147,8 +149,7 @@ test('KZ monetary referrals: verified status, no duplicate money, caps, IP, curr
     const driver = await user();
     await p.user.update({where:{id:driver.id},data:{role:'DRIVER',phone:'+77'+String(Date.now()).slice(-9)}});
     await p.wallet.update({where:{userId:driver.id},data:{money:10000}});
-    const profile = await p.driverProfile.create({data:{userId:driver.id,status:'APPROVED',online:{create:{isOnline:true,lastLat:49.9,lastLng:82.6}}}});
-    driverProfiles.push(profile.id);
+    const profile = await p.driverProfile.update({where:{userId:driver.id},data:{online:{create:{isOnline:true,lastLat:49.9,lastLng:82.6}}}});
     const intercity = new IntercityService(p,{getRoute:async()=>({distance:100,duration:60})},{},{publish:()=>{}},{});
     for(let n=0;n<6;n++) {
       const request=await p.intercityRequest.create({data:{passengerId:u.id,selectedDriverId:driver.id,status:'IN_PROGRESS',currency:'KZT',paymentMethod:'CASH',price:1000,fromCity:'Test origin',toCity:'Test destination',date:new Date()}});
@@ -160,6 +161,18 @@ test('KZ monetary referrals: verified status, no duplicate money, caps, IP, curr
     const posted=await p.taxIncomeEntry.findMany({where:{ownerKey:driver.id,sourceKind:'INTERCITY'}});
     assert.equal(posted.length,6);assert.equal(posted.reduce((sum,row)=>sum+Number(row.withheld),0),240);
     assert.ok((await p.wallet.findUnique({where:{userId:driver.id}})).money>=0);
+    // Selecting individual status must not erase already posted liabilities or
+    // the protected historical IIN, even though the current profile has none.
+    const oldIdentity = await tax.protectedIdentity(driver.id);
+    const oldIncome = await p.taxIncomeEntry.findUnique({where:{id:posted[0].id}});
+    const individual = await tax.declare(driver.id,{countryCode:'KZ',kind:'INDIVIDUAL',consent:true});
+    assert.equal(individual.status,'DECLARED');
+    assert.deepEqual(await tax.protectedIdentity(driver.id),oldIdentity);
+    assert.deepEqual(await p.taxIncomeEntry.findUnique({where:{id:posted[0].id}}),oldIncome);
+    const newIncome = await credit(driver,'new-individual-cash',1000,'KZT','CITY');
+    assert.equal(newIncome.status,'ACCOUNTED');
+    assert.equal(newIncome.withheld.toString(),'0');
+    assert.equal(newIncome.opv.toString(),'0');
   } finally {
     global.fetch=oldFetch;
     if(oldKey===undefined) delete process.env.TAX_ID_ENCRYPTION_KEY;else process.env.TAX_ID_ENCRYPTION_KEY=oldKey;

@@ -9,7 +9,7 @@ class ReferralProfileEntry extends StatelessWidget {
         leading: Icon(Icons.group_add_outlined,
             color: Theme.of(context).colorScheme.primary),
         title: const Text('Реферальная система'),
-        subtitle: const Text('Приглашения, доход и налоговый статус'),
+        subtitle: const Text('Приглашения и реферальный доход'),
         trailing: const Icon(Icons.chevron_right_rounded),
         onTap: () => context.push('/referral-account'),
       ));
