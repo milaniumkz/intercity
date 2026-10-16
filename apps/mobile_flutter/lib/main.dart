@@ -28,6 +28,7 @@ import 'features/driver/screens/driver_verification_page.dart';
 import 'features/driver/screens/driver_trip_create_page.dart';
 import 'features/driver/screens/driver_wallet_page.dart';
 import 'features/driver/screens/driver_profile_page.dart';
+import 'features/driver/screens/driver_earnings_page.dart';
 import 'features/admin/screens/admin_login_page.dart';
 import 'features/admin/screens/admin_dashboard_page.dart';
 import 'features/auth/screens/startup_screen.dart';
@@ -227,6 +228,10 @@ GoRouter createRouter({
         GoRoute(
           path: '/driver/profile',
           builder: (context, state) => const DriverProfilePage(),
+        ),
+        GoRoute(
+          path: '/driver/earnings',
+          builder: (context, state) => const DriverEarningsPage(),
         ),
       ],
     );

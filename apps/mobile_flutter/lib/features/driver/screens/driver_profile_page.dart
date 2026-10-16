@@ -766,6 +766,12 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                     () => _openAndRefresh('/driver/wallet'),
                   ),
                   _boardProfileRow(
+                    Icons.bar_chart_rounded,
+                    'Заработок',
+                    'Доход, комиссия и социальные платежи',
+                    () => _openAndRefresh('/driver/earnings'),
+                  ),
+                  _boardProfileRow(
                     Icons.alt_route_rounded,
                     'Межгородние заявки',
                     'Доступные поездки и комиссии',
@@ -1423,6 +1429,12 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
             title: 'Кошелёк',
             subtitle: 'Баланс, пополнение и вывод',
             onTap: () => _openAndRefresh('/driver/wallet'),
+          ),
+          _quickAction(
+            icon: Icons.bar_chart_rounded,
+            title: 'Заработок',
+            subtitle: 'Доход, комиссия и социальные платежи',
+            onTap: () => _openAndRefresh('/driver/earnings'),
           ),
           _quickAction(
             icon: Icons.alt_route_rounded,

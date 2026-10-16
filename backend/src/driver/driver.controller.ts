@@ -1,7 +1,8 @@
-import { Controller, Post, Get, Body, Param, UseGuards, Request, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, Query, UseGuards, Request, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { DriverService } from './driver.service';
+import { DriverEarningsService } from './driver-earnings.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import {
     CreateDriverProfileDto,
@@ -18,7 +19,13 @@ import {
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class DriverController {
-    constructor(private driverService: DriverService) { }
+    constructor(private driverService: DriverService, private earningsService: DriverEarningsService) { }
+
+    @Get('earnings')
+    @ApiOperation({ summary: 'My monthly trip earnings, actual commissions and social payments' })
+    earnings(@Request() req, @Query('period') period?: string, @Query('currency') currency?: string) {
+        return this.earningsService.summary(req.user.sub, period, currency);
+    }
 
     @Post('profile')
     @ApiOperation({ summary: 'Create/update driver profile' })

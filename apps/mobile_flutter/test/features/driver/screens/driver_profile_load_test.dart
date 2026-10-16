@@ -46,6 +46,7 @@ void main() {
     expect(find.text('Олег'), findsOneWidget);
     expect(find.text('4.8'), findsOneWidget);
     expect(find.text('12 поездок'), findsOneWidget);
+    expect(find.text('Заработок'), findsOneWidget);
     expect(find.textContaining('private-rating-record'), findsNothing);
     api.cities.complete(Response(
         requestOptions: RequestOptions(path: '/geo/cities'),
