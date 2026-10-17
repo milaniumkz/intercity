@@ -49,7 +49,7 @@ class PushNotificationsService {
           storageBucket: 'inter-city-pkzpps.firebasestorage.app',
         ),
       );
-      _firebaseReady = true;
+      _firebaseReady = await FirebaseMessaging.instance.isSupported();
     } catch (_) {
       _firebaseReady = false;
     }
@@ -60,7 +60,7 @@ class PushNotificationsService {
       FirebaseMessaging.onMessage.listen(_onForegroundMessage);
       if (shouldSyncPushTokenOnStartup(
         firebaseReady: _firebaseReady,
-        notificationPermission: web.Notification.permission,
+        notificationPermission: _notificationPermission,
       )) {
         await syncTokenIfAuthorized();
       }
@@ -300,7 +300,7 @@ class PushNotificationsService {
   }
 
   Future<void> _requestPermissionIfNeeded() async {
-    if (_isPermissionGranted || web.Notification.permission == 'denied') return;
+    if (_isPermissionGranted || _notificationPermission == 'denied') return;
     try {
       await web.Notification.requestPermission()
           .toDart
@@ -311,7 +311,17 @@ class PushNotificationsService {
     }
   }
 
-  bool get _isPermissionGranted => web.Notification.permission == 'granted';
+  // iPhone browser tabs may not expose Notification at all (unlike an
+  // installed PWA). Optional push support must never prevent sign-in.
+  String get _notificationPermission {
+    try {
+      return web.Notification.permission;
+    } catch (_) {
+      return 'denied';
+    }
+  }
+
+  bool get _isPermissionGranted => _notificationPermission == 'granted';
 
   void _focusCurrentWindow() {
     try {

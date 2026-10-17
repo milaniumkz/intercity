@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -46,7 +47,9 @@ class _LoginScreenState extends State<LoginScreen> {
         response.data['accessToken'] as String,
         response.data['refreshToken'] as String,
       );
-      await PushNotificationsService.instance.syncTokenIfAuthorized();
+      unawaited(PushNotificationsService.instance
+          .syncTokenIfAuthorized()
+          .catchError((Object _) {}));
       final role = (response.data['user']?['role'] ?? '').toString();
       final route = await AppModeManager.resolveHomeRoute(apiClient,
           role: role, userId: response.data['user']?['id']?.toString());
