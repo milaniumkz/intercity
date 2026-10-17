@@ -1,6 +1,9 @@
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/services/push_notifications_service.dart';
 import '../../../core/theme/theme_controller.dart';
@@ -55,11 +58,51 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(errorMessageRu(e))),
+        SnackBar(
+          content: Text(errorMessageRu(e)),
+          action: e is DioException && e.response == null
+              ? SnackBarAction(
+                  label: 'Подробнее',
+                  onPressed: () => _showConnectionDetails(e),
+                )
+              : null,
+        ),
       );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _showConnectionDetails(DioException error) async {
+    final package = await PackageInfo.fromPlatform();
+    if (!mounted) return;
+    // Never include request bodies, headers, URL queries, or raw exception text.
+    final report = 'InterCity ${package.version} (${package.buildNumber})\n'
+        'Platform: ${defaultTargetPlatform.name}\n'
+        'UTC: ${DateTime.now().toUtc().toIso8601String()}\n'
+        'Server: ${error.requestOptions.uri.origin}\n'
+        'Error: ${error.type.name}\n'
+        'Transport: ${error.error.runtimeType}';
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Сведения о подключении'),
+        content: SelectableText(report),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: report));
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+            },
+            child: const Text('Копировать'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
