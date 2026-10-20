@@ -328,6 +328,90 @@ test(
                 },
             );
             await t.test(
+                'legacy files reject foreign IDs and encoded traversal before static delivery',
+                async () => {
+                    const peer = await p.driverProfile.findUnique({
+                        where: { userId: b.user.id },
+                    });
+                    const image = await sharp({
+                        create: {
+                            width: 32,
+                            height: 32,
+                            channels: 3,
+                            background: '#cccccc',
+                        },
+                    })
+                        .png()
+                        .toBuffer();
+                    for (const profileId of [profile.id, peer.id]) {
+                        await fs.mkdir(path.join(dir, 'uploads', profileId), {
+                            recursive: true,
+                        });
+                        await fs.writeFile(
+                            path.join(dir, 'uploads', profileId, 'legacy.png'),
+                            image,
+                        );
+                    }
+                    assert.equal(
+                        (
+                            await fetch(
+                                base + '/uploads/' + peer.id + '/legacy.png',
+                                {
+                                    headers: {
+                                        Authorization: 'Bearer ' + jwtB,
+                                    },
+                                },
+                            )
+                        ).status,
+                        200,
+                    );
+                    assert.equal(
+                        (
+                            await fetch(
+                                base + '/uploads/' + peer.id + '/legacy.png',
+                                {
+                                    headers: {
+                                        Authorization: 'Bearer ' + jwtA,
+                                    },
+                                },
+                            )
+                        ).status,
+                        403,
+                    );
+                    assert.equal(
+                        (
+                            await fetch(
+                                base + '/uploads/' + peer.id + '/legacy.png',
+                            )
+                        ).status,
+                        403,
+                    );
+                    const http = require('http');
+                    const status = await new Promise((resolve, reject) => {
+                        const req = http.request(
+                            {
+                                host: '127.0.0.1',
+                                port,
+                                path:
+                                    '/uploads/' +
+                                    profile.id +
+                                    '/%2e%2e%2f' +
+                                    peer.id +
+                                    '/legacy.png',
+                                headers: { Authorization: 'Bearer ' + jwtA },
+                            },
+                            (res) => {
+                                res.resume();
+                                res.on('end', () => resolve(res.statusCode));
+                            },
+                        );
+                        req.on('error', reject);
+                        req.end();
+                    });
+                    assert.equal(status, 403);
+                },
+            );
+            await t.test(
                 'least privilege, original audit, timeline and notifications',
                 async () => {
                     const r = await request(

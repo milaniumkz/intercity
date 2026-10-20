@@ -3,7 +3,8 @@ import { requestIdentity, safeMessage, techContext } from './technical-utils';
 export function technicalMiddleware(tech: TechnicalService) {
     return (req: any, res: any, next: any) => {
         if (
-            !String(req.url).startsWith('/api/') ||
+            (!String(req.url).startsWith('/api/') &&
+                !String(req.url).startsWith('/uploads/')) ||
             String(req.url).startsWith('/api/technical/panel')
         )
             return next();

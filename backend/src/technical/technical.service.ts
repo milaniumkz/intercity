@@ -216,7 +216,9 @@ export class TechnicalService implements OnModuleInit, OnModuleDestroy {
     ) {
         try {
             if (req.techEvidencePending) await req.techEvidencePending;
-            const path = String(req.route?.path || '/unmatched').slice(0, 180);
+            const path = String(
+                req.route?.path || req.techStaticPath || '/unmatched',
+            ).slice(0, 180);
             const action = req.method + ' ' + path;
             const userId = req.user?.sub ?? req.techUserId ?? null;
             const objectId = req.params?.id ?? req.techObjectId ?? null;

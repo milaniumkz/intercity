@@ -3,8 +3,26 @@ import { TechnicalService } from './technical.service';
 // Existing driver originals must no longer be anonymously served by express.static.
 export function legacyFilesGuard(tech: TechnicalService, jwt: JwtService) {
     return async (req: any, res: any, next: any) => {
-        const directory = String(req.path).split('/')[1];
-        if (!/^[0-9a-f-]{36}$/i.test(directory ?? '')) return next();
+        req.techStaticPath = '/uploads/:profile/:file';
+        let decoded: string;
+        try {
+            decoded = decodeURIComponent(String(req.path));
+        } catch {
+            return res
+                .status(400)
+                .json({ message: 'Некорректный путь документа' });
+        }
+        if (
+            decoded.includes('\\') ||
+            decoded.includes('\0') ||
+            decoded.split('/').some((x) => x === '.' || x === '..')
+        )
+            return res
+                .status(403)
+                .json({ message: 'Недопустимый путь документа' });
+        const directory = decoded.split('/')[1];
+        if (!/^[0-9a-f-]{36}$/i.test(directory ?? ''))
+            return res.status(404).json({ message: 'Документ не найден' });
         try {
             const profile = await tech.prisma.driverProfile.findUnique({
                 where: { id: directory },
@@ -12,12 +30,14 @@ export function legacyFilesGuard(tech: TechnicalService, jwt: JwtService) {
             });
             if (!profile)
                 return res.status(404).json({ message: 'Документ не найден' });
+            req.techObjectId = profile.id;
             let actor: string | null = null;
             const cookie = String(req.headers.cookie ?? '')
                 .split(';')
                 .map((x) => x.trim())
                 .find((x) => x.startsWith('tech_session='));
             const account = await tech.session(cookie?.slice(13) ?? '');
+            if (account) req.tech = account;
             if (account?.permissions.includes('originals')) actor = account.id;
             const bearer = String(req.headers.authorization ?? '');
             if (!actor && bearer.startsWith('Bearer ')) {
@@ -34,6 +54,13 @@ export function legacyFilesGuard(tech: TechnicalService, jwt: JwtService) {
                         mustChangePassword: true,
                     },
                 });
+                if (
+                    user &&
+                    !user.blockedAt &&
+                    !user.mustChangePassword &&
+                    (payload.ver ?? 0) === user.authVersion
+                )
+                    req.techUserId = user.id;
                 if (
                     user &&
                     !user.blockedAt &&
