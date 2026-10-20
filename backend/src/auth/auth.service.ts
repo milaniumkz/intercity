@@ -81,10 +81,12 @@ export class AuthService {
 
         return {
             user: {
+                id: user.id,
                 publicId: user.publicId,
                 phone: user.phone,
                 name: user.name,
                 role: user.role,
+                mustChangePassword: user.mustChangePassword,
                 refCode: user.refCode,
                 refLink: this.buildReferralLink(user.refCode),
             },
@@ -101,6 +103,8 @@ export class AuthService {
             throw new UnauthorizedException('Invalid credentials');
         }
 
+        if (user.blockedAt || user.phone.startsWith('erased:')) throw new UnauthorizedException('Account unavailable');
+
         const isPasswordValid = await bcrypt.compare(dto.password, user.password);
         if (!isPasswordValid) {
             throw new UnauthorizedException('Invalid credentials');
@@ -110,10 +114,12 @@ export class AuthService {
 
         return {
             user: {
+                id: user.id,
                 publicId: user.publicId,
                 phone: user.phone,
                 name: user.name,
                 role: user.role,
+                mustChangePassword: user.mustChangePassword,
                 refCode: user.refCode,
             },
             ...tokens,
@@ -137,7 +143,7 @@ export class AuthService {
                 where: { id: payload.sub },
             });
 
-            if (!user) {
+            if (!user || user.blockedAt || (payload.ver ?? 0) !== user.authVersion) {
                 throw new UnauthorizedException('Invalid token');
             }
 
@@ -184,6 +190,17 @@ export class AuthService {
         return { success: true };
     }
 
+    async changePassword(userId: string, current: string, next: string) {
+        const user = await this.prisma.user.findUnique({where:{id:userId}});
+        if (!user || !await bcrypt.compare(current, user.password)) throw new UnauthorizedException('Неверный текущий пароль');
+        if (next === current) throw new ForbiddenException('Новый пароль должен отличаться');
+        await this.prisma.$transaction([
+            this.prisma.user.update({where:{id:userId},data:{password:await bcrypt.hash(next,12),mustChangePassword:false,authVersion:{increment:1}}}),
+            this.prisma.refreshToken.deleteMany({where:{userId}}),
+        ]);
+        return this.generateTokens(user.id,user.phone,user.role);
+    }
+
     private isUnsafePasswordResetAllowed(): boolean {
         return process.env.ALLOW_UNVERIFIED_PASSWORD_RESET === 'true';
     }
@@ -193,7 +210,7 @@ export class AuthService {
             where: { id: userId },
             include: { wallet: true, city: true, driverProfile: true },
         });
-        if (!user || user.phone.startsWith('erased:')) return null;
+        if (!user || user.blockedAt || user.phone.startsWith('erased:')) return null;
         const { password, ...safeUser } = user;
         return { ...safeUser, refLink: this.buildReferralLink(user.refCode) };
     }
@@ -246,13 +263,14 @@ export class AuthService {
     private async generateTokens(userId: string, phone: string, role: string) {
         const jwtSecret = this.getRequiredSecret('JWT_SECRET');
         const refreshSecret = this.getRequiredSecret('JWT_REFRESH_SECRET');
+        const account = await this.prisma.user.findUnique({where:{id:userId},select:{authVersion:true}});
         const accessToken = this.jwtService.sign(
-            { sub: userId, phone, role },
+            { sub: userId, phone, role, ver: account.authVersion },
             { secret: jwtSecret, expiresIn: '1d' }
         );
 
         const refreshToken = this.jwtService.sign(
-            { sub: userId, type: 'refresh', jti: uuidv4() },
+            { sub: userId, type: 'refresh', jti: uuidv4(), ver: account.authVersion },
             { secret: refreshSecret, expiresIn: '7d' }
         );
 

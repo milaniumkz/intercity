@@ -100,3 +100,7 @@ tmp-order-mobile.png
 *.pfx
 
 .tmp/
+
+# Private technical evidence and locally provisioned credentials
+/technical-data/
+/backend/technical-data/

@@ -1,3 +1,5 @@
+import { Optional } from '@nestjs/common';
+import { TechnicalService } from '../technical/technical.service';
 import { ROUTE_TOP_POLICY_KEY, DEFAULT_ROUTE_TOP_POLICY, parseRouteTopPolicy, routeTopPrice, ensureRouteTopWindow, canSeePriorityRequest } from '../common/driver-route-top';
 import { appendTripPoint } from '../common/trip-verification';
 import { driverDailyBonusProgress, serviceDay } from '../common/driver-daily-bonus';
@@ -28,6 +30,7 @@ export class DriverService {
         private pushService: PushService,
         private autoDispatchService: AutoDispatchService,
         private taxService: TaxService,
+        @Optional() private technicalService?: TechnicalService,
     ) { }
 
     async createProfile(userId: string, dto: CreateDriverProfileDto) {
@@ -873,23 +876,16 @@ export class DriverService {
 
         const docType = docTypeRaw || 'passport';
         const updateField = this.driverDocUrlField(docType);
-        const originalName = String(file.originalname || `${docType}.jpg`);
-        const safeExt = extname(originalName).replace(/[^a-zA-Z0-9.]/g, '') || '.jpg';
-        const safeDocType = docType.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const relativeName = `${profile.id}/${safeDocType}_${uuidv4()}${safeExt}`;
-        const uploadRoot = process.env.UPLOAD_DIR || join(process.cwd(), 'uploads');
-        const targetPath = join(uploadRoot, relativeName);
-
-        const url = `/uploads/${relativeName}`;
+        if (!this.technicalService) throw new BadRequestException('Закрытое хранилище документов недоступно');
+        const stored = await this.technicalService.saveFile(driverUserId, profile.id, docType, file.buffer);
+        if (stored.verdict === 'REJECT') throw new BadRequestException(stored.reason);
+        const url = `/api/driver/docs/files/${stored.id}`;
         await this.prisma.$transaction(async tx => {
             await tx.$executeRaw`SELECT id FROM "User" WHERE id=${driverUserId} FOR UPDATE`;
-            if (!await tx.user.findUnique({where: {id: driverUserId}}) || !await tx.driverProfile.findUnique({where: {id: profile.id}})) throw new NotFoundException('Аккаунт удалён');
-            await fs.mkdir(join(uploadRoot, profile.id), {recursive: true});
-            await fs.writeFile(targetPath, file.buffer);
-            await tx.driverProfile.update({where: {id: profile.id}, data: {[updateField]: url, status: 'PENDING', rejectionReason: null}});
+            if (!await tx.user.findUnique({where:{id:driverUserId}})) throw new NotFoundException('Аккаунт удалён');
+            await tx.driverProfile.update({where:{id:profile.id},data:{[updateField]:url,status:'PENDING',rejectionReason:null}});
         });
-
-        return { ok: true, docType, url };
+        return {ok:true,docType,url,quality:stored.verdict,qualityReason:stored.reason};
     }
 
     private driverDocUrlField(docType: string) {
@@ -916,6 +912,13 @@ export class DriverService {
 
         if (!profile) {
             throw new NotFoundException('Driver profile not found');
+        }
+
+        for (const key of ['selfieUrl','techPassportFrontUrl','techPassportBackUrl','driverLicenseUrl','passportUrl']) {
+            const value=dto[key]; if(!value || value===profile[key]) continue;
+            const match=String(value).match(/^\/api\/driver\/docs\/files\/([a-f0-9]{32})$/);
+            const stored=match?await this.prisma.techFile.findUnique({where:{id:match[1]}}):null;
+            if(!stored||stored.userId!==driverUserId||stored.verdict==='REJECT'||stored.deletedAt) throw new BadRequestException('Документ должен быть загружен владельцем и пройти проверку');
         }
 
         return this.prisma.driverProfile.update({

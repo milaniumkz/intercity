@@ -1,3 +1,4 @@
+import { TechnicalModule } from './technical/technical.module';
 import { CardPaymentsModule } from './payments/card-payments.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
@@ -43,6 +44,7 @@ import { TaxModule } from './tax/tax.module';
         NotificationsModule,
         VehicleCatalogModule,
         TaxModule,
+        TechnicalModule,
     ],
     controllers: [RealtimeController, AppRuntimeController],
 })

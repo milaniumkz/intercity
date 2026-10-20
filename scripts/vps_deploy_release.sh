@@ -24,6 +24,7 @@ python3 "$RELEASE_DIR/scripts/vps_release_manifest.py" check \
   "$RELEASE_DIR/.release-manifest.json" "$PREVIOUS_RELEASE" "$COMMIT_SHA"
 
 # Keep backups on the VPS; never include runtime secrets in the release bundle.
+BACKUP_CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
 cp "$SHARED_DIR/.env" "$BACKUP_DIR/env.backup"
@@ -34,12 +35,19 @@ test -s "$BACKUP_DIR/postgres.sql"
 rg_footer='PostgreSQL database dump complete'
 grep -q "$rg_footer" "$BACKUP_DIR/postgres.sql"
 tar -C "$SHARED_DIR" -czf "$BACKUP_DIR/uploads.tar.gz" uploads
+if [[ -d "$SHARED_DIR/technical-data" ]]; then
+  tar -C "$SHARED_DIR" -czf "$BACKUP_DIR/technical-data.tar.gz" --exclude=technical-data/owner-access.json technical-data
+  tar -tzf "$BACKUP_DIR/technical-data.tar.gz" >/dev/null
+fi
 tar -tzf "$BACKUP_DIR/uploads.tar.gz" >/dev/null
 printf 'Verified database and uploads backups: %s\n' "$BACKUP_DIR"
 
 cp "$SHARED_DIR/.env" "$RELEASE_DIR/infra/vps/.env"
 chmod 600 "$RELEASE_DIR/infra/vps/.env"
 ln -s "$SHARED_DIR/uploads" "$RELEASE_DIR/uploads"
+mkdir -p "$SHARED_DIR/technical-data"
+chmod 700 "$SHARED_DIR/technical-data"
+ln -s "$SHARED_DIR/technical-data" "$RELEASE_DIR/technical-data"
 
 compose() {
   docker compose -p "$PROJECT_NAME" -f docker-compose.prod.yml "$@"
@@ -100,6 +108,7 @@ PYKEY
   echo 'Optional service credentials configured'
 fi
 
+printf '\nRELEASE_SHA=%s\n' "$COMMIT_SHA" >> "$RELEASE_DIR/infra/vps/.env"
 cd "$RELEASE_DIR/infra/vps"
 # Build while the previous backend continues running. Additive migrations run
 # before the new application starts; never fall back to an unrestricted db push.
@@ -125,6 +134,13 @@ import json, sys
 assert json.load(open(sys.argv[1]))['commit'] == sys.argv[2], 'Wrong published web release'
 PY
 done
+# Save factual reports only after the normal API and published-version checks pass.
+if [[ -f "$RELEASE_DIR/backend/scripts/technical-report.cjs" ]]; then
+  docker exec intercity-backend node scripts/technical-owner.cjs --if-empty
+  printf '{"kind":"BACKUP","status":"SUCCESS","version":"%s","at":"%s","databaseVerified":true,"filesVerified":true,"note":"Pre-deployment backup verified"}' "$COMMIT_SHA" "$BACKUP_CREATED_AT" | docker exec -i intercity-backend node scripts/technical-report.cjs
+  printf '{"kind":"DEPLOYMENT","status":"SUCCESS","version":"%s","note":"API and published web version checks passed"}' "$COMMIT_SHA" | docker exec -i intercity-backend node scripts/technical-report.cjs
+fi
+
 ln -sfn "$RELEASE_DIR" "$APP_ROOT/current"
 printf '%s\n' "$COMMIT_SHA" > "$APP_ROOT/current_commit"
 docker exec intercity-backend node -e 'console.log("Firebase server credentials configured: " + Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_APPLICATION_CREDENTIALS))'

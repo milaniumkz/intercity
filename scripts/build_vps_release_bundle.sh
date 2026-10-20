@@ -91,6 +91,7 @@ rsync -a --delete \
   --exclude='**/.dart_tool' \
   --exclude='**/build' \
   --exclude='output' \
+  --exclude='technical-data' \
   --exclude='releases' \
   --exclude='uploads' \
   --exclude='.playwright-cli' \

@@ -1,3 +1,8 @@
+import { safeMessage } from './technical/technical-utils';
+import { JwtService } from '@nestjs/jwt';
+import { legacyFilesGuard } from './technical/legacy-files-middleware';
+import { TechnicalService } from './technical/technical.service';
+import { technicalMiddleware } from './technical/technical-middleware';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
@@ -8,6 +13,8 @@ import { AdminService } from './admin/admin.service';
 
 async function bootstrap() {
     const app = await NestFactory.create<NestExpressApplication>(AppModule);
+    if (process.env.TECH_TRUST_PROXY === '1') app.set('trust proxy', 1);
+    app.use(technicalMiddleware(app.get(TechnicalService)));
     const adminService = app.get(AdminService, { strict: false });
     const corsOriginsRaw = (process.env.CORS_ORIGINS || '').trim();
     const corsOrigins = corsOriginsRaw
@@ -21,12 +28,14 @@ async function bootstrap() {
             adminService?.recordError({
                 at: new Date().toISOString(),
                 source: 'console',
-                message: args.map((item) => String(item)).join(' ').slice(0, 2000),
+                message: safeMessage(args.map((item) => String(item)).join(' ')),
             });
         } catch (_) {
             // Keep console behavior intact even if logging fails.
         }
-        originalConsoleError(...args);
+        const sanitized = safeMessage(args.map((item) => String(item)).join(' '));
+        void app.get(TechnicalService).systemError(sanitized);
+        originalConsoleError(sanitized);
     };
 
     app.use((req: any, res: any, next: () => void) => {
@@ -58,6 +67,7 @@ async function bootstrap() {
         transform: true,
     }));
 
+    app.use('/uploads', legacyFilesGuard(app.get(TechnicalService), app.get(JwtService, {strict:false})));
     app.useStaticAssets(process.env.UPLOAD_DIR || join(process.cwd(), 'uploads'), {
         prefix: '/uploads/',
     });

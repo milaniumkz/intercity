@@ -1,5 +1,6 @@
 import { AccountDeletionService } from './account-deletion.service';
-import { IsString, MinLength } from 'class-validator';
+import { IsString, MinLength, MaxLength } from 'class-validator';
+class ChangePasswordDto { @IsString() @MinLength(1) @MaxLength(72) currentPassword: string; @IsString() @MinLength(12) @MaxLength(72) newPassword: string; }
 class DeleteOwnAccountDto { @IsString() @MinLength(1) password: string; }
 import { Controller, Post, Body, Get, UseGuards, Request, Patch } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -20,8 +21,10 @@ export class AuthController {
 
     @Post('login')
     @ApiOperation({ summary: 'Login user' })
-    async login(@Body() dto: LoginDto) {
-        return this.authService.login(dto);
+    async login(@Body() dto: LoginDto, @Request() req) {
+        const result = await this.authService.login(dto);
+        req.techUserId=result.user.id;
+        return result;
     }
 
     @Post('refresh')
@@ -35,6 +38,10 @@ export class AuthController {
     async resetPassword(@Body() dto: ResetPasswordDto) {
         return this.authService.resetPassword(dto);
     }
+
+    @Post('change-password')
+    @UseGuards(JwtAuthGuard)
+    changePassword(@Request() req, @Body() dto: ChangePasswordDto) { return this.authService.changePassword(req.user.sub,dto.currentPassword,dto.newPassword); }
 
     @Post('delete-account')
     @UseGuards(JwtAuthGuard)

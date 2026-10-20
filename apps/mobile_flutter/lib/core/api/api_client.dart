@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -32,6 +33,8 @@ class SecureApiTokenStore implements ApiTokenStore {
 }
 
 class ApiClient {
+  static final String _clientSession =
+      '${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
   ApiClient({
     Dio? dio,
     Dio? refreshDio,
@@ -162,6 +165,12 @@ class ApiClient {
     if (options.path == '/auth/login' && _loginFallbackDio != null) {
       options.connectTimeout = const Duration(seconds: 8);
     }
+    options.headers['X-Client-Session'] = _clientSession;
+    options.headers['X-Client-Platform'] =
+        kIsWeb ? 'web' : defaultTargetPlatform.name;
+    options.headers['X-App-Version'] = const String.fromEnvironment(
+        'INTERCITY_APP_VERSION',
+        defaultValue: 'unknown');
     if (_shouldAttachAuthorization(options)) {
       final token = await _storage.read(AppConstants.accessTokenKey);
       if (token != null && token.isNotEmpty) {

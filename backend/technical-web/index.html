@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>INTERCITY · Техническая панель</title>
+        <link rel="stylesheet" href="/api/technical/panel/style.css" />
+    </head>
+    <body>
+        <header>
+            <strong>INTERCITY</strong><span>Техническая панель</span
+            ><span id="identity"></span
+            ><button id="logout" hidden>Выйти</button>
+        </header>
+        <div id="notice" role="status"></div>
+        <div class="layout">
+            <nav id="nav" aria-label="Разделы"></nav>
+            <main id="main"><p>Проверка технического доступа…</p></main>
+        </div>
+        <dialog id="modal">
+            <div id="modal-content"></div>
+            <button id="close-modal">Закрыть</button>
+        </dialog>
+        <script src="/api/technical/panel/app.js" defer></script>
+    </body>
+</html>
