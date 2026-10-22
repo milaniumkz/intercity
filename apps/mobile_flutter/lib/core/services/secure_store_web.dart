@@ -58,16 +58,21 @@ class _EncryptedBrowserSecureStore implements SecureStore {
   Future<web.CryptoKey> _getEncryptionKey(JSAny algorithm) async {
     final encodedKey = _storage.getItem(_encryptionKeyStorageKey);
     if (encodedKey != null && encodedKey.isNotEmpty) {
-      final rawKey = base64Decode(encodedKey);
-      return web.window.crypto.subtle
-          .importKey(
-            'raw',
-            rawKey.toJS,
-            algorithm,
-            false,
-            _cryptoUsages.toJS,
-          )
-          .toDart;
+      Uint8List? rawKey;
+      try {
+        final decoded = base64Decode(encodedKey);
+        if (decoded.length == 32) rawKey = decoded;
+      } on FormatException {
+        // A malformed key cannot decrypt values in this namespace.
+      }
+      if (rawKey != null) {
+        return web.window.crypto.subtle
+            .importKey('raw', rawKey.toJS, algorithm, false, _cryptoUsages.toJS)
+            .toDart;
+      }
+      // Repair only this app's invalid key. Never clear browser storage or
+      // downgrade tokens to plaintext; unreadable old values are removed on read.
+      _storage.removeItem(_encryptionKeyStorageKey);
     }
 
     final encryptionKey = (await web.window.crypto.subtle

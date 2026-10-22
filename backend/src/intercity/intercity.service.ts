@@ -291,6 +291,9 @@ export class IntercityService {
 
   async getRequest(passengerId: string, requestId: string) {
     const request = await this.requireOwnedRequest(passengerId, requestId);
+    if (request.requestType === 'INTERCITY' && request.status === 'OPEN') {
+      await this.prisma.intercityOffer.updateMany({where:{requestId,status:'PENDING',updatedAt:{lte:new Date(Date.now()-30000)}},data:{status:'EXPIRED'}});
+    }
 
     const offers = await this.prisma.intercityOffer.findMany({
       where: { requestId },
@@ -343,7 +346,7 @@ export class IntercityService {
     }
 
     const profile = await this.prisma.driverProfile.findUnique({where:{userId:driverId},include:{serviceStats:true}});
-    if(!profile || profile.status!=='APPROVED' || (requestType==='INTERCITY' && !profile.acceptIntercity) || driverPerformance(profile).activity.blocked) throw new BadRequestException('Нужен активный одобренный водитель с разрешённым межгородом');
+    if(!profile || !['ACTIVE','APPROVED'].includes(profile.status) || (requestType==='INTERCITY' && !profile.acceptIntercity) || driverPerformance(profile).activity.blocked) throw new BadRequestException('Нужен активный одобренный водитель с разрешённым межгородом');
     const window = await this.prisma.$transaction(tx=>ensureRouteTopWindow(tx,request));
     if(!profile || !canSeePriorityRequest(window,profile.id)) throw new BadRequestException('Заказ сначала предложен водителю в топе. Повторите после окончания первого доступа');
     const result=await this.prisma.$transaction(async tx=>{
@@ -387,6 +390,20 @@ export class IntercityService {
     return this.enrichOffers(offers);
   }
 
+  async rejectOffer(passengerId: string, offerId: string) {
+    const offer=await this.prisma.intercityOffer.findUnique({where:{id:offerId},include:{request:true}});
+    if(!offer || offer.request.passengerId!==passengerId) throw new NotFoundException('Предложение не найдено');
+    await this.prisma.$transaction(async tx=>{
+      await lockIncomeAccounting(tx);
+      await tx.$executeRaw`SELECT id FROM "IntercityRequest" WHERE id=${offer.requestId} FOR UPDATE`;
+      const request=await tx.intercityRequest.findUniqueOrThrow({where:{id:offer.requestId}});
+      if(request.status!=='OPEN') throw new BadRequestException('Заказ уже принят или закрыт');
+      await tx.intercityOffer.updateMany({where:{id:offerId,status:'PENDING'},data:{status:'REJECTED'}});
+    });
+    this.realtime?.publish?.({type:'intercity.requests.changed',entity:'system',at:new Date().toISOString()});
+    return {success:true};
+  }
+
   async acceptOffer(passengerId: string, offerId: string, expectedPassengerPrice?: number) {
     const offer = await this.prisma.intercityOffer.findUnique({
       where: { id: offerId },
@@ -427,6 +444,7 @@ export class IntercityService {
       }
 
       if(expectedPassengerPrice!==undefined && (freshOffer.price!==expectedPassengerPrice || freshOffer.request.price!==expectedPassengerPrice)) throw new BadRequestException('Цена изменилась. Повторите принятие актуальной цены пассажира');
+      if(freshOffer.request.requestType==='INTERCITY' && new Date(freshOffer.updatedAt).getTime()+30000<=Date.now()) throw new BadRequestException('Время предложения истекло. Выберите актуальное предложение');
       if(freshOffer.status!=='PENDING') throw new BadRequestException('Предложение уже отклонено или недоступно');
 
       await this.chargeDriverForAcceptedIntercityRequest(

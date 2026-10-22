@@ -1,10 +1,12 @@
+import { Optional } from '@nestjs/common';
+import { TechnicalService } from '../technical/technical.service';
 import { ROUTE_TOP_POLICY_KEY, DEFAULT_ROUTE_TOP_POLICY, parseRouteTopPolicy, routeTopPrice, ensureRouteTopWindow, canSeePriorityRequest } from '../common/driver-route-top';
 import { appendTripPoint } from '../common/trip-verification';
 import { driverDailyBonusProgress, serviceDay } from '../common/driver-daily-bonus';
 import { applyDriverActivity, driverOfferActivityKey } from '../common/driver-activity';
 import { driverPerformance, DRIVER_ACTIVITY_RULES } from '../common/driver-performance';
 import { AutoDispatchService } from '../orders/auto-dispatch.service';
-import { currencyForCountry, moneyField } from '../common/currency';
+import { currencyForCountry, moneyField, consumeLockedBonus } from '../common/currency';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { promises as fs } from 'fs';
 import { extname, join } from 'path';
@@ -17,6 +19,7 @@ import { clientUserSelect } from '../common/public-user-select';
 import { PushService } from '../notifications/push.service';
 import { TaxService } from '../tax/tax.service';
 import { lockIncomeAccounting } from '../tax/tax-ledger';
+import { canWorkInKazakhstan, isIndividual } from '../tax/tax-profile-policy';
 
 @Injectable()
 export class DriverService {
@@ -27,6 +30,7 @@ export class DriverService {
         private pushService: PushService,
         private autoDispatchService: AutoDispatchService,
         private taxService: TaxService,
+        @Optional() private technicalService?: TechnicalService,
     ) { }
 
     async createProfile(userId: string, dto: CreateDriverProfileDto) {
@@ -34,7 +38,7 @@ export class DriverService {
         if (rollout && !dto.taxCountry && !await this.prisma.driverProfile.findUnique({ where: { userId } })) throw new BadRequestException('Укажите страну налогового статуса');
         if (rollout && dto.taxCountry === 'KZ') {
             const tax = await this.prisma.taxProfile.findUnique({ where: { userId } });
-            if (!tax || tax.status === 'REJECTED') throw new BadRequestException('Выберите и сохраните налоговый статус: самозанятый или ИП');
+            if (!tax || tax.status === 'REJECTED') throw new BadRequestException('Выберите и сохраните статус: самозанятый, ИП или физическое лицо');
         }
         await this.prisma.user.update({
             where: { id: userId },
@@ -130,8 +134,11 @@ export class DriverService {
             await lockIncomeAccounting(tx);
             await tx.$executeRaw`SELECT id FROM "User" WHERE id=${driverUserId} FOR UPDATE`;
             await tx.$executeRaw`SELECT id FROM "DriverIntercityRoute" WHERE id=${routeId} FOR UPDATE`;
-            const fresh=await tx.driverIntercityRoute.findFirst({where:{id:routeId,driver:{userId:driverUserId,status:'APPROVED'},isActive:true},include:{driver:{include:{serviceStats:true}}}});
-            if(!fresh || fresh.seatsAvailable<=0 || driverPerformance(fresh.driver).activity.blocked) throw new BadRequestException('Нужен активный одобренный маршрут со свободными местами');
+            const fresh=await tx.driverIntercityRoute.findFirst({where:{id:routeId,driver:{userId:driverUserId},isActive:true},include:{driver:{include:{serviceStats:true}}}});
+            if(!fresh) throw new BadRequestException('Маршрут удалён или отключён. Обновите список маршрутов');
+            if(!['ACTIVE','APPROVED'].includes(fresh.driver.status)) throw new BadRequestException('Профиль водителя ещё не одобрен. Дождитесь проверки в админке');
+            if(fresh.seatsAvailable<=0) throw new BadRequestException('На маршруте нет свободных мест');
+            if(driverPerformance(fresh.driver).activity.blocked) throw new BadRequestException('Поднятие в топ недоступно: водитель заблокирован по активности');
             const wallet=await tx.wallet.findUnique({where:{userId:driverUserId}});
             if(!wallet) throw new BadRequestException('Пополните баланс для поднятия маршрута в топ');
             await tx.$executeRaw`SELECT id FROM "Wallet" WHERE id=${wallet.id} FOR UPDATE`;
@@ -144,9 +151,10 @@ export class DriverService {
             const price=routeTopPrice(policy,currency);
             if(currency!==dto.currency || price!==dto.expectedPrice) throw new BadRequestException('Стоимость изменилась. Обновите маршрут и подтвердите актуальную цену');
             const current=await tx.wallet.findUniqueOrThrow({where:{id:wallet.id}});
-            const field=moneyField(currency),locked=currency==='RUB'?current.lockedBonusRub:current.lockedBonus;
-            if(current[field]-locked<price) throw new BadRequestException('Недостаточно собственных средств на балансе');
+            const field=moneyField(currency);
+            if(current[field]<price) throw new BadRequestException('Недостаточно средств на балансе');
             await tx.wallet.update({where:{id:wallet.id},data:{[field]:{decrement:price}}});
+            await consumeLockedBonus(tx,wallet.id,currency,price);
             await tx.walletTransaction.create({data:{walletId:wallet.id,type:'DRIVER_ROUTE_TOP',direction:'DEBIT',balanceSource:'MONEY',currency,amount:price,
                 actorUserId:driverUserId,idempotencyKey:key,note:`Маршрут ${route.fromCity} → ${route.toCity}: ${policy.durationHours} ч, базовая цена ${policy.priceKzt} KZT, курс ${policy.kztPerRub} KZT/RUB`}});
             return tx.driverIntercityRoute.update({where:{id:routeId},data:{topUntil:new Date(Date.now()+policy.durationHours*3600000)}});
@@ -269,12 +277,14 @@ export class DriverService {
             const rollout = (await this.prisma.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
             if (rollout && city?.countryCode === 'KZ') {
                 const tax = await this.prisma.taxProfile.findUnique({ where: { userId: driverUserId } });
-                if (tax?.countryCode !== 'KZ' || tax.status !== 'VERIFIED' || !tax.activities.includes('49320')) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');
-                await this.taxService.collectDebt(driverUserId);
-                const totals = await this.prisma.taxIncomeEntry.aggregate({ where: { ownerKey: driverUserId, status: 'ACCOUNTED', currency: 'KZT' },
-                    _sum: { opv: true, opvr: true, so: true, osms: true, withheld: true } });
-                const debt = ['opv','opvr','so','osms'].reduce((sum,key) => sum + Number(totals._sum[key] ?? 0), 0) - Number(totals._sum.withheld ?? 0);
-                if (debt > 0.005) throw new BadRequestException('Пополните основной баланс для удержания социальных платежей за прошлые поездки');
+                if (!canWorkInKazakhstan(tax)) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');
+                if (!isIndividual(tax)) {
+                    await this.taxService.collectDebt(driverUserId);
+                    const totals = await this.prisma.taxIncomeEntry.aggregate({ where: { ownerKey: driverUserId, status: 'ACCOUNTED', currency: 'KZT' },
+                        _sum: { opv: true, opvr: true, so: true, osms: true, withheld: true } });
+                    const debt = ['opv','opvr','so','osms'].reduce((sum,key) => sum + Number(totals._sum[key] ?? 0), 0) - Number(totals._sum.withheld ?? 0);
+                    if (debt > 0.005) throw new BadRequestException('Пополните основной баланс для удержания социальных платежей за прошлые поездки');
+                }
             }
             const stats = await this.ensureDriverActivityState(profile.id);
             if (stats.activityScore <= 0 || (stats.activityBlockedUntil && stats.activityBlockedUntil > new Date())) throw new BadRequestException('Driver temporarily blocked due to low activity');
@@ -295,7 +305,7 @@ export class DriverService {
             const enabled = (await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
             if (enabled && city?.countryCode === 'KZ') {
                 const tax = await tx.taxProfile.findUnique({ where: { userId: driverUserId } });
-                if (tax?.countryCode !== 'KZ' || tax.status !== 'VERIFIED' || !tax.activities.includes('49320')) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');
+                if (!canWorkInKazakhstan(tax)) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');
             }
             return updateOnline(tx);
         }) : await updateOnline(this.prisma);
@@ -517,7 +527,7 @@ export class DriverService {
 
     async getMatchingIntercityRequests(driverUserId: string) {
         const profile = await this.prisma.driverProfile.findUnique({ where: { userId: driverUserId },include:{serviceStats:true} });
-        if (!profile || profile.status!=='APPROVED' || !profile.acceptIntercity || driverPerformance(profile).activity.blocked) return [];
+        if (!profile || !['ACTIVE','APPROVED'].includes(profile.status) || !profile.acceptIntercity || driverPerformance(profile).activity.blocked) return [];
         const routes = await this.prisma.driverIntercityRoute.findMany({
             where: { driverId: profile.id, isActive: true, seatsAvailable: { gt: 0 } },
         });
@@ -531,7 +541,7 @@ export class DriverService {
                     toCity: { equals: route.toCity, mode: 'insensitive' },
                     seats: { lte: route.seatsAvailable },
                 })) },
-            include: { offers: { where: { driverId: driverUserId, status: 'PENDING' },
+            include: { offers: { where: { driverId: driverUserId, status: 'PENDING', updatedAt: {gt: new Date(Date.now()-30000)} },
                 select: { id: true, price: true, seats: true, status: true } } },
             orderBy: [{ date: 'asc' }, { createdAt: 'desc' }], take: 100,
         });
@@ -866,23 +876,16 @@ export class DriverService {
 
         const docType = docTypeRaw || 'passport';
         const updateField = this.driverDocUrlField(docType);
-        const originalName = String(file.originalname || `${docType}.jpg`);
-        const safeExt = extname(originalName).replace(/[^a-zA-Z0-9.]/g, '') || '.jpg';
-        const safeDocType = docType.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const relativeName = `${profile.id}/${safeDocType}_${uuidv4()}${safeExt}`;
-        const uploadRoot = process.env.UPLOAD_DIR || join(process.cwd(), 'uploads');
-        const targetPath = join(uploadRoot, relativeName);
-
-        const url = `/uploads/${relativeName}`;
+        if (!this.technicalService) throw new BadRequestException('Закрытое хранилище документов недоступно');
+        const stored = await this.technicalService.saveFile(driverUserId, profile.id, docType, file.buffer);
+        if (stored.verdict === 'REJECT') throw new BadRequestException(stored.reason);
+        const url = `/api/driver/docs/files/${stored.id}`;
         await this.prisma.$transaction(async tx => {
             await tx.$executeRaw`SELECT id FROM "User" WHERE id=${driverUserId} FOR UPDATE`;
-            if (!await tx.user.findUnique({where: {id: driverUserId}}) || !await tx.driverProfile.findUnique({where: {id: profile.id}})) throw new NotFoundException('Аккаунт удалён');
-            await fs.mkdir(join(uploadRoot, profile.id), {recursive: true});
-            await fs.writeFile(targetPath, file.buffer);
-            await tx.driverProfile.update({where: {id: profile.id}, data: {[updateField]: url, status: 'PENDING', rejectionReason: null}});
+            if (!await tx.user.findUnique({where:{id:driverUserId}})) throw new NotFoundException('Аккаунт удалён');
+            await tx.driverProfile.update({where:{id:profile.id},data:{[updateField]:url,status:'PENDING',rejectionReason:null}});
         });
-
-        return { ok: true, docType, url };
+        return {ok:true,docType,url,quality:stored.verdict,qualityReason:stored.reason};
     }
 
     private driverDocUrlField(docType: string) {
@@ -909,6 +912,13 @@ export class DriverService {
 
         if (!profile) {
             throw new NotFoundException('Driver profile not found');
+        }
+
+        for (const key of ['selfieUrl','techPassportFrontUrl','techPassportBackUrl','driverLicenseUrl','passportUrl']) {
+            const value=dto[key]; if(!value || value===profile[key]) continue;
+            const match=String(value).match(/^\/api\/driver\/docs\/files\/([a-f0-9]{32})$/);
+            const stored=match?await this.prisma.techFile.findUnique({where:{id:match[1]}}):null;
+            if(!stored||stored.userId!==driverUserId||stored.verdict==='REJECT'||stored.deletedAt) throw new BadRequestException('Документ должен быть загружен владельцем и пройти проверку');
         }
 
         return this.prisma.driverProfile.update({

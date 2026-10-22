@@ -1,0 +1,85 @@
+name: Reset technical owner access
+on:
+  workflow_dispatch:
+    inputs:
+      expected_release:
+        description: Exact currently deployed commit SHA
+        required: true
+      password_hash_b64:
+        description: Base64url encoded bcrypt cost-12 hash; never a plaintext password
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: intercity-production-vps-ops
+  cancel-in-progress: false
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+      - name: Reset owner and revoke sessions
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          EXPECTED_RELEASE: ${{ inputs.expected_release }}
+          PASSWORD_HASH_B64: ${{ inputs.password_hash_b64 }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_RELEASE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PASSWORD_HASH_B64" =~ ^[A-Za-z0-9_-]{80}$ ]]
+          echo "::add-mask::$PASSWORD_HASH_B64"
+          ssh "$VPS_USER@$VPS_HOST" "bash -s -- '$EXPECTED_RELEASE' '$PASSWORD_HASH_B64'" <<'REMOTE'
+          set -euo pipefail
+          [[ "$1" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$2" =~ ^[A-Za-z0-9_-]{80}$ ]]
+          test "$(cat /opt/intercity/current_commit)" = "$1"
+          echo 'Deployed release matches expected version'
+          umask 077
+          backup="/opt/intercity/backups/$(date -u +%Y%m%d-%H%M%S)-owner-password-reset"
+          mkdir -p "$backup"
+          docker exec intercity-postgres sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup/database.dump"
+          test -s "$backup/database.dump"
+          docker exec -i intercity-postgres pg_restore --list < "$backup/database.dump" > "$backup/contents.txt"
+          test -s "$backup/contents.txt"
+          echo "Verified database backup: $backup/database.dump"
+          docker exec -e OWNER_HASH_B64="$2" -i intercity-backend node <<'JS'
+          const { PrismaClient } = require('@prisma/client');
+          const { TechnicalService } = require('./dist/src/technical/technical.service');
+          const fs = require('node:fs/promises');
+          const path = require('node:path');
+          (async () => {
+            const hash = Buffer.from(process.env.OWNER_HASH_B64, 'base64url').toString('utf8');
+            if (!/^\$2[aby]\$12\$[./A-Za-z0-9]{53}$/.test(hash)) throw Error('Invalid bcrypt hash');
+            const p = new PrismaClient();
+            const tech = new TechnicalService(p);
+            try {
+              const owner = await p.techAccount.findUnique({where:{login:'owner'}});
+              if (!owner || owner.disabled || !owner.permissions.includes('settings')) throw Error('Enabled owner account required');
+              await tech.onModuleInit();
+              await tech.audit('server-operator','account.owner.password.reset.requested',owner.id,{reason:'Explicit owner request'});
+              const revoked = await p.$transaction(async tx => {
+                await tx.techAccount.update({where:{id:owner.id},data:{passwordHash:hash}});
+                return tx.techSession.updateMany({where:{accountId:owner.id,revokedAt:null},data:{revokedAt:new Date()}});
+              });
+              await tech.audit('server-operator','account.owner.password.reset.completed',owner.id,{revokedSessions:revoked.count});
+              await fs.unlink(path.join(tech.storage,'owner-access.json')).catch(e=>{if(e.code!=='ENOENT')throw e;});
+              console.log(JSON.stringify({ownerUpdated:true,revokedSessions:revoked.count,initialCredentialFileRemoved:true}));
+            } finally {tech.onModuleDestroy();await p.$disconnect();}
+          })().catch(()=>{console.error('Owner reset failed; inspect audit before retrying. No credentials printed.');process.exitCode=1;});
+          JS
+          REMOTE

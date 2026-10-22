@@ -35,6 +35,7 @@ fi
 flutter_args=(
   build web
   --release
+  "--dart-define=INTERCITY_APP_VERSION=${GITHUB_SHA:-unknown}"
   --no-wasm-dry-run
   --pwa-strategy=none
   --output "$OUTPUT_DIR"

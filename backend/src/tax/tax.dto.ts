@@ -1,10 +1,12 @@
-import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, Matches, MaxLength, Min, IsISO8601 } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, Matches, MaxLength, Min, IsISO8601, ValidateIf } from 'class-validator';
 
 export class DeclareTaxProfileDto {
     @IsIn(['KZ']) countryCode: string;
-    @IsIn(['SELF_EMPLOYED', 'IE']) kind: string;
-    @IsString() @Matches(/^\d{12}$/) iin: string;
-    @IsArray() @IsIn(['49320', '82990'], { each: true }) activities: string[];
+    @IsIn(['SELF_EMPLOYED', 'IE', 'INDIVIDUAL']) kind: string;
+    @ValidateIf(dto => dto.kind !== 'INDIVIDUAL')
+    @IsString() @Matches(/^\d{12}$/) iin?: string;
+    @ValidateIf(dto => dto.kind !== 'INDIVIDUAL')
+    @IsArray() @IsIn(['49320', '82990'], { each: true }) activities?: string[];
     @IsBoolean() consent: boolean;
 }
 export class VerifyTaxProfileDto {

@@ -49,6 +49,14 @@ class _LoginScreenState extends State<LoginScreen> {
         response.data['accessToken'] as String,
         response.data['refreshToken'] as String,
       );
+      if (response.data['user']?['mustChangePassword'] == true) {
+        if (!mounted) return;
+        final changed = await _requirePasswordChange(apiClient);
+        if (!changed) {
+          await apiClient.clearTokens();
+          return;
+        }
+      }
       await PushNotificationsService.instance.syncTokenIfAuthorized();
       final role = (response.data['user']?['role'] ?? '').toString();
       final route = await AppModeManager.resolveHomeRoute(apiClient,
@@ -103,6 +111,86 @@ class _LoginScreenState extends State<LoginScreen> {
         ],
       ),
     );
+  }
+
+  Future<bool> _requirePasswordChange(ApiClient api) async {
+    final next = TextEditingController();
+    final confirm = TextEditingController();
+    String? error;
+    bool saving = false;
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+          builder: (context, update) => AlertDialog(
+                title: const Text('Замените временный пароль'),
+                content: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Text(
+                      'Для продолжения установите свой пароль: от 12 до 72 символов.'),
+                  TextField(
+                      controller: next,
+                      obscureText: true,
+                      decoration:
+                          const InputDecoration(labelText: 'Новый пароль')),
+                  TextField(
+                      controller: confirm,
+                      obscureText: true,
+                      decoration:
+                          const InputDecoration(labelText: 'Повторите пароль')),
+                  if (error != null) Text(error!),
+                ]),
+                actions: [
+                  TextButton(
+                      onPressed: saving
+                          ? null
+                          : () => Navigator.pop(dialogContext, false),
+                      child: const Text('Выйти')),
+                  FilledButton(
+                      onPressed: saving
+                          ? null
+                          : () async {
+                              if (next.text.length < 12 ||
+                                  next.text.length > 72 ||
+                                  next.text != confirm.text) {
+                                update(() => error =
+                                    'Проверьте длину и совпадение паролей');
+                                return;
+                              }
+                              update(() {
+                                saving = true;
+                                error = null;
+                              });
+                              try {
+                                final response = await api
+                                    .post('/auth/change-password', data: {
+                                  'currentPassword': _passwordController.text,
+                                  'newPassword': next.text,
+                                });
+                                await api.setTokens(
+                                    response.data['accessToken'] as String,
+                                    response.data['refreshToken'] as String);
+                                if (dialogContext.mounted) {
+                                  Navigator.pop(dialogContext, true);
+                                }
+                              } catch (e) {
+                                if (context.mounted) {
+                                  update(() {
+                                    error = errorMessageRu(e);
+                                    saving = false;
+                                  });
+                                }
+                              }
+                            },
+                      child: const Text('Сохранить')),
+                ],
+              )),
+    );
+    // Controllers are released after the dialog route finishes its transition.
+    Future<void>.delayed(const Duration(milliseconds: 400), () {
+      next.dispose();
+      confirm.dispose();
+    });
+    return result == true;
   }
 
   @override

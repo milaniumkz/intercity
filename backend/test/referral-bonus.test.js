@@ -75,8 +75,13 @@ test('completed city and intercity rides credit both inviters once in the ride c
             const ride = { id: order.id, passengerId: users[2].id, driverUserId: users[3].id, commissionAmount: 100, currency };
             await Promise.all([db.$transaction(tx => creditRideReferrals(tx, ride)), db.$transaction(tx => creditRideReferrals(tx, ride))]);
             const ledger = await db.walletTransaction.findMany({ where: { orderId: order.id, type: 'REFERRAL_ORDER_BONUS' } });
-            assert.equal(ledger.length, 2);
+            assert.equal(ledger.length, currency === 'KZT' ? 0 : 2);
             assert.ok(ledger.every(x => x.currency === currency && x.amount === 25));
+            if (currency === 'KZT') {
+                const incomes = await db.taxIncomeEntry.findMany({ where: { sourceKind: 'REFERRAL', sourceId: order.id } });
+                assert.equal(incomes.length, 2);
+                assert.ok(incomes.every(x => x.status === 'ACCOUNTED' && Number(x.gross) === 25 && Number(x.withheld) === 0));
+            }
         }
         const request = await db.intercityRequest.create({ data: {
             passengerId: users[2].id, selectedDriverId: users[3].id, status: 'IN_PROGRESS',
@@ -96,7 +101,8 @@ test('completed city and intercity rides credit both inviters once in the ride c
         assert.ok(ledger.every(x => x.currency === 'RUB' && x.amount === 50));
         for (const user of users.slice(0, 2)) {
             const wallet = await db.wallet.findUnique({ where: { userId: user.id } });
-            assert.equal(wallet.bonus, 25);
+            assert.equal(wallet.bonus, 0);
+            assert.equal(wallet.referralMoney.toString(), '25');
             assert.equal(wallet.bonusRub, 75);
         }
         assert.equal((await db.wallet.findUnique({ where: { userId: users[3].id } })).moneyRub, 700);
@@ -109,6 +115,7 @@ test('completed city and intercity rides credit both inviters once in the ride c
         assert.equal((await db.wallet.findUnique({ where: { userId: users[0].id } })).bonusRub, before.bonusRub);
     } finally {
         const ids = users.map(x => x.id);
+        await db.taxIncomeEntry.deleteMany({ where: { ownerKey: { in: ids } } });
         await db.walletTransaction.deleteMany({ where: { wallet: { userId: { in: ids } } } });
         await db.rideEvent.deleteMany({ where: { orderId: { in: orderIds } } });
         await db.order.deleteMany({ where: { id: { in: orderIds } } });

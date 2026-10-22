@@ -9,6 +9,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'core/api/api_client.dart';
+import 'core/services/technical_telemetry.dart';
 import 'core/constants/app_constants.dart';
 import 'core/services/push_notifications_service.dart';
 import 'core/theme/theme_controller.dart';
@@ -28,6 +29,7 @@ import 'features/driver/screens/driver_verification_page.dart';
 import 'features/driver/screens/driver_trip_create_page.dart';
 import 'features/driver/screens/driver_wallet_page.dart';
 import 'features/driver/screens/driver_profile_page.dart';
+import 'features/driver/screens/driver_earnings_page.dart';
 import 'features/admin/screens/admin_login_page.dart';
 import 'features/admin/screens/admin_dashboard_page.dart';
 import 'features/auth/screens/startup_screen.dart';
@@ -228,6 +230,10 @@ GoRouter createRouter({
           path: '/driver/profile',
           builder: (context, state) => const DriverProfilePage(),
         ),
+        GoRoute(
+          path: '/driver/earnings',
+          builder: (context, state) => const DriverEarningsPage(),
+        ),
       ],
     );
 
@@ -356,6 +362,7 @@ class _ModeSwitcherOverlayState extends State<_ModeSwitcherOverlay> {
   void _syncPath() {
     final next = widget.router.routerDelegate.currentConfiguration.uri.path;
     if (next == _path) return;
+    unawaited(TechnicalTelemetry.screenOpened(next));
     if (mounted) {
       setState(() => _path = next);
     } else {

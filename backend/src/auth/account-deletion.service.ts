@@ -84,6 +84,7 @@ export class AccountDeletionService implements OnModuleInit, OnModuleDestroy {
             await tx.taxRemittance.updateMany({where: {ownerKey: userId}, data: {ownerKey: archiveId}});
             await tx.taxPeriodBasis.updateMany({where: {ownerKey: userId}, data: {ownerKey: archiveId}});
             await tx.taxAccountingIdentity.updateMany({where: {ownerKey: userId}, data: {ownerKey: archiveId}});
+            await tx.techEvent.updateMany({where:{userId},data:{ip:null,client:Prisma.DbNull,details:Prisma.DbNull,message:'Персональные сведения удалены по запросу владельца аккаунта'}});
             await tx.user.delete({where: {id: userId}});
             return driverId;
         }, {maxWait: 10000, timeout: 30000});
@@ -99,6 +100,12 @@ export class AccountDeletionService implements OnModuleInit, OnModuleDestroy {
                 if (!/^[0-9a-f-]{36}$/i.test(job.directory)) continue;
                 try {
                     await rm(join(process.env.UPLOAD_DIR || join(process.cwd(), 'uploads'), job.directory), {recursive: true, force: true});
+                    const privateRoot=process.env.TECH_STORAGE_DIR||join(process.cwd(),'technical-data');
+                    for(const file of await this.prisma.techFile.findMany({where:{objectId:job.directory,deletedAt:null}})) {
+                        if(!/^[a-f0-9]{32}\.bin$/.test(file.path))throw new Error('Invalid private file path');
+                        await rm(join(privateRoot,file.path),{force:true});
+                        await this.prisma.techFile.update({where:{id:file.id},data:{deletedAt:new Date()}});
+                    }
                     await this.prisma.accountDeletionFileJob.deleteMany({where: {id: job.id}});
                 } catch { /* Durable job retries removal after a filesystem failure. */ }
             }

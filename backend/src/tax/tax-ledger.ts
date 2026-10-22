@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { COMPONENTS, kazakhstanPeriod, money, POLICY_VERSION, socialIncrement } from './kz-social-calculator';
+import { isIndividual } from './tax-profile-policy';
 
 export const TAX_SETTINGS = ['kzTaxEnabled', 'kzTaxOperatorReference', 'kzTaxReferralContractReference',
     'referralMinPayoutKzt'];
@@ -25,10 +26,13 @@ export type IncomeEvent = { key: string; userId: string; sourceKind: 'CITY' | 'I
 // Both tax and wallet mutations share the caller's transaction. A user row is the
 // common lock for driver/referral income and profile verification, including months.
 export async function recordTaxIncome(tx: Prisma.TransactionClient, input: IncomeEvent) {
-    if ((await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value !== 'true') return null;
+    const independentReferral = input.sourceKind === 'REFERRAL' && input.currency === 'KZT' &&
+        (!await tx.driverProfile.findUnique({ where: { userId: input.userId }, select: { id: true } }) ||
+            isIndividual(await tx.taxProfile.findUnique({ where: { userId: input.userId } })));
+    if (!independentReferral && (await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value !== 'true') return null;
     await lockIncomeAccounting(tx);
     await tx.$queryRaw`SELECT key FROM "AppSettings" WHERE key = 'kzTaxEnabled' FOR SHARE`;
-    if ((await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value !== 'true') return null;
+    if (!independentReferral && (await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value !== 'true') return null;
     await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${input.userId} FOR UPDATE`;
     const existing = await tx.taxIncomeEntry.findUnique({ where: { eventKey: input.key } });
     if (existing) return existing;
@@ -51,6 +55,29 @@ export async function recordCashDriverIncome(tx: Prisma.TransactionClient, kind:
 
 async function calculateEntry(tx: Prisma.TransactionClient, input: IncomeEvent, profile: any,
     period: string, gross: Prisma.Decimal, pendingId?: string) {
+    const passengerReferral = input.sourceKind === 'REFERRAL' &&
+        !await tx.driverProfile.findUnique({ where: { userId: input.userId }, select: { id: true } });
+    const individualIncome = isIndividual(profile) &&
+        (input.sourceKind === 'REFERRAL' || (profile.effectiveFrom && profile.effectiveFrom <= input.occurredAt));
+    if ((passengerReferral || individualIncome) && input.currency === 'KZT') {
+        // No tax identity, status approval, monthly basis or social withholding.
+        // Historical posted liabilities remain separate and are never rewritten.
+        const data = { ownerKey: input.userId, taxpayerKey: null, sourceKind: input.sourceKind, sourceId: input.sourceId,
+            currency: input.currency, occurredAt: input.occurredAt, period, profileKind: 'INDIVIDUAL',
+            profileSnapshot: { kind: 'INDIVIDUAL', selfReported: true }, status: 'ACCOUNTED', reviewReason: null,
+            gross, opv: money(0), opvr: money(0), so: money(0), osms: money(0), withheld: money(0) };
+        const entry = pendingId ? await tx.taxIncomeEntry.update({ where: { id: pendingId }, data })
+            : await tx.taxIncomeEntry.create({ data: { ...data, eventKey: input.key } });
+        if (input.sourceKind === 'REFERRAL') {
+            const wallet = await tx.wallet.upsert({ where: { userId: input.userId }, create: { userId: input.userId }, update: {} });
+            await tx.$executeRaw`SELECT id FROM "Wallet" WHERE id = ${wallet.id} FOR UPDATE`;
+            await tx.wallet.update({ where: { id: wallet.id }, data: { referralMoney: { increment: gross } } });
+            await tx.walletTransaction.create({ data: { walletId: wallet.id, type: 'REFERRAL_INCOME', balanceSource: 'REFERRAL',
+                direction: 'CREDIT', currency: 'KZT', amount: gross.toNumber(), actorUserId: input.userId,
+                idempotencyKey: `tax-referral:${entry.id}`, note: 'Реферальный доход без социальных удержаний платформы' } });
+        }
+        return entry;
+    }
     if (profile?.iinHash) await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`taxpayer:${profile.iinHash}:${period}`}))`;
     const config = await taxSettings(tx);
     const referral = input.sourceKind === 'REFERRAL';
@@ -98,7 +125,7 @@ async function calculateEntry(tx: Prisma.TransactionClient, input: IncomeEvent, 
         : await tx.taxIncomeEntry.create({ data: { ...data, eventKey: input.key } });
     // Actual driver income needs a protected accounting identity even while its
     // tax classification is reviewed. Unpaid referral entitlements do not.
-    if (profile && (!reviewReason || !referral)) await tx.taxAccountingIdentity.upsert({ where: { ownerKey: input.userId }, update: {},
+    if (profile?.iinHash && (!reviewReason || !referral)) await tx.taxAccountingIdentity.upsert({ where: { ownerKey: input.userId }, update: {},
         create: { ownerKey: input.userId, iinEncrypted: profile.iinEncrypted, iinHash: profile.iinHash, iinLast4: profile.iinLast4, firstIncomeAt: input.occurredAt } });
     if (!reviewReason && referral) {
         const net = gross.sub(components.total);
@@ -117,11 +144,12 @@ async function calculateEntry(tx: Prisma.TransactionClient, input: IncomeEvent, 
 
 // Entitlements awaiting status/operator setup are released exactly once. Driver
 // income keeps its original settlement month; referral income arises on release.
-export async function releasePendingIncome(tx: Prisma.TransactionClient, userId: string, now = new Date()) {
+export async function releasePendingIncome(tx: Prisma.TransactionClient, userId: string, now = new Date(), referralsOnly = false) {
     await lockIncomeAccounting(tx);
     await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
     const profile = await tx.taxProfile.findUnique({ where: { userId } });
-    const pending = await tx.taxIncomeEntry.findMany({ where: { ownerKey: userId, status: 'REVIEW', currency: 'KZT' }, orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }], take: 100 });
+    const pending = await tx.taxIncomeEntry.findMany({ where: { ownerKey: userId, status: 'REVIEW', currency: 'KZT',
+        ...(referralsOnly ? { sourceKind: 'REFERRAL' } : {}) }, orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }], take: 100 });
     let released = 0;
     for (const entry of pending) {
         const date = entry.sourceKind === 'REFERRAL' ? now : entry.occurredAt;

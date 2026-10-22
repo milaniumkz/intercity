@@ -3,6 +3,7 @@ import '../../../core/api/api_client.dart';
 import '../../../core/utils/error_message_ru.dart';
 import '../widgets/referral_profile_card.dart';
 import '../widgets/tax_status_panel.dart';
+import '../widgets/personal_income_tax_notice.dart';
 
 class ReferralAccountPage extends StatefulWidget {
   const ReferralAccountPage({super.key, this.apiClient});
@@ -123,119 +124,174 @@ class _ReferralAccountPageState extends State<ReferralAccountPage> {
   @override
   Widget build(BuildContext context) {
     final profile = _summary?['profile'] as Map?;
+    final driver = _summary?['isDriver'] == true;
+    final individual = profile?['kind'] == 'INDIVIDUAL';
     final verified = profile?['status'] == 'VERIFIED';
+    final canWithdraw = !driver || individual || verified;
     final income = (_summary?['income'] as List?) ?? [];
     return Scaffold(
-        appBar: AppBar(title: const Text('Реферальная система')),
-        body: RefreshIndicator(
-            onRefresh: _load,
-            child: ListView(padding: const EdgeInsets.all(16), children: [
-              Text('Приглашайте. Получайте доход.',
-                  style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(height: 8),
-              const Text(
-                  'Вознаграждение за завершённые поездки ваших друзей — в отдельном денежном балансе.'),
-              const SizedBox(height: 16),
-              if (_loading) const LinearProgressIndicator(),
-              if (_error.isNotEmpty)
-                Card(
-                    child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(children: [
-                          Text(_error),
-                          TextButton(
-                              onPressed: _load, child: const Text('Повторить'))
-                        ]))),
-              if (_summary != null && _summary!['enabled'] != true)
-                const Card(
-                    child: Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Text(
-                            'Денежный учёт готовится к запуску. Пока действуют прежние бонусы; перечисление социальных платежей ещё не включено.'))),
-              if (profile != null)
-                Card(
-                    child: ListTile(
-                        leading: Icon(verified
-                            ? Icons.verified_outlined
-                            : Icons.schedule),
-                        title: Text(profile['kind'] == 'IE'
+      appBar: AppBar(title: const Text('Реферальная система')),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Text(
+              'Приглашайте. Получайте доход.',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Вознаграждение за завершённые поездки ваших друзей — в отдельном денежном балансе.',
+            ),
+            const SizedBox(height: 16),
+            if (_loading) const LinearProgressIndicator(),
+            if (_error.isNotEmpty)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      Text(_error),
+                      TextButton(
+                        onPressed: _load,
+                        child: const Text('Повторить'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            if (_summary != null &&
+                driver &&
+                !individual &&
+                _summary!['enabled'] != true)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text(
+                    'Денежный учёт готовится к запуску. Пока действуют прежние бонусы; перечисление социальных платежей ещё не включено.',
+                  ),
+                ),
+              ),
+            if (driver && profile != null)
+              Card(
+                child: ListTile(
+                  leading: Icon(
+                    verified ? Icons.verified_outlined : Icons.schedule,
+                  ),
+                  title: Text(
+                    individual
+                        ? 'Физическое лицо'
+                        : profile['kind'] == 'IE'
                             ? 'Индивидуальный предприниматель'
-                            : 'Самозанятый'),
-                        subtitle: Text(verified
+                            : 'Самозанятый',
+                  ),
+                  subtitle: Text(
+                    individual
+                        ? 'Без налоговой проверки · Казахстан'
+                        : verified
                             ? 'Статус подтверждён · Казахстан'
                             : profile['status'] == 'REJECTED'
                                 ? 'Нужны уточнения: ${profile['verificationReference'] ?? ''}'
-                                : 'Статус на проверке · ИИН •••• ${profile['iinLast4']}'))),
-              if (_summary != null && profile != null)
-                Card(
-                    child: Padding(
-                        padding: const EdgeInsets.all(18),
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('Доступно к выводу'),
-                              const SizedBox(height: 6),
-                              Text(
-                                  '${_amount(_summary!['referralBalance'])} тг',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .headlineMedium),
-                              const SizedBox(height: 6),
-                              Text(
-                                  'Порог вывода: ${_amount(_summary!['minPayout'])} тг'),
-                              if ((double.tryParse(
-                                          '${_summary!['pendingReferral']}') ??
-                                      0) >
-                                  0)
-                                Text(
-                                    'Ожидают подтверждения: ${_amount(_summary!['pendingReferral'])} тг'),
-                              const SizedBox(height: 12),
-                              SizedBox(
-                                  width: double.infinity,
-                                  child: FilledButton.icon(
-                                      onPressed: verified &&
-                                              (double.tryParse(
-                                                          '${_summary!['referralBalance']}') ??
-                                                      0) >=
-                                                  (double.tryParse(
-                                                          '${_summary!['minPayout']}') ??
-                                                      5000)
-                                          ? _withdraw
-                                          : null,
-                                      icon: const Icon(
-                                          Icons.account_balance_outlined),
-                                      label: const Text('Вывести на карту'))),
-                              const Text(
-                                  'Обычные бонусы и бонусы акций не доступны для вывода.'),
-                            ]))),
-              if (_summary != null && !verified)
-                TaxStatusPanel(
-                    apiClient: _api,
-                    driver: _summary!['isDriver'] == true,
-                    onSaved: _load),
-              if (_summary != null)
-                ReferralProfileCard(
-                    user: const {},
-                    apiClient: _api,
-                    showLegacyTotals: _summary!['enabled'] != true),
-              if (verified)
-                TextButton.icon(
-                    onPressed: () => showTaxGuide(context),
-                    icon: const Icon(Icons.info_outline),
-                    label: const Text('Как учитываются платежи')),
-              if (income.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Text('Начисления и удержания',
-                    style: Theme.of(context).textTheme.titleLarge),
-                ...income.take(20).map((item) => Card(
-                    child: ListTile(
+                                : 'Статус на проверке · ИИН •••• ${profile['iinLast4']}',
+                  ),
+                ),
+              ),
+            if (_summary != null)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Доступно к выводу'),
+                      const SizedBox(height: 6),
+                      Text(
+                        '${_amount(_summary!['referralBalance'])} тг',
+                        style: Theme.of(context).textTheme.headlineMedium,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Порог вывода: ${_amount(_summary!['minPayout'])} тг',
+                      ),
+                      if ((double.tryParse('${_summary!['pendingReferral']}') ??
+                              0) >
+                          0)
+                        Text(
+                          'Ожидают подтверждения: ${_amount(_summary!['pendingReferral'])} тг',
+                        ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: canWithdraw &&
+                                  (double.tryParse(
+                                            '${_summary!['referralBalance']}',
+                                          ) ??
+                                          0) >=
+                                      (double.tryParse(
+                                            '${_summary!['minPayout']}',
+                                          ) ??
+                                          5000)
+                              ? _withdraw
+                              : null,
+                          icon: const Icon(Icons.account_balance_outlined),
+                          label: const Text('Вывести на карту'),
+                        ),
+                      ),
+                      const Text(
+                        'Обычные бонусы и бонусы акций не доступны для вывода.',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            if (_summary != null && driver)
+              TaxStatusPanel(
+                apiClient: _api,
+                driver: _summary!['isDriver'] == true,
+                onSaved: _load,
+              ),
+            if (_summary != null)
+              ReferralProfileCard(
+                user: const {},
+                apiClient: _api,
+                showLegacyTotals:
+                    driver && !individual && _summary!['enabled'] != true,
+              ),
+            if (_summary != null && (!driver || individual))
+              const PersonalIncomeTaxNotice(),
+            if (driver && verified && !individual)
+              TextButton.icon(
+                onPressed: () => showTaxGuide(context),
+                icon: const Icon(Icons.info_outline),
+                label: const Text('Как учитываются платежи'),
+              ),
+            if (income.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text(
+                'Начисления и удержания',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              ...income.take(20).map(
+                    (item) => Card(
+                      child: ListTile(
                         title: Text(
-                            '${item['sourceKind'] == 'REFERRAL' ? 'Реферальный доход' : 'Поездка'} · ${_amount(item['gross'])} тг'),
-                        subtitle: Text(item['status'] == 'ACCOUNTED'
-                            ? 'Учтено · удержано ${_amount(item['withheld'])} тг'
-                            : 'Ожидает проверки'),
-                        trailing: Text('${item['period']}'))))
-              ],
-            ])));
+                          '${item['sourceKind'] == 'REFERRAL' ? 'Реферальный доход' : 'Поездка'} · ${_amount(item['gross'])} тг',
+                        ),
+                        subtitle: Text(
+                          item['status'] == 'ACCOUNTED'
+                              ? 'Учтено · удержано ${_amount(item['withheld'])} тг'
+                              : 'Ожидает проверки',
+                        ),
+                        trailing: Text('${item['period']}'),
+                      ),
+                    ),
+                  ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }

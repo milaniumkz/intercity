@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma.service';
 import { TopupRequestDto, PayoutRequestDto } from './dto/wallet.dto';
 import { TaxService } from '../tax/tax.service';
 import { lockIncomeAccounting } from '../tax/tax-ledger';
+import { isIndividual } from '../tax/tax-profile-policy';
 import { confirmedPayment, Kassa24Gateway } from '../payments/kassa24-gateway';
 
 @Injectable()
@@ -273,13 +274,9 @@ export class WalletService {
 
     async createPayoutRequest(userId: string, dto: PayoutRequestDto, userRole?: string) {
         const currency = walletCurrency(dto.currency);
-        if (currency === 'KZT') await this.taxService?.collectDebt(userId);
         const referral = dto.source === 'REFERRAL';
+        if (currency === 'KZT' && !referral) await this.taxService?.collectDebt(userId);
         if (referral && currency !== 'KZT') throw new BadRequestException('Денежный вывод рефералов доступен только в тенге');
-        if (referral) {
-            const profile = await this.prisma.taxProfile.findUnique({ where: { userId } });
-            if (profile?.countryCode !== 'KZ' || profile.status !== 'VERIFIED') throw new BadRequestException('Подтвердите налоговый статус Казахстана');
-        }
         if (!Number.isFinite(dto.amount) || dto.amount <= 0) throw new BadRequestException('Введите сумму больше нуля');
         const wallet = await this.prisma.wallet.findUnique({
             where: { userId },
@@ -312,8 +309,11 @@ export class WalletService {
                 if (referral) {
                     await lockIncomeAccounting(tx);
                     await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
-                    const verified = await tx.taxProfile.findUnique({ where: { userId } });
-                    if (verified?.countryCode !== 'KZ' || verified.status !== 'VERIFIED') throw new BadRequestException('Налоговый статус требует проверки');
+                    const driver = await tx.driverProfile.findUnique({ where: { userId }, select: { id: true } });
+                    if (driver) {
+                        const tax = await tx.taxProfile.findUnique({ where: { userId } });
+                        if (!isIndividual(tax) && (tax?.countryCode !== 'KZ' || tax.status !== 'VERIFIED')) throw new BadRequestException('Налоговый статус требует проверки');
+                    }
                 }
                 const field = referral ? 'referralMoney' : moneyField(currency);
                 await tx.$executeRaw`SELECT id FROM "Wallet" WHERE id = ${wallet.id} FOR UPDATE`;

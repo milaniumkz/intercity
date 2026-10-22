@@ -19,7 +19,7 @@ export function routeTopPrice(policy: ReturnType<typeof parseRouteTopPolicy>, cu
 }
 async function activeTopDrivers(tx: any,request: any,routeIds?: string[],now=new Date()) {
     const routes=await tx.driverIntercityRoute.findMany({where:{...(routeIds?{id:{in:routeIds}}:{}),isActive:true,topUntil:{gt:now},seatsAvailable:{gte:request.seats ?? 1},
-        fromCity:{equals:request.fromCity,mode:'insensitive'},toCity:{equals:request.toCity,mode:'insensitive'},driver:{status:'APPROVED',acceptIntercity:true}},
+        fromCity:{equals:request.fromCity,mode:'insensitive'},toCity:{equals:request.toCity,mode:'insensitive'},driver:{status:{in:['ACTIVE','APPROVED']},acceptIntercity:true}},
         include:{driver:{include:{serviceStats:true}}}});
     return routes.filter((r:any)=>!driverPerformance(r.driver,now).activity.blocked);
 }

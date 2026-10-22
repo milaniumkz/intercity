@@ -80,6 +80,13 @@ export class IntercityController {
     return this.intercityService.getOffers(req.user.sub, id);
   }
 
+  @Post('offers/:offerId/reject')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async rejectOffer(@Request() req, @Param('offerId') offerId: string) {
+    return this.intercityService.rejectOffer(req.user.sub, offerId);
+  }
+
   @Post("offers/:offerId/accept")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

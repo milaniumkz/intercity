@@ -1,7 +1,10 @@
-import { Controller, Post, Get, Body, Param, UseGuards, Request, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { ForbiddenException, Res } from '@nestjs/common';
+import { TechnicalService } from '../technical/technical.service';
+import { Controller, Post, Get, Body, Param, Query, UseGuards, Request, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { DriverService } from './driver.service';
+import { DriverEarningsService } from './driver-earnings.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import {
     CreateDriverProfileDto,
@@ -18,7 +21,13 @@ import {
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class DriverController {
-    constructor(private driverService: DriverService) { }
+    constructor(private driverService: DriverService, private earningsService: DriverEarningsService, private technicalService: TechnicalService) { }
+
+    @Get('earnings')
+    @ApiOperation({ summary: 'My monthly trip earnings, actual commissions and social payments' })
+    earnings(@Request() req, @Query('period') period?: string, @Query('currency') currency?: string) {
+        return this.earningsService.summary(req.user.sub, period, currency);
+    }
 
     @Post('profile')
     @ApiOperation({ summary: 'Create/update driver profile' })
@@ -112,10 +121,19 @@ export class DriverController {
     }
 
     @Post('docs/upload')
-    @UseInterceptors(FileInterceptor('file'))
+    @UseInterceptors(FileInterceptor('file', {limits:{fileSize:10*1024*1024,files:1,fields:5}}))
     @ApiOperation({ summary: 'Upload driver document' })
     async uploadDoc(@Request() req, @Body() body: DriverDocsUploadUrlDto, @UploadedFile() file: any) {
         return this.driverService.uploadDoc(req.user.sub, body?.docType, file);
+    }
+
+    @Get('docs/files/:id')
+    async document(@Request() req, @Param('id') id:string, @Res() res:any) {
+        const file=await this.technicalService.prisma.techFile.findUnique({where:{id}});
+        if (!file || file.verdict==='REJECT' || (file.userId!==req.user.sub && req.user.role!=='ADMIN')) throw new ForbiddenException('Нет доступа к документу');
+        await this.technicalService.audit('app:'+req.user.sub,'file.original.view',id);
+        const {row,buffer}=await this.technicalService.fileBytes(id);
+        res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type',row.mime);res.setHeader('X-Content-Type-Options','nosniff');res.send(buffer);
     }
 
     @Post('docs/complete')
