@@ -9,6 +9,131 @@ import 'package:intercity_shared/intercity_shared.dart';
 
 void main() {
   group('Sign-in transport recovery', () {
+    test('returns from a persisted fallback to the primary endpoint', () async {
+      final store = _MemoryTokenStore()
+        ..values[AppConstants.preferredApiBaseUrlKey] =
+            AppConstants.fallbackBaseUrl;
+      final client = ApiClient(
+        dio: _buildMockDio((options) async =>
+            throw DioException.connectionError(
+                requestOptions: options, reason: 'DNS')),
+        loginFallbackDio: _buildMockDio((options) async {
+          expect(options.uri.origin, Uri.parse(AppConstants.baseUrl).origin);
+          return _jsonBody({'accessToken': 'access'});
+        }),
+        tokenStore: store,
+        baseUrl: AppConstants.fallbackBaseUrl,
+      );
+      await client.post('/auth/login');
+      expect(store.values[AppConstants.preferredApiBaseUrlKey], isNull);
+      expect(ApiClient.currentBaseUrl, AppConstants.baseUrl);
+    });
+
+    test('switches to the alternate origin and keeps it for following requests',
+        () async {
+      var fallbackCalls = 0;
+      final primary = _buildMockDio((options) async {
+        if (options.uri.host == 'backup.example.com') {
+          expect(options.path, '/auth/me');
+          return _jsonBody({'id': 'same-user'});
+        }
+        throw DioException.connectionError(
+            requestOptions: options, reason: 'DNS');
+      });
+      final client = ApiClient(
+        dio: primary,
+        loginFallbackDio: _buildMockDio((options) async {
+          fallbackCalls++;
+          expect(options.uri.toString(),
+              'https://backup.example.com/api/auth/login');
+          expect(options.data, {'phone': 'test', 'password': 'test'});
+          return _jsonBody({'accessToken': 'access'});
+        }),
+        tokenStore: _MemoryTokenStore(),
+        baseUrl: 'https://primary.example.com/api',
+        fallbackBaseUrl: 'https://backup.example.com/api',
+      );
+      await client
+          .post('/auth/login', data: {'phone': 'test', 'password': 'test'});
+      expect((await client.get('/auth/me')).data['id'], 'same-user');
+      expect(fallbackCalls, 1);
+    });
+
+    test('stops after both transports fail', () async {
+      var attempts = 0;
+      final client = ApiClient(
+        dio: _buildMockDio((options) async =>
+            throw DioException.connectionError(
+                requestOptions: options, reason: 'DNS')),
+        loginFallbackDio: _buildMockDio((options) async {
+          attempts++;
+          throw DioException.connectionError(
+              requestOptions: options, reason: 'DNS');
+        }),
+        tokenStore: _MemoryTokenStore(),
+        baseUrl: 'https://primary.example.com/api',
+        fallbackBaseUrl: 'https://backup.example.com/api',
+      );
+      await expectLater(
+          client.post('/auth/login'), throwsA(isA<DioException>()));
+      expect(attempts, 1);
+    });
+
+    test('refreshes authentication on the reachable alternate origin',
+        () async {
+      final store = _MemoryTokenStore()
+        ..values[AppConstants.accessTokenKey] = 'old'
+        ..values[AppConstants.refreshTokenKey] = 'refresh';
+      var refreshCalls = 0;
+      final client = ApiClient(
+        dio: _buildMockDio((options) async {
+          if (options.uri.host == 'backup.example.com') {
+            expect(options.headers['Authorization'], 'Bearer fresh');
+            return _jsonBody({'id': 'same-user'});
+          }
+          throw DioException.connectionError(
+              requestOptions: options, reason: 'DNS');
+        }),
+        loginFallbackDio: _buildMockDio((options) async {
+          expect(options.headers['Authorization'], 'Bearer old');
+          return _jsonBody({}, statusCode: 401);
+        }),
+        refreshDio: _buildMockDio((options) async {
+          refreshCalls++;
+          expect(options.uri.toString(),
+              'https://backup.example.com/api/auth/refresh');
+          return _jsonBody(
+              {'accessToken': 'fresh', 'refreshToken': 'fresh-refresh'});
+        }),
+        tokenStore: store,
+        baseUrl: 'https://primary.example.com/api',
+        fallbackBaseUrl: 'https://backup.example.com/api',
+      );
+      expect((await client.get('/auth/me')).data['id'], 'same-user');
+      expect(refreshCalls, 1);
+    });
+
+    test('ignores unrecognized persisted origins', () {
+      for (final preferred in [
+        'https://untrusted.example/api',
+        'http://backup.example/api',
+        null
+      ]) {
+        expect(
+            ApiClient.resolvePreferredBaseUrlForTesting(
+                baseUrl: 'https://primary.example/api',
+                preferredBaseUrl: preferred,
+                fallbackBaseUrl: 'https://backup.example/api'),
+            'https://primary.example/api');
+      }
+      expect(
+          ApiClient.resolvePreferredBaseUrlForTesting(
+              baseUrl: 'https://primary.example/api',
+              preferredBaseUrl: 'https://backup.example/api',
+              fallbackBaseUrl: 'https://backup.example/api'),
+          'https://backup.example/api');
+    });
+
     test('retries a native timeout once with the same login and HTTPS URL',
         () async {
       var attempts = 0;

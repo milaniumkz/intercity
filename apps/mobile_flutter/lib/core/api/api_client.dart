@@ -41,6 +41,7 @@ class ApiClient {
     Dio? loginFallbackDio,
     ApiTokenStore? tokenStore,
     String? baseUrl,
+    String? fallbackBaseUrl,
   }) : _storage = tokenStore ?? SecureApiTokenStore() {
     final resolvedBaseUrl = _normalizeBaseUrl(baseUrl ?? _resolvedBaseUrl);
     _dio = dio ?? Dio();
@@ -52,7 +53,14 @@ class ApiClient {
     _configureDio(_dio, baseUrl: resolvedBaseUrl);
     _configureDio(_refreshDio, baseUrl: resolvedBaseUrl);
     if (_loginFallbackDio != null) {
-      _configureDio(_loginFallbackDio!, baseUrl: resolvedBaseUrl);
+      final alternative = fallbackBaseUrl ??
+          (resolvedBaseUrl == _buildTimeBaseUrl
+              ? AppConstants.fallbackBaseUrl
+              : resolvedBaseUrl == AppConstants.fallbackBaseUrl
+                  ? _buildTimeBaseUrl
+                  : resolvedBaseUrl);
+      _configureDio(_loginFallbackDio!,
+          baseUrl: _normalizeBaseUrl(alternative));
       _loginFallbackDio!.options.connectTimeout = const Duration(seconds: 10);
       _loginFallbackDio!.options.sendTimeout = const Duration(seconds: 10);
       _loginFallbackDio!.options.receiveTimeout = const Duration(seconds: 15);
@@ -70,6 +78,7 @@ class ApiClient {
   static const String _retriedRequestKey = 'intercity.auth.retried';
   static const String _skipRefreshKey = 'intercity.auth.skip_refresh';
   static const String _tokenSnapshotKey = 'intercity.auth.token_snapshot';
+  static const String _networkRetriedKey = 'intercity.network.retried';
 
   static final String _buildTimeBaseUrl = AppConstants.baseUrl;
   static String _resolvedBaseUrl = _buildTimeBaseUrl;
@@ -96,7 +105,25 @@ class ApiClient {
       await _globalStorage.delete(AppConstants.apiBaseUrlKey);
     }
 
-    _resolvedBaseUrl = resolvedBaseUrl;
+    final preferred =
+        await _globalStorage.read(AppConstants.preferredApiBaseUrlKey);
+    _resolvedBaseUrl = resolvePreferredBaseUrlForTesting(
+      baseUrl: resolvedBaseUrl,
+      preferredBaseUrl: preferred,
+      fallbackBaseUrl: AppConstants.fallbackBaseUrl,
+    );
+  }
+
+  @visibleForTesting
+  static String resolvePreferredBaseUrlForTesting({
+    required String baseUrl,
+    String? preferredBaseUrl,
+    required String fallbackBaseUrl,
+  }) {
+    if (fallbackBaseUrl.isNotEmpty && preferredBaseUrl == fallbackBaseUrl) {
+      return fallbackBaseUrl;
+    }
+    return baseUrl;
   }
 
   static String get currentBaseUrl => _resolvedBaseUrl;
@@ -109,11 +136,13 @@ class ApiClient {
     }
     final normalized = _normalizeBaseUrl(trimmed);
     await _globalStorage.write(AppConstants.apiBaseUrlKey, normalized);
+    await _globalStorage.delete(AppConstants.preferredApiBaseUrlKey);
     _resolvedBaseUrl = normalized;
   }
 
   static Future<void> clearCustomBaseUrl() async {
     await _globalStorage.delete(AppConstants.apiBaseUrlKey);
+    await _globalStorage.delete(AppConstants.preferredApiBaseUrlKey);
     _resolvedBaseUrl = _buildTimeBaseUrl;
   }
 
@@ -185,6 +214,41 @@ class ApiClient {
     DioException error,
     ErrorInterceptorHandler handler,
   ) async {
+    final fallback = _loginFallbackDio;
+    final request = error.requestOptions;
+    final transportFailure = error.response == null &&
+        (error.type == DioExceptionType.connectionTimeout ||
+            error.type == DioExceptionType.receiveTimeout ||
+            error.type == DioExceptionType.sendTimeout ||
+            error.type == DioExceptionType.connectionError);
+    final retryable = request.path == '/auth/login' ||
+        (request.method == 'GET' &&
+            fallback?.options.baseUrl != request.baseUrl);
+    if (fallback != null &&
+        transportFailure &&
+        retryable &&
+        request.extra[_networkRetriedKey] != true) {
+      final retry = request.copyWith(
+        baseUrl: fallback.options.baseUrl,
+        connectTimeout: fallback.options.connectTimeout,
+        sendTimeout: fallback.options.sendTimeout,
+        receiveTimeout: fallback.options.receiveTimeout,
+        extra: {...request.extra, _networkRetriedKey: true},
+      );
+      try {
+        final response = await fallback.fetch<dynamic>(retry);
+        await _rememberReachableEndpoint(fallback.options.baseUrl);
+        handler.resolve(response);
+      } on DioException catch (fallbackError) {
+        if (fallbackError.response != null) {
+          await _rememberReachableEndpoint(fallback.options.baseUrl);
+          await _onError(fallbackError, handler);
+        } else {
+          handler.next(fallbackError);
+        }
+      }
+      return;
+    }
     if (!_shouldAttemptRefresh(error)) {
       handler.next(error);
       return;
@@ -209,6 +273,29 @@ class ApiClient {
           const AuthSessionExpiredException(),
         ),
       );
+    }
+  }
+
+  Future<void> _rememberReachableEndpoint(String baseUrl) async {
+    _dio.options.baseUrl = baseUrl;
+    _refreshDio.options.baseUrl = baseUrl;
+    if (baseUrl != AppConstants.fallbackBaseUrl &&
+        baseUrl != _buildTimeBaseUrl) {
+      return;
+    }
+    _resolvedBaseUrl = baseUrl;
+    try {
+      if (baseUrl == _buildTimeBaseUrl) {
+        await _storage
+            .delete(AppConstants.preferredApiBaseUrlKey)
+            .timeout(const Duration(seconds: 2));
+      } else {
+        await _storage
+            .write(AppConstants.preferredApiBaseUrlKey, baseUrl)
+            .timeout(const Duration(seconds: 2));
+      }
+    } catch (_) {
+      // A working connection must not depend on persisting the preference.
     }
   }
 
@@ -385,20 +472,7 @@ class ApiClient {
             receiveTimeout: const Duration(seconds: 8),
           )
         : options;
-    try {
-      return await _dio.post<dynamic>(path,
-          data: data, options: primaryOptions);
-    } on DioException catch (error) {
-      final transportFailure = error.response == null &&
-          (error.type == DioExceptionType.connectionTimeout ||
-              error.type == DioExceptionType.receiveTimeout ||
-              error.type == DioExceptionType.sendTimeout ||
-              error.type == DioExceptionType.connectionError);
-      if (!isLogin || !transportFailure) rethrow;
-      // Retry only sign-in, once, through a separate TLS-validated HTTP/1.1
-      // connection. Never replay payments, orders, or a rejected password.
-      return fallback.post<dynamic>(path, data: data, options: options);
-    }
+    return _dio.post<dynamic>(path, data: data, options: primaryOptions);
   }
 
   Future<Response<dynamic>> patch(
