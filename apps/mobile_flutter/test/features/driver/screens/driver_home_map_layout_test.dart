@@ -81,6 +81,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(events.hasListener, isTrue);
+    expect(find.text('Активный заказ'), findsOneWidget);
     api.leaving = '2026-10-12T08:00:00Z';
     events.add({
       'event': 'driver-event',
@@ -286,9 +287,8 @@ class _ArrivedApi extends _HomeApi {
       'currency': 'KZT',
       'passenger': {'name': 'Passenger', 'phone': '+70000000000'}
     };
-    if (path == '/orders/my') {
-      return Response(
-          requestOptions: RequestOptions(path: path), data: [order]);
+    if (path == '/driver/orders/active') {
+      return Response(requestOptions: RequestOptions(path: path), data: order);
     }
     if (path == '/orders/arrived') {
       return Response(requestOptions: RequestOptions(path: path), data: order);

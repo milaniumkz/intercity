@@ -637,6 +637,7 @@ model NotificationDispatchJob {
 }
 
 model TariffCity {
+  vehicleClass String @default("ECONOMY")
   id          String   @id @default(uuid())
   cityId      String
   city        City     @relation(fields: [cityId], references: [id])
@@ -651,6 +652,7 @@ model TariffCity {
 }
 
 model TariffCargo {
+  countryCode String @default("KZ")
   id         String   @id @default(uuid())
   name       String
   basePrice  Float
@@ -663,6 +665,7 @@ model TariffCargo {
 }
 
 model TariffDelivery {
+  countryCode String @default("KZ")
   id            String   @id @default(uuid())
   name          String
   basePrice     Float
@@ -676,6 +679,8 @@ model TariffDelivery {
 }
 
 model IntercityRequest {
+  reservedRouteId String?
+  reservedSeats Int @default(0)
   priorityWindow IntercityRoutePriorityWindow?
   id          String           @id @default(uuid())
   passengerLeavingAt DateTime?

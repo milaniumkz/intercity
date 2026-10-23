@@ -462,7 +462,7 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _fromAddressSearching = false;
   bool _toAddressSearching = false;
   bool _locating = false;
-  int _modeIndex = 0; // 0 city, 1 intercity, 2 delivery
+  int _modeIndex = 0; // 0 city, 1 intercity, 2 delivery, 3 cargo
   int _cityModeIndex = 0; // 0 fixed, 1 auction
   int _deliveryModeIndex = 0; // 0 city, 1 intercity, 2 rf
   int? _mapHomeSelectedIndex = 0;
@@ -615,7 +615,10 @@ class _OrderScreenState extends State<OrderScreen> {
 
   String _stepActionLabel() {
     if (_orderStep < 3) return 'Далее';
-    if (_requestType() == requestTypeCityFixed) return 'Создать заказ';
+    if (_requestType() == requestTypeCityFixed ||
+        _requestType() == requestTypeCargo) {
+      return 'Создать заказ';
+    }
     if (_mode() == 'DELIVERY') return 'Опубликовать доставку';
     return 'Опубликовать заявку';
   }
@@ -700,7 +703,7 @@ class _OrderScreenState extends State<OrderScreen> {
     return widget.routeStage == marker || routeHas(context, '$marker=1');
   }
 
-  bool get _useIntercityBoardUi => _modeIndex != 2;
+  bool get _useIntercityBoardUi => _modeIndex < 2;
 
   Future<void> _goOrderBoard(String marker) async {
     await _saveBoardDraft();
@@ -718,6 +721,10 @@ class _OrderScreenState extends State<OrderScreen> {
     final draft = <String, dynamic>{
       'vehicleClass': _vehicleClass,
       'auctionPrice': _auctionPriceController.text,
+      'itemDescription': _deliveryItemController.text,
+      'itemWeightKg': _deliveryWeightController.text,
+      'itemDimensions': _deliveryDimensionsController.text,
+      'recipientContact': _deliveryRecipientController.text,
       'paymentMethod': _paymentMethod,
       'mapHomeSelectedIndex': _mapHomeSelectedIndex,
       'modeIndex': _modeIndex,
@@ -783,6 +790,14 @@ class _OrderScreenState extends State<OrderScreen> {
                             : 0);
         _vehicleClass = (draft['vehicleClass'] ?? _vehicleClass).toString();
         _auctionPriceController.text = (draft['auctionPrice'] ?? '').toString();
+        _deliveryItemController.text =
+            (draft['itemDescription'] ?? '').toString();
+        _deliveryWeightController.text =
+            (draft['itemWeightKg'] ?? '').toString();
+        _deliveryDimensionsController.text =
+            (draft['itemDimensions'] ?? '').toString();
+        _deliveryRecipientController.text =
+            (draft['recipientContact'] ?? '').toString();
         _paymentMethod = (draft['paymentMethod'] ?? _paymentMethod).toString();
         if (_modeIndex == 0 && _paymentMethod == paymentMethodCardTransfer) {
           _paymentMethod = paymentMethodCash;
@@ -875,11 +890,13 @@ class _OrderScreenState extends State<OrderScreen> {
   void _selectMapHomeFare(int index) {
     setState(() {
       _mapHomeSelectedIndex = index;
-      _modeIndex = index == 2
-          ? 1
-          : index == 3
-              ? 2
-              : 0;
+      _modeIndex = index == 4
+          ? 3
+          : index == 2
+              ? 1
+              : index == 3
+                  ? 2
+                  : 0;
       _cityModeIndex = index == 1 ? 1 : 0;
       _deliveryModeIndex = 0;
       _orderStep = 1;
@@ -894,8 +911,8 @@ class _OrderScreenState extends State<OrderScreen> {
     _ensureBoardPickupPoint();
     unawaited(_saveBoardDraft());
     _scheduleAutoBoard();
-    if (index == 3) {
-      _selectBoardEntry(modeIndex: 2, route: 'order');
+    if (index == 3 || index == 4) {
+      _selectBoardEntry(modeIndex: index == 4 ? 3 : 2, route: 'order');
     } else {
       _continueMapHomeFare();
     }
@@ -1424,7 +1441,7 @@ class _OrderScreenState extends State<OrderScreen> {
       }
       return _boardAddressNotFoundScreen();
     }
-    if (_routeStage('mode')) {
+    if (_routeStage('mode') && _orderStep == 0) {
       return _boardCityModeChoiceScreen();
     }
     if (_routeStage('address')) {
@@ -2200,7 +2217,7 @@ class _OrderScreenState extends State<OrderScreen> {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 210,
+            height: 316,
             child: GridView.count(
               crossAxisCount: 2,
               mainAxisExtent: 96,
@@ -2231,6 +2248,11 @@ class _OrderScreenState extends State<OrderScreen> {
                   subtitle: 'Посылки и грузы',
                   icon: Icons.inventory_2_rounded,
                 ),
+                _mapHomeFareCard(
+                    index: 4,
+                    title: 'Грузовые',
+                    subtitle: 'По весу и расстоянию',
+                    icon: Icons.local_shipping_rounded),
               ],
             ),
           ),
@@ -2353,8 +2375,7 @@ class _OrderScreenState extends State<OrderScreen> {
         child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+            child: ListView(
               children: [
                 Row(
                   children: [
@@ -2438,18 +2459,22 @@ class _OrderScreenState extends State<OrderScreen> {
                       ),
                     ),
                     _boardEntryCard(
-                      title: 'Доставка',
-                      subtitle: 'Посылки и грузы',
-                      icon: Icons.inventory_2_rounded,
-                      onTap: () => _selectBoardEntry(
-                        modeIndex: 2,
-                        deliveryModeIndex: 0,
-                        route: 'order',
-                      ),
-                    ),
+                        title: 'Доставка',
+                        subtitle: 'Посылки и грузы',
+                        icon: Icons.inventory_2_rounded,
+                        onTap: () => _selectBoardEntry(
+                            modeIndex: 2,
+                            deliveryModeIndex: 0,
+                            route: 'order')),
+                    _boardEntryCard(
+                        title: 'Грузовые',
+                        subtitle: 'По весу и расстоянию',
+                        icon: Icons.local_shipping_rounded,
+                        onTap: () =>
+                            _selectBoardEntry(modeIndex: 3, route: 'order')),
                   ],
                 ),
-                const Spacer(),
+                const SizedBox(height: 18),
                 ICGradientButton(
                   label: 'Городское такси',
                   icon: Icons.arrow_forward_rounded,
@@ -8466,6 +8491,12 @@ class _OrderScreenState extends State<OrderScreen> {
         _priceCard(),
         const SizedBox(height: 12),
       ],
+      if (_mode() == 'CARGO') ...[
+        _deliveryFieldsCard(),
+        const SizedBox(height: 12),
+        _priceCard(),
+        const SizedBox(height: 12)
+      ],
       if (_mode() == 'DELIVERY') ...[
         _deliveryFieldsCard(),
         const SizedBox(height: 12),
@@ -8514,7 +8545,7 @@ class _OrderScreenState extends State<OrderScreen> {
         ? 'Адрес назначения не указан'
         : _toController.text.trim();
     final price = _boardPrice == null
-        ? 'Цена рассчитается автоматически'
+        ? (_supportsSystemPrice ? 'После расчёта' : 'По предложению водителя')
         : '${_boardPrice!.toStringAsFixed(0)} $_currencySymbol';
     return _surfaceCard(
       padding: const EdgeInsets.all(14),
@@ -8575,11 +8606,22 @@ class _OrderScreenState extends State<OrderScreen> {
             ),
           ),
           const SizedBox(height: 14),
-          _confirmDetailRow(
-            'Класс',
-            vehicleClassLabel(_vehicleClass),
-            Icons.airline_seat_recline_extra_rounded,
-          ),
+          if (_supportsVehicleClass)
+            _confirmDetailRow('Класс', vehicleClassLabel(_vehicleClass),
+                Icons.airline_seat_recline_extra_rounded),
+          if (_mode() == 'CARGO' || _mode() == 'DELIVERY') ...[
+            _confirmDetailRow('Груз', _deliveryItemController.text.trim(),
+                Icons.inventory_2_outlined),
+            if (_deliveryWeightController.text.trim().isNotEmpty)
+              _confirmDetailRow('Вес, кг', _deliveryWeightController.text,
+                  Icons.scale_rounded),
+            if (_deliveryDimensionsController.text.trim().isNotEmpty)
+              _confirmDetailRow('Размеры', _deliveryDimensionsController.text,
+                  Icons.straighten_rounded),
+            if (_deliveryRecipientController.text.trim().isNotEmpty)
+              _confirmDetailRow('Получатель', _deliveryRecipientController.text,
+                  Icons.person_outline),
+          ],
           _confirmDetailRow(
             'Способ оплаты',
             paymentMethodLabel(_paymentMethod),
@@ -8600,22 +8642,25 @@ class _OrderScreenState extends State<OrderScreen> {
           const Divider(height: 24),
           Row(
             children: [
-              Text(
+              Expanded(
+                  child: Text(
                 'Цена поездки',
                 style: TextStyle(
                   color: theme.colorScheme.onSurfaceVariant,
                   fontWeight: FontWeight.w700,
                 ),
-              ),
-              const Spacer(),
-              Text(
-                price,
-                style: const TextStyle(
-                  color: AppTheme.primaryColor,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 18,
-                ),
-              ),
+              )),
+              Flexible(
+                  flex: 2,
+                  child: Text(
+                    price,
+                    textAlign: TextAlign.end,
+                    style: const TextStyle(
+                      color: AppTheme.primaryColor,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 18,
+                    ),
+                  )),
             ],
           ),
           const SizedBox(height: 14),
@@ -8647,12 +8692,16 @@ class _OrderScreenState extends State<OrderScreen> {
               ),
             ),
           ),
-          Text(
-            value,
-            style: TextStyle(
-              color: theme.colorScheme.onSurface,
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
+          Flexible(
+            flex: 2,
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                color: theme.colorScheme.onSurface,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ),
         ],
@@ -8693,6 +8742,7 @@ class _OrderScreenState extends State<OrderScreen> {
     final modeTitle = switch (_mode()) {
       'CITY' => _cityModeIndex == 0 ? 'Город • Легковой' : 'Город • Аукцион',
       'INTERCITY' => 'Межгород',
+      'CARGO' => 'Грузовые',
       _ => 'Доставка',
     };
     return Row(
@@ -9211,6 +9261,12 @@ class _OrderScreenState extends State<OrderScreen> {
         'subtitle': 'По городу, межгород, РФ',
         'icon': 'delivery',
       },
+      {
+        'chip': 'ГРУЗОВЫЕ',
+        'title': 'Грузовые',
+        'subtitle': 'По весу и расстоянию',
+        'icon': 'cargo'
+      },
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -9270,6 +9326,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 final icon = switch (items[i]['icon']) {
                   'route' => Icons.route_rounded,
                   'delivery' => Icons.inventory_2_rounded,
+                  'cargo' => Icons.local_shipping_rounded,
                   _ => Icons.local_taxi_rounded,
                 };
                 return GestureDetector(
@@ -10130,13 +10187,9 @@ class _OrderScreenState extends State<OrderScreen> {
   }) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final price = switch (vehicleClass) {
-      vehicleClassEconomy => 1780,
-      vehicleClassOptimal => 2280,
-      vehicleClassComfort => 2980,
-      vehicleClassBusiness => 3980,
-      _ => 1780,
-    };
+    final price = selected && _boardPrice != null
+        ? '${_boardPrice!.toStringAsFixed(0)} $_currencySymbol'
+        : 'После расчёта';
     final subtitle = switch (vehicleClass) {
       vehicleClassEconomy => 'Для повседневных поездок',
       vehicleClassOptimal => 'Больше пространства и комфорта',
@@ -10216,7 +10269,7 @@ class _OrderScreenState extends State<OrderScreen> {
               ),
             ),
             Text(
-              '$price $_currencySymbol',
+              price,
               style: const TextStyle(
                 color: AppTheme.primaryColor,
                 fontWeight: FontWeight.w900,
@@ -10725,6 +10778,12 @@ class _OrderScreenState extends State<OrderScreen> {
                     Expanded(
                       child: TextField(
                         controller: _deliveryWeightController,
+                        onChanged: (_) {
+                          if (_mode() == 'CARGO') {
+                            setState(() => _boardPrice = null);
+                            _scheduleAutoBoard();
+                          }
+                        },
                         style: TextStyle(color: theme.colorScheme.onSurface),
                         keyboardType: const TextInputType.numberWithOptions(
                           decimal: true,
@@ -11775,6 +11834,8 @@ class _OrderScreenState extends State<OrderScreen> {
         return 'CITY';
       case 1:
         return 'INTERCITY';
+      case 3:
+        return 'CARGO';
       default:
         return 'DELIVERY';
     }
@@ -11782,6 +11843,8 @@ class _OrderScreenState extends State<OrderScreen> {
 
   String _requestType() {
     switch (_mode()) {
+      case 'CARGO':
+        return requestTypeCargo;
       case 'CITY':
         return _cityModeIndex == 0
             ? requestTypeCityFixed
@@ -13310,6 +13373,9 @@ class _OrderScreenState extends State<OrderScreen> {
       'requestType': _requestType(),
       'paymentMethod': _paymentMethod,
       'vehicleClass': _supportsVehicleClass ? _vehicleClass : null,
+      if (_mode() == 'CARGO')
+        'itemWeightKg': double.tryParse(
+            _deliveryWeightController.text.replaceAll(',', '.')),
     };
   }
 
@@ -13392,7 +13458,8 @@ class _OrderScreenState extends State<OrderScreen> {
       },
       if (_mode() == 'DELIVERY') ...{
         'itemDescription': _deliveryItemController.text.trim(),
-        'itemWeightKg': double.tryParse(_deliveryWeightController.text.trim()),
+        'itemWeightKg': double.tryParse(
+            _deliveryWeightController.text.replaceAll(',', '.')),
         'itemDimensions': _deliveryDimensionsController.text.trim().isEmpty
             ? null
             : _deliveryDimensionsController.text.trim(),
@@ -13435,6 +13502,38 @@ class _OrderScreenState extends State<OrderScreen> {
       return true;
     }
 
+    if (_mode() == 'CARGO') {
+      final weight =
+          double.tryParse(_deliveryWeightController.text.replaceAll(',', '.'));
+      if (_fromLocation == null || _toLocation == null) {
+        _statusText = 'Для грузового заказа выберите обе точки на карте.';
+        return false;
+      }
+      if (_deliveryItemController.text.trim().isEmpty ||
+          weight == null ||
+          !weight.isFinite ||
+          weight <= 0 ||
+          weight > 100000) {
+        _statusText = 'Укажите описание груза и вес от 0,01 до 100 000 кг.';
+        return false;
+      }
+      if (_boardPrice == null) {
+        _statusText = 'Дождитесь расчёта стоимости грузового заказа.';
+        return false;
+      }
+    }
+    if (_mode() == 'DELIVERY' &&
+        _deliveryWeightController.text.trim().isNotEmpty) {
+      final weight =
+          double.tryParse(_deliveryWeightController.text.replaceAll(',', '.'));
+      if (weight == null ||
+          !weight.isFinite ||
+          weight <= 0 ||
+          weight > 100000) {
+        _statusText = 'Укажите корректный вес груза.';
+        return false;
+      }
+    }
     if (_mode() == 'DELIVERY' && _deliveryItemController.text.trim().isEmpty) {
       _statusText = 'Для доставки нужно указать описание груза.';
       return false;
@@ -13465,6 +13564,7 @@ class _OrderScreenState extends State<OrderScreen> {
     final requestTypeSnapshot = _requestType();
     final paymentMethodSnapshot = _paymentMethod;
     final vehicleClassSnapshot = _vehicleClass;
+    final weightSnapshot = _deliveryWeightController.text;
     setState(() => _loading = true);
     try {
       if (!_supportsSystemPrice) {
@@ -13525,6 +13625,8 @@ class _OrderScreenState extends State<OrderScreen> {
           _mode() != modeSnapshot ||
           _paymentMethod != paymentMethodSnapshot ||
           _vehicleClass != vehicleClassSnapshot ||
+          (modeSnapshot == 'CARGO' &&
+              _deliveryWeightController.text != weightSnapshot) ||
           _requestType() != requestTypeSnapshot) {
         return;
       }
@@ -13612,7 +13714,14 @@ class _OrderScreenState extends State<OrderScreen> {
             if (_requestType() == requestTypeCityAuction)
               'desiredPrice': _passengerAuctionPrice,
             'paymentMethod': _paymentMethod,
-            'vehicleClass': _vehicleClass,
+            'vehicleClass': _mode() == 'CITY' ? _vehicleClass : null,
+            if (_mode() == 'CARGO') ...{
+              'itemWeightKg': double.tryParse(
+                  _deliveryWeightController.text.replaceAll(',', '.')),
+              'itemDescription': _deliveryItemController.text.trim(),
+              'itemDimensions': _deliveryDimensionsController.text.trim(),
+              'recipientContact': _deliveryRecipientController.text.trim(),
+            },
             'comment': _commentController.text.trim().isEmpty
                 ? null
                 : _commentController.text.trim(),

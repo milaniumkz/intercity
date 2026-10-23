@@ -137,18 +137,23 @@ GoRouter createRouter({
         GoRoute(
           path: '/order/searching/:id',
           builder: (context, state) => OrderSearchingPage(
+            key: ValueKey('order:${state.pathParameters['id']}'),
             orderId: state.pathParameters['id'] ?? '',
           ),
         ),
         GoRoute(
           path: '/intercity/request/:id',
           builder: (context, state) => IntercityRequestPage(
+            key: ValueKey('market:${state.pathParameters['id']}'),
+            apiClient: orderApiClient,
             requestId: state.pathParameters['id'] ?? '',
           ),
         ),
         GoRoute(
           path: '/market/request/:id',
           builder: (context, state) => IntercityRequestPage(
+            key: ValueKey('market:${state.pathParameters['id']}'),
+            apiClient: orderApiClient,
             requestId: state.pathParameters['id'] ?? '',
           ),
         ),

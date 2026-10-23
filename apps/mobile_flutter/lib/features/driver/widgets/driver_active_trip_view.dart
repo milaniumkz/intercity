@@ -17,6 +17,7 @@ class DriverActiveTripView extends StatelessWidget {
       required this.onNavigate,
       this.onEnableVoice,
       this.instruction,
+      this.details,
       this.message,
       this.onBack,
       this.actionLabel,
@@ -28,7 +29,7 @@ class DriverActiveTripView extends StatelessWidget {
 
   final Widget map;
   final String passenger, from, to, price, status, payment;
-  final String? instruction, actionLabel, message;
+  final String? instruction, actionLabel, message, details;
   final VoidCallback? onBack;
   final IconData? actionIcon;
   final VoidCallback onRefresh, onCall, onChat, onNavigate;
@@ -82,6 +83,12 @@ class DriverActiveTripView extends StatelessWidget {
                         _address('Откуда', from, Icons.trip_origin),
                         const SizedBox(height: 6),
                         _address('Куда', to, Icons.location_on_outlined),
+                        if (details?.isNotEmpty == true)
+                          Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Text(details!,
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis)),
                       ])),
               Expanded(
                   child: Stack(children: [

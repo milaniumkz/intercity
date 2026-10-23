@@ -177,6 +177,10 @@ export class GeoService {
         }
     }
 
+    async cityNameAtPoint(lat: number, lng: number) {
+        return (await this.findNearestCity(lat, lng))?.name ?? null;
+    }
+
     async departureCurrency(lat?: number | null, lng?: number | null, cityName?: string | null) {
         const name = (cityName || '').split(',')[0].trim();
         const needle = this.normalizeCityToken(name);

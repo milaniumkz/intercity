@@ -1,3 +1,4 @@
+import '../../../core/utils/freight_details.dart';
 import '../widgets/passenger_offers_panel.dart';
 import '../../../core/services/trip_status_sound.dart';
 import '../../../core/services/push_notifications_service.dart';
@@ -1016,15 +1017,9 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                     text: 'Комментарий: ${request['comment']}',
                   ),
                 ],
-                if ((request['itemDescription'] ?? '')
-                    .toString()
-                    .trim()
-                    .isNotEmpty) ...[
+                for (final detail in freightDetails(request)) ...[
                   const SizedBox(height: 10),
-                  _requestNote(
-                    icon: Icons.inventory_2_outlined,
-                    text: 'Груз: ${request['itemDescription']}',
-                  ),
+                  _requestNote(icon: Icons.inventory_2_outlined, text: detail)
                 ],
                 if (manualWarning) ...[
                   const SizedBox(height: 10),

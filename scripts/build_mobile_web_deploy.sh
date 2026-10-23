@@ -167,7 +167,7 @@ if index.exists():
     )
     text = text.replace("</head>", cache_clear_script + "\n</head>")
     text = re.sub(
-        r'\s*<script src="flutter_bootstrap\.js(?:\?v=[^"]*)?" async=""></script>',
+        r'\s*<script src="flutter_bootstrap\.js(?:\?v=[^"]*)?" async(?:="")?\s*>\s*</script>',
         "",
         text,
     )

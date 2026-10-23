@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../core/utils/location_display.dart';
+import '../../../core/utils/request_flow_utils.dart';
 import 'package:intercity_shared/intercity_shared.dart';
 
 String intercityCurrencyLabel(Map<String, dynamic> request) =>
@@ -51,6 +52,11 @@ class IntercityRequestCard extends StatelessWidget {
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Text(
+                        requestTypeLabel(
+                            '${request['requestType'] ?? 'INTERCITY'}'),
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 8),
                     for (final from in [true, false])
                       Padding(
                           padding: const EdgeInsets.only(bottom: 8),
@@ -79,7 +85,11 @@ class IntercityRequestCard extends StatelessWidget {
                     Wrap(spacing: 12, runSpacing: 5, children: [
                       Text(intercityDepartureLabel(
                           request['date'] ?? request['departureTime'])),
-                      Text('${request['seats'] ?? 1} мест(а)'),
+                      if ('${request['requestType']}'.startsWith('DELIVERY'))
+                        Text(
+                            '${request['itemDescription'] ?? 'Груз'}${request['itemWeightKg'] == null ? '' : ' · ${request['itemWeightKg']} кг'}')
+                      else
+                        Text('${request['seats'] ?? 1} мест(а)'),
                       if (distance is num && distance > 0)
                         Text('${distance.toStringAsFixed(1)} км'),
                     ]),

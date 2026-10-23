@@ -1,3 +1,4 @@
+import '../widgets/freight_tariff_dialog.dart';
 import 'admin_trip_reviews_page.dart';
 import '../../../core/utils/csv_export.dart';
 import 'admin_rating_reviews_page.dart';
@@ -920,6 +921,7 @@ class AdminTariffsPage extends StatefulWidget {
 class _AdminTariffsPageState extends State<AdminTariffsPage> {
   final _cityIdCtrl = TextEditingController();
   final _cityTariffIdCtrl = TextEditingController();
+  String _vehicleClass = 'ECONOMY';
   final _cargoTariffIdCtrl = TextEditingController();
   final _deliveryTariffIdCtrl = TextEditingController();
   List<dynamic> _cities = [];
@@ -988,6 +990,7 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
           await AdminApiClient.instance.get('/admin/tariffs/cargo');
       final deliveryRes =
           await AdminApiClient.instance.get('/admin/tariffs/delivery');
+      if (!mounted) return;
       setState(() {
         _cities = List<dynamic>.from(citiesRes.data as List);
         _city = List<dynamic>.from(cityRes.data as List);
@@ -1005,16 +1008,14 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
     }
   }
 
-  Future<void> _createCargo() => _runAction('Создать грузовой тариф', () async {
-        await AdminApiClient.instance.post('/admin/tariffs/cargo', data: {
-          'name': 'Cargo Standard',
-          'basePrice': 1500,
-          'pricePerKm': 120,
-          'pricePerKg': 5,
-          'minPrice': 2000,
-        });
-        await _load();
-      });
+  Future<void> _editFreight(String kind, [Map<String, dynamic>? tariff]) async {
+    final saved = await showDialog<bool>(
+        context: context,
+        builder: (_) => FreightTariffDialog(kind: kind, tariff: tariff));
+    if (saved == true && mounted) await _load();
+  }
+
+  Future<void> _createCargo() => _editFreight('cargo');
 
   Future<void> _createCity() => _saveCityTariff(update: false);
 
@@ -1024,7 +1025,10 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
           setState(() => _message = 'Выберите город');
           return;
         }
-        final payload = <String, dynamic>{'name': _tariffNameCtrl.text.trim()};
+        final payload = <String, dynamic>{
+          'name': _tariffNameCtrl.text.trim(),
+          'vehicleClass': _vehicleClass
+        };
         for (final entry in {
           'basePrice': _baseCtrl,
           'pricePerKm': _kmCtrl,
@@ -1063,6 +1067,7 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
   void _editCityTariff(Map<String, dynamic> tariff) => setState(() {
         _cityIdCtrl.text = tariff['cityId'].toString();
         _cityTariffIdCtrl.text = tariff['id'].toString();
+        _vehicleClass = tariff['vehicleClass']?.toString() ?? 'ECONOMY';
         _tariffNameCtrl.text = tariff['name'].toString();
         _baseCtrl.text = tariff['basePrice'].toString();
         _kmCtrl.text = tariff['pricePerKm'].toString();
@@ -1124,18 +1129,7 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
         await _load();
       });
 
-  Future<void> _createDelivery() =>
-      _runAction('Создать тариф доставки', () async {
-        await AdminApiClient.instance.post('/admin/tariffs/delivery', data: {
-          'name': 'Delivery Standard',
-          'basePrice': 800,
-          'pricePerKm': 80,
-          'pricePerKg': 3,
-          'minPrice': 1000,
-          'doorToDoorFee': 300,
-        });
-        await _load();
-      });
+  Future<void> _createDelivery() => _editFreight('delivery');
 
   @override
   Widget build(BuildContext context) {
@@ -1186,6 +1180,20 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
                     _cityIdCtrl.text = city['id'].toString();
                     _cityTariffIdCtrl.clear();
                   }),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: _vehicleClass,
+                  key: ValueKey(_vehicleClass),
+                  decoration:
+                      const InputDecoration(labelText: 'Класс автомобиля'),
+                  items: const [
+                    DropdownMenuItem(value: 'ECONOMY', child: Text('Эконом')),
+                    DropdownMenuItem(value: 'OPTIMAL', child: Text('Оптимал')),
+                    DropdownMenuItem(value: 'COMFORT', child: Text('Комфорт')),
+                    DropdownMenuItem(value: 'BUSINESS', child: Text('Бизнес'))
+                  ],
+                  onChanged: (value) => setState(() => _vehicleClass = value!),
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -1273,13 +1281,19 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
                   onEdit: _editCityTariff)),
           const SizedBox(height: 16),
           _SectionCard(
-              title: 'Грузовые тарифы',
-              child: _TariffList(items: _cargo, onDelete: _deleteCargoTariff)),
+              title: 'Грузовые тарифы — нажмите для редактирования',
+              child: _TariffList(
+                  items: _cargo,
+                  onDelete: _deleteCargoTariff,
+                  onEdit: (tariff) => _editFreight('cargo', tariff))),
           const SizedBox(height: 16),
           _SectionCard(
-              title: 'Тарифы доставки',
+              title:
+                  'Фиксированные тарифы доставки — нажмите для редактирования',
               child: _TariffList(
-                  items: _delivery, onDelete: _deleteDeliveryTariff)),
+                  items: _delivery,
+                  onDelete: _deleteDeliveryTariff,
+                  onEdit: (tariff) => _editFreight('delivery', tariff))),
         ],
       ),
     );
@@ -2690,8 +2704,8 @@ class _TariffList extends StatelessWidget {
             title: Text('${m['name']}'),
             subtitle: Text(
               cityAware
-                  ? 'ID ${m['id']} • активен ${m['isActive']} • город ${((m['city'] as Map?)?['name'] ?? m['cityId'])}\nБаза: ${m['basePrice']} ${rideCurrencySymbol(m)} • км: ${m['pricePerKm']} ${rideCurrencySymbol(m)} • мин: ${m['pricePerMin']} ${rideCurrencySymbol(m)} • минимум: ${m['minPrice']} ${rideCurrencySymbol(m)}'
-                  : 'ID ${m['id']} • активен ${m['isActive']}',
+                  ? 'ID ${m['id']} • активен ${m['isActive']} • класс ${m['vehicleClass'] ?? 'ECONOMY'} • город ${((m['city'] as Map?)?['name'] ?? m['cityId'])}\nБаза: ${m['basePrice']} ${rideCurrencySymbol(m)} • км: ${m['pricePerKm']} ${rideCurrencySymbol(m)} • мин: ${m['pricePerMin']} ${rideCurrencySymbol(m)} • минимум: ${m['minPrice']} ${rideCurrencySymbol(m)}'
+                  : 'ID ${m['id']} • активен ${m['isActive']} • ${m['countryCode'] ?? 'KZ'}\nБаза: ${m['basePrice']} • км: ${m['pricePerKm']} • кг: ${m['pricePerKg']} • минимум: ${m['minPrice']}',
             ),
             trailing: OutlinedButton(
               onPressed: () => onDelete(m['id'] as String),

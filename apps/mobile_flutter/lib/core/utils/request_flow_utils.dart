@@ -1,5 +1,6 @@
 import 'localization_service.dart';
 
+const String requestTypeCargo = 'CARGO';
 const String requestTypeCityFixed = 'CITY_FIXED';
 const String requestTypeCityAuction = 'CITY_AUCTION';
 const String requestTypeIntercity = 'INTERCITY';
@@ -46,11 +47,11 @@ List<String> paymentMethodsForRequestType(String requestType) {
 }
 
 bool supportsManualAddressForRequestType(String requestType) {
-  return requestType != requestTypeCityFixed;
+  return requestType != requestTypeCityFixed && requestType != requestTypeCargo;
 }
 
 bool requiresConfirmedCoordinates(String requestType) {
-  return requestType == requestTypeCityFixed;
+  return requestType == requestTypeCityFixed || requestType == requestTypeCargo;
 }
 
 bool supportsVehicleClassForRequestType(String requestType) {
@@ -58,15 +59,17 @@ bool supportsVehicleClassForRequestType(String requestType) {
 }
 
 bool supportsSystemPriceForRequestType(String requestType) {
-  return requestType == requestTypeCityFixed;
+  return requestType == requestTypeCityFixed || requestType == requestTypeCargo;
 }
 
 bool isMarketRequestType(String requestType) {
-  return requestType != requestTypeCityFixed;
+  return requestType != requestTypeCityFixed && requestType != requestTypeCargo;
 }
 
 String requestTypeLabel(String requestType) {
   switch (requestType) {
+    case requestTypeCargo:
+      return LocalizationService.translate('Грузовые', 'Жүк тасымалы');
     case requestTypeCityFixed:
       return LocalizationService.translate(
         'Легковой по городу',

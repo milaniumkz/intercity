@@ -1,3 +1,4 @@
+import '../../../core/utils/referral_code.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -47,30 +48,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _loadReferralCode() async {
+    // A referral supplied by the current link must not wait for browser storage.
     final routeCode = _normalizeReferralInput(widget.referralCode);
+    if (routeCode != null) {
+      _referralController.text = routeCode;
+      return;
+    }
     final storedCode =
         _normalizeReferralInput(await AppPreferences.getPendingReferralCode());
-    final code = routeCode ?? storedCode;
-    if (code == null || _referralController.text.trim().isNotEmpty) return;
-    _referralController.text = code;
+    if (!mounted ||
+        storedCode == null ||
+        _referralController.text.trim().isNotEmpty) {
+      return;
+    }
+    _referralController.text = storedCode;
   }
 
-  String? _normalizeReferralInput(String? raw) {
-    final value = (raw ?? '').trim();
-    if (value.isEmpty) return null;
-    final uri = Uri.tryParse(value);
-    final fromQuery = uri?.queryParameters['ref'] ??
-        uri?.queryParameters['referral'] ??
-        uri?.queryParameters['referralCode'];
-    if ((fromQuery ?? '').trim().isNotEmpty) {
-      return fromQuery!.trim().toUpperCase();
-    }
-    final segments = uri?.pathSegments ?? const <String>[];
-    if (segments.isNotEmpty && segments.first.toLowerCase() == 'ref') {
-      return segments.last.trim().toUpperCase();
-    }
-    return value.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').trim().toUpperCase();
-  }
+  String? _normalizeReferralInput(String? raw) => normalizeReferralCode(raw);
 
   @override
   void dispose() {

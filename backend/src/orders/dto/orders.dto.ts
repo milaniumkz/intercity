@@ -51,6 +51,7 @@ export class CreateOrderDto {
 
     @ApiPropertyOptional({
         enum: [
+            'CARGO',
             'CITY_FIXED',
             'CITY_AUCTION',
             'INTERCITY',
@@ -61,6 +62,7 @@ export class CreateOrderDto {
     })
     @IsOptional()
     @IsIn([
+        'CARGO',
         'CITY_FIXED',
         'CITY_AUCTION',
         'INTERCITY',
@@ -69,6 +71,30 @@ export class CreateOrderDto {
         'DELIVERY_RF',
     ])
     requestType?: string;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsNumber()
+    @Min(0.01)
+    @Max(100000)
+    itemWeightKg?: number;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    @MaxLength(2000)
+    itemDescription?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(500)
+    itemDimensions?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(500)
+    recipientContact?: string;
+
 
     @ApiPropertyOptional()
     @IsOptional()
@@ -125,6 +151,7 @@ export class PreviewOrderDto {
 
     @ApiPropertyOptional({
         enum: [
+            'CARGO',
             'CITY_FIXED',
             'CITY_AUCTION',
             'INTERCITY',
@@ -135,6 +162,7 @@ export class PreviewOrderDto {
     })
     @IsOptional()
     @IsIn([
+        'CARGO',
         'CITY_FIXED',
         'CITY_AUCTION',
         'INTERCITY',
@@ -143,6 +171,19 @@ export class PreviewOrderDto {
         'DELIVERY_RF',
     ])
     requestType?: string;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsNumber()
+    @Min(0.01)
+    @Max(100000)
+    itemWeightKg?: number;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString()
+    @MaxLength(2000)
+    itemDescription?: string;
 
     @ApiPropertyOptional()
     @IsOptional()

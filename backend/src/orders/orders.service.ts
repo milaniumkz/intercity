@@ -1,3 +1,4 @@
+import { settleBonusRidePayment } from '../common/bonus-ride-payment';
 import { lockIncomeAccounting, recordCashDriverIncome } from '../tax/tax-ledger';
 import { CITY_TARIFF_DEFAULTS } from '../common/city-tariff-defaults';
 import { passengerLeaving } from '../common/passenger-leaving';
@@ -57,6 +58,8 @@ export class OrdersService {
             case 'CITY_FIXED':
             case 'CITY_AUCTION':
                 return 'CITY';
+            case 'CARGO':
+                return 'CARGO';
             case 'INTERCITY':
                 return 'INTERCITY';
             case 'DELIVERY_CITY':
@@ -102,7 +105,7 @@ export class OrdersService {
         return digits.startsWith('76') || digits.startsWith('77');
     }
 
-    private async resolveCityTariff(cityId: string | null) {
+    private async resolveCityTariff(cityId: string | null, vehicleClass = 'ECONOMY') {
         const tariffs = cityId ? await this.prisma.tariffCity.findMany({
             where: { cityId, isActive: true },
             orderBy: { basePrice: 'asc' },
@@ -120,11 +123,11 @@ export class OrdersService {
                 if (existing.length) return null;
                 return tx.tariffCity.create({data:{cityId,name:'Эконом — базовый тариф',...CITY_TARIFF_DEFAULTS[city.countryCode]}});
             });
-            return { tariff, multiplier: 1 };
+            return { tariff: tariff && (tariff.vehicleClass || 'ECONOMY') === vehicleClass ? tariff : null, multiplier: 1 };
         }
 
         return {
-            tariff: tariffs[0],
+            tariff: tariffs.find(rate => (rate.vehicleClass || 'ECONOMY') === vehicleClass),
             multiplier: 1,
         };
     }
@@ -158,10 +161,12 @@ export class OrdersService {
     async createOrder(userId: string, dto: CreateOrderDto) {
         const requestType = this.normalizeRequestType(dto.requestType, dto.mode);
         const mode = this.inferMode(requestType, dto.mode);
-        if (requestType && !['CITY_FIXED', 'CITY_AUCTION'].includes(requestType)) {
+        if (requestType && !['CITY_FIXED', 'CITY_AUCTION', 'CARGO'].includes(requestType)) {
             throw new BadRequestException('This endpoint only supports city orders');
         }
 
+        if (requestType && this.inferMode(requestType) !== mode) throw new BadRequestException('Order mode does not match request type');
+        if (mode === 'CARGO' && !dto.itemDescription?.trim()) throw new BadRequestException('Укажите описание груза');
         const paymentMethod = this.normalizePaymentMethod(dto.paymentMethod);
         const isCityAuction = requestType === 'CITY_AUCTION';
         if (mode === 'CITY' && !isCityAuction && !dto.vehicleClass) {
@@ -191,6 +196,8 @@ export class OrdersService {
         const commissionPercent = parseFloat(
             settings.find((s) => s.key === 'orderCommissionPercent')?.value || '10'
         );
+
+        if (!Number.isFinite(commissionPercent) || commissionPercent < 0 || commissionPercent > 100) throw new BadRequestException('Некорректная настройка комиссии. Обратитесь в поддержку');
 
         let bonusUsedAmount = 0;
         if (useBonus) {
@@ -231,7 +238,12 @@ export class OrdersService {
                     toManualAddress: null,
                     toAddressSource: 'GEOCODED',
                     mode,
-                    requestType: requestType ?? 'CITY_FIXED',
+                    requestType: requestType ?? (mode === 'CARGO' ? 'CARGO' : mode === 'DELIVERY' ? 'DELIVERY_CITY' : 'CITY_FIXED'),
+                    tariffId: preview.tariff?.id || null,
+                    deliveryWeightKg: dto.itemWeightKg ?? null,
+                    deliveryItemDescription: dto.itemDescription?.trim() || null,
+                    deliveryDimensions: dto.itemDimensions?.trim() || null,
+                    deliveryRecipientContact: dto.recipientContact?.trim() || null,
                     price: isCityAuction ? dto.desiredPrice! : preview.price,
                     currency: preview.currency,
                     priceSource: isCityAuction ? 'DRIVER_OFFER' : 'SYSTEM',
@@ -282,7 +294,12 @@ export class OrdersService {
             payload: {
                 status: order.status,
                 mode: order.mode,
-                requestType: requestType ?? 'CITY_FIXED',
+                requestType: requestType ?? (mode === 'CARGO' ? 'CARGO' : mode === 'DELIVERY' ? 'DELIVERY_CITY' : 'CITY_FIXED'),
+                    tariffId: preview.tariff?.id || null,
+                    deliveryWeightKg: dto.itemWeightKg ?? null,
+                    deliveryItemDescription: dto.itemDescription?.trim() || null,
+                    deliveryDimensions: dto.itemDimensions?.trim() || null,
+                    deliveryRecipientContact: dto.recipientContact?.trim() || null,
                 passengerId: order.passengerId,
             },
         });
@@ -306,9 +323,10 @@ export class OrdersService {
     private async previewOrderDtoToOrder(dto: PreviewOrderDto) {
         const requestType = this.normalizeRequestType(dto.requestType, dto.mode);
         const mode = this.inferMode(requestType, dto.mode);
-        if (requestType && requestType !== 'CITY_FIXED') {
+        if (requestType && !['CITY_FIXED', 'CARGO'].includes(requestType)) {
             throw new BadRequestException('Price preview is only available for fixed-price city orders');
         }
+        if (requestType && this.inferMode(requestType) !== mode) throw new BadRequestException('Order mode does not match request type');
         const route = await this.geoService.getRoute(dto.fromLat, dto.fromLng, dto.toLat, dto.toLng);
 
         let price = 0;
@@ -319,9 +337,9 @@ export class OrdersService {
         cityId = geoResult?.cityId;
 
         if (mode === 'CITY') {
-            const resolved = await this.resolveCityTariff(cityId);
+            const resolved = await this.resolveCityTariff(cityId, this.normalizeVehicleClass(dto.vehicleClass || 'ECONOMY'));
             tariff = resolved.tariff;
-            if (!tariff) throw new BadRequestException('City tariff is not configured');
+            if (!tariff) throw new BadRequestException('City tariff is not configured for selected vehicle class');
             if (tariff) {
                 const multiplier = resolved.multiplier || 1;
                 price = Math.max(
@@ -331,24 +349,26 @@ export class OrdersService {
             }
         } else if (mode === 'CARGO') {
             tariff = await this.prisma.tariffCargo.findFirst({
-                where: { isActive: true },
+                where: { isActive: true, countryCode: geoResult.currency === 'RUB' ? 'RU' : 'KZ' },
                 orderBy: { basePrice: 'asc' },
             });
             if (tariff) {
+                this.validateFreightWeight(dto.itemWeightKg, tariff.pricePerKg);
                 price = Math.max(
                     tariff.minPrice,
-                    tariff.basePrice + route.distance * tariff.pricePerKm
+                    tariff.basePrice + route.distance * tariff.pricePerKm + (dto.itemWeightKg || 0) * tariff.pricePerKg
                 );
             }
         } else if (mode === 'DELIVERY') {
             tariff = await this.prisma.tariffDelivery.findFirst({
-                where: { isActive: true },
+                where: { isActive: true, countryCode: geoResult.currency === 'RUB' ? 'RU' : 'KZ' },
                 orderBy: { basePrice: 'asc' },
             });
             if (tariff) {
+                this.validateFreightWeight(dto.itemWeightKg, tariff.pricePerKg);
                 let deliveryPrice = Math.max(
                     tariff.minPrice,
-                    tariff.basePrice + route.distance * tariff.pricePerKm
+                    tariff.basePrice + route.distance * tariff.pricePerKm + (dto.itemWeightKg || 0) * tariff.pricePerKg
                 );
                 if (dto.doorToDoor) {
                     deliveryPrice += tariff.doorToDoorFee;
@@ -358,6 +378,11 @@ export class OrdersService {
         }
 
         return { distance: route.distance, duration: route.duration, price: this.roundRidePrice(price), tariff, cityId, currency: geoResult.currency };
+    }
+
+    private validateFreightWeight(weight: number | undefined, rate: number) {
+        if (weight != null && (!Number.isFinite(weight) || weight <= 0 || weight > 100000)) throw new BadRequestException('Укажите корректный вес груза');
+        if (rate > 0 && weight == null) throw new BadRequestException('Для расчёта тарифа необходимо указать вес груза');
     }
 
     private roundRidePrice(price: number) {
@@ -870,9 +895,11 @@ export class OrdersService {
             if (!allowedDriverStatuses.has(targetStatus)) {
                 throw new ForbiddenException('Driver cannot set this status');
             }
+            if (order.status === targetStatus) return order;
             this.assertDriverTransition(order.status, targetStatus);
         }
 
+        if (order.status === targetStatus) return order;
         const updateData: any = { status: targetStatus };
         if (targetStatus === 'COMPLETED') {
             updateData.completedAt = new Date();
@@ -887,6 +914,10 @@ export class OrdersService {
                 if (order.paymentMethod === 'CARD') await this.cardPayments.schedule(tx, 'CITY', order, order.driver.userId);
             }
             if (targetStatus === 'COMPLETED') {
+                if (order.driver?.userId) {
+                    await settleBonusRidePayment(tx, 'CITY', order, order.driver.userId, order.price);
+                    await this.applyDriverOrderCommissionDebit(order, tx);
+                }
                 const verification = order.driver ? await finishTripVerification(tx, 'CITY', order, order.driver.id, order.driver.userId, updateData.completedAt) : 'REVIEW';
                 if (verification === 'VERIFIED') await this.applyReferralCommissionBonuses(order, tx);
                 if (order.driver?.userId) await recordCashDriverIncome(tx, 'CITY', order, order.driver.userId, order.price, updateData.completedAt);
@@ -924,7 +955,10 @@ export class OrdersService {
         // inviter of passenger and inviter of driver.
         if (targetStatus === 'COMPLETED' && order.status !== 'COMPLETED') {
             if (order.paymentMethod === 'CARD') await this.cardPayments.settleCompletedTrip('CITY', order.id);
-            await this.applyDriverOrderCommissionDebit(order);
+            if (order.driver?.userId) {
+                const wallet = await this.prisma.wallet.findUnique({where:{userId:order.driver.userId}});
+                await this.disableDriverOnlineIfBalanceBelowMinimum(order.driver.userId, order.driver.id, wallet?.[moneyField(order.currency)] ?? null, order.currency);
+            }
         }
 
         return updatedOrder;
@@ -1003,18 +1037,19 @@ export class OrdersService {
         return deg * (Math.PI / 180);
     }
 
-    private async applyDriverOrderCommissionDebit(order: any) {
+    private async applyDriverOrderCommissionDebit(order: any, transaction?: Prisma.TransactionClient) {
+        const db = transaction ?? this.prisma;
         const driverUserId = order.driver?.userId;
         const driverId = order.driver?.id;
         if (!driverUserId) return;
 
-        const driverUser = await this.prisma.user.findUnique({
+        const driverUser = await db.user.findUnique({
             where: { id: driverUserId },
             select: { phone: true },
         });
         if (order.currency !== 'RUB' && !this.isKazakhstanPhone(driverUser?.phone)) {
             if (typeof order.commissionAmount === 'number' && order.commissionAmount > 0) {
-                await this.prisma.order.update({
+                await db.order.update({
                     where: { id: order.id },
                     data: { commissionAmount: 0 },
                 }).catch(() => null);
@@ -1022,21 +1057,21 @@ export class OrdersService {
             return;
         }
 
-        const settings = await this.prisma.appSettings.findMany({
+        const settings = await db.appSettings.findMany({
             where: { key: { in: ['orderCommissionPercent'] } },
         });
         const orderCommissionPercent = parseFloat(
             settings.find((s) => s.key === 'orderCommissionPercent')?.value || '10'
         );
         const commissionAmount =
-            typeof order.commissionAmount === 'number' && order.commissionAmount > 0
+            typeof order.commissionAmount === 'number' && order.commissionAmount >= 0
                 ? order.commissionAmount
                 : ((order.price || 0) * orderCommissionPercent) / 100;
         if (!Number.isFinite(commissionAmount) || commissionAmount <= 0) return;
 
         const idempotencyKey = `order-commission:${order.id}:driver:${driverUserId}`;
         let balanceAfterDebit: number | null = null;
-        await this.prisma.$transaction(async (tx) => {
+        const charge = async (tx: Prisma.TransactionClient) => {
             await tx.wallet.updateMany({ where: { userId: driverUserId }, data: { [moneyField(order.currency)]: { increment: 0 } } });
             const existing = await (tx as any).walletTransaction.findFirst({
                 where: { idempotencyKey },
@@ -1077,7 +1112,9 @@ export class OrdersService {
                     note: `Комиссия сервиса за выполненный заказ ${order.id}`,
                 },
             });
-        });
+        };
+        if (transaction) {await charge(transaction); return;}
+        await this.prisma.$transaction(charge);
         await this.disableDriverOnlineIfBalanceBelowMinimum(
             driverUserId,
             driverId,

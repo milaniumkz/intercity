@@ -60,6 +60,11 @@ export class DriverController {
         return this.driverService.getRuntimeSettings();
     }
 
+    @Get('orders/active')
+    async getActiveOrder(@Request() req) {
+        return this.driverService.getActiveOrder(req.user.sub);
+    }
+
     @Get('orders/nearby')
     @ApiOperation({ summary: 'Get nearby orders' })
     async getNearbyOrders(@Request() req) {

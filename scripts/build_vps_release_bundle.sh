@@ -70,7 +70,7 @@ mobile = (web / 'mobile/index.html').read_text()
 reset = re.search(r'<script id="intercity-cache-reset">.*?</script>', mobile, re.S).group()
 index = web / 'admin/index.html'
 text = re.sub(r'\s*<script id="intercity-cache-reset">.*?</script>', '', index.read_text(), flags=re.S)
-text = re.sub(r'\s*<script src="flutter_bootstrap\.js(?:\?v=[^"]*)?" async=""></script>', '', text)
+text = re.sub(r'\s*<script src="flutter_bootstrap\.js(?:\?v=[^"]*)?" async(?:="")?\s*>\s*</script>', '', text)
 index.write_text(text.replace('</head>', reset + '\n</head>'))
 (web / 'admin/flutter_service_worker.js').write_bytes((web / 'mobile/flutter_service_worker.js').read_bytes())
 PYWEB

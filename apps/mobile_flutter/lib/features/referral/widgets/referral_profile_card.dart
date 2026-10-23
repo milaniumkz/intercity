@@ -58,7 +58,7 @@ class _ReferralProfileCardState extends State<ReferralProfileCard> {
                 style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
             const Text(
-                'Приглашайте пассажиров и водителей. Вознаграждение за их завершённые поездки учитывается по правилам программы.'),
+                'Приглашайте пассажиров и водителей. Вознаграждение начисляется после завершения и подтверждения поездки. Поездки на проверке начисляются после одобрения.'),
             const SizedBox(height: 8),
             SelectableText(link),
             const SizedBox(height: 8),

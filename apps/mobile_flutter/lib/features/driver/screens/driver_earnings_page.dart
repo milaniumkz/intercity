@@ -196,6 +196,10 @@ class _DriverEarningsPageState extends State<DriverEarningsPage> {
                 _section('Доход и комиссия по поездкам', [
                   _row('Стоимость завершённых поездок', data['gross']),
                   _row('Наличные и перевод', data['cash']),
+                  _row('Оплата бонусами пассажиров', data['bonus']),
+                  if ((num.tryParse('${data['pendingBonus'] ?? 0}') ?? 0) > 0)
+                    _row('Ожидает зачисления бонусной оплаты',
+                        data['pendingBonus']),
                   _row('Зачислено с банковских карт', data['card']),
                   _row('Ожидает оплаты картой', data['pendingCard']),
                   if ((double.tryParse('${data['refundedCard']}') ?? 0) > 0)

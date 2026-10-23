@@ -61,8 +61,7 @@ class _IntercityPriceProposalDialogState
                   style: const TextStyle(fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
               Text(intercityDepartureLabel(widget.request['date'])),
-              Text(
-                  '${widget.request['seats'] ?? 1} мест(а) · ${intercityCurrencyLabel(widget.request)}'),
+              Text('${widget.request['requestType']}'.startsWith('DELIVERY') ? '${widget.request['itemDescription'] ?? 'Груз'}${widget.request['itemWeightKg'] == null ? '' : ' · ${widget.request['itemWeightKg']} кг'} · ${intercityCurrencyLabel(widget.request)}' : '${widget.request['seats'] ?? 1} мест(а) · ${intercityCurrencyLabel(widget.request)}'),
               const SizedBox(height: 16),
               TextField(
                   controller: _price,

@@ -221,19 +221,21 @@ export class AdminService {
         });
     }
 
-    async createCityTariff(data: { cityId: string; name: string; basePrice: number; pricePerKm: number; pricePerMin: number; minPrice: number }) {
+    async createCityTariff(data: { cityId: string; vehicleClass?: string; name: string; basePrice: number; pricePerKm: number; pricePerMin: number; minPrice: number }) {
         this.validateCityTariff(data);
+        if (data.vehicleClass != null && !['ECONOMY','OPTIMAL','COMFORT','BUSINESS'].includes(data.vehicleClass)) throw new BadRequestException('Invalid vehicle class');
         const city = await this.prisma.city.findUnique({ where: { id: data.cityId } });
         if (!city) throw new BadRequestException('City not found');
         return this.prisma.tariffCity.create({ data });
     }
 
-    async updateCityTariff(id: string, data: Partial<{ name: string; basePrice: number; pricePerKm: number; pricePerMin: number; minPrice: number; isActive: boolean }>) {
+    async updateCityTariff(id: string, data: Partial<{ vehicleClass: string; name: string; basePrice: number; pricePerKm: number; pricePerMin: number; minPrice: number; isActive: boolean }>) {
         this.validateCityTariff(data);
+        if (data.vehicleClass != null && !['ECONOMY','OPTIMAL','COMFORT','BUSINESS'].includes(data.vehicleClass)) throw new BadRequestException('Invalid vehicle class');
         return this.prisma.tariffCity.update({ where: { id }, data });
     }
 
-    private validateCityTariff(data: Partial<{ name: string; basePrice: number; pricePerKm: number; pricePerMin: number; minPrice: number }>) {
+    private validateCityTariff(data: Partial<{ vehicleClass: string; name: string; basePrice: number; pricePerKm: number; pricePerMin: number; minPrice: number }>) {
         if (data.name != null && (typeof data.name !== 'string' || !data.name.trim())) throw new BadRequestException('Tariff name is required');
         for (const key of ['basePrice', 'pricePerKm', 'pricePerMin', 'minPrice'] as const) {
             const value = data[key];
@@ -251,12 +253,24 @@ export class AdminService {
         return this.prisma.tariffCargo.findMany();
     }
 
-    async createCargoTariff(data: { name: string; basePrice: number; pricePerKm: number; pricePerKg: number; minPrice: number }) {
+    async createCargoTariff(data: { countryCode?: string; name: string; basePrice: number; pricePerKm: number; pricePerKg: number; minPrice: number }) {
+        this.validateFreightTariff(data, true);
         return this.prisma.tariffCargo.create({ data });
     }
 
-    async updateCargoTariff(id: string, data: Partial<{ name: string; basePrice: number; pricePerKm: number; pricePerKg: number; minPrice: number; isActive: boolean }>) {
+    async updateCargoTariff(id: string, data: Partial<{ countryCode: string; name: string; basePrice: number; pricePerKm: number; pricePerKg: number; minPrice: number; isActive: boolean }>) {
+        this.validateFreightTariff(data, false);
         return this.prisma.tariffCargo.update({ where: { id }, data });
+    }
+
+    private validateFreightTariff(data: Record<string, any>, create: boolean) {
+        if ((create || data.name !== undefined) && (typeof data.name !== 'string' || !data.name.trim())) throw new BadRequestException('Tariff name is required');
+        if (data.countryCode !== undefined && !['KZ','RU'].includes(data.countryCode)) throw new BadRequestException('Country must be KZ or RU');
+        if (data.isActive !== undefined && typeof data.isActive !== 'boolean') throw new BadRequestException('Invalid active flag');
+        for (const key of ['basePrice','pricePerKm','pricePerKg','minPrice','doorToDoorFee']) {
+            const required = create && key !== 'doorToDoorFee';
+            if ((required || data[key] !== undefined) && (typeof data[key] !== 'number' || !Number.isFinite(data[key]) || data[key] < 0 || data[key] > 10000000)) throw new BadRequestException(`Invalid tariff amount: ${key}`);
+        }
     }
 
     async deleteCargoTariff(id: string) {
@@ -267,11 +281,13 @@ export class AdminService {
         return this.prisma.tariffDelivery.findMany();
     }
 
-    async createDeliveryTariff(data: { name: string; basePrice: number; pricePerKm: number; pricePerKg: number; minPrice: number; doorToDoorFee: number }) {
+    async createDeliveryTariff(data: { countryCode?: string; name: string; basePrice: number; pricePerKm: number; pricePerKg: number; minPrice: number; doorToDoorFee: number }) {
+        this.validateFreightTariff(data, true);
         return this.prisma.tariffDelivery.create({ data });
     }
 
-    async updateDeliveryTariff(id: string, data: Partial<{ name: string; basePrice: number; pricePerKm: number; pricePerKg: number; minPrice: number; doorToDoorFee: number; isActive: boolean }>) {
+    async updateDeliveryTariff(id: string, data: Partial<{ countryCode: string; name: string; basePrice: number; pricePerKm: number; pricePerKg: number; minPrice: number; doorToDoorFee: number; isActive: boolean }>) {
+        this.validateFreightTariff(data, false);
         return this.prisma.tariffDelivery.update({ where: { id }, data });
     }
 
@@ -665,6 +681,7 @@ export class AdminService {
             const host = key === 'appStoreUrl' ? 'apps.apple.com' : 'play.google.com';
             if (url.protocol !== 'https:' || url.hostname !== host) throw new BadRequestException('Invalid app store URL');
         }
+        if (key === 'orderCommissionPercent' && (!value.trim() || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100)) throw new BadRequestException('Комиссия должна быть от 0 до 100 процентов');
         const setting = await this.prisma.appSettings.upsert({
             where: { key },
             update: { value },
