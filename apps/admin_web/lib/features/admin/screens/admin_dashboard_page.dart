@@ -1,4 +1,5 @@
 import 'admin_trip_reviews_page.dart';
+import '../../../core/utils/csv_export.dart';
 import 'admin_rating_reviews_page.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -31,11 +32,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     setState(() => _loading = true);
     try {
       final snapshot = await _overviewLoader.load();
+      if (!mounted) return;
       setState(() {
         _summary = snapshot.summary;
         _kpis = snapshot.kpis;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _summary = 'Ошибка загрузки: $e');
     } finally {
       if (mounted) {
@@ -207,6 +210,7 @@ class _AdminDriversPageState extends State<AdminDriversPage> {
     try {
       await task();
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = '$action failed: $e');
     } finally {
       if (mounted) {
@@ -228,11 +232,13 @@ class _AdminDriversPageState extends State<AdminDriversPage> {
     setState(() => _loading = true);
     try {
       final res = await AdminApiClient.instance.get('/admin/drivers/pending');
+      if (!mounted) return;
       setState(() {
         _pending = List<dynamic>.from(res.data as List);
         _message = 'Загружено водителей на проверке: ${_pending.length}';
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = 'Ошибка загрузки: $e');
     } finally {
       if (mounted) {
@@ -428,6 +434,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     try {
       await task();
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = '$action: $e');
     } finally {
       if (mounted) {
@@ -473,6 +480,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         _message = 'Загружено пользователей: ${map['total'] ?? _users.length}';
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = 'Ошибка загрузки: $e');
     } finally {
       if (mounted) {
@@ -695,6 +703,7 @@ class _AdminCitiesPageState extends State<AdminCitiesPage> {
     try {
       await task();
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = '$action failed: $e');
     } finally {
       if (mounted) {
@@ -707,11 +716,13 @@ class _AdminCitiesPageState extends State<AdminCitiesPage> {
     setState(() => _loading = true);
     try {
       final res = await AdminApiClient.instance.get('/admin/cities');
+      if (!mounted) return;
       setState(() {
         _cities = List<dynamic>.from(res.data as List);
         _message = 'Загружено городов: ${_cities.length}';
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = 'Ошибка загрузки: $e');
     } finally {
       if (mounted) {
@@ -959,6 +970,7 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
     try {
       await task();
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = '$action failed: $e');
     } finally {
       if (mounted) {
@@ -981,10 +993,11 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
         _city = List<dynamic>.from(cityRes.data as List);
         _cargo = List<dynamic>.from(cargoRes.data as List);
         _delivery = List<dynamic>.from(deliveryRes.data as List);
-        _message = 'Tariffs loaded';
+        _message = 'Тарифы загружены';
       });
     } catch (e) {
-      setState(() => _message = 'Load failed: $e');
+      if (!mounted) return;
+      setState(() => _message = 'Не удалось загрузить данные: $e');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -992,7 +1005,7 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
     }
   }
 
-  Future<void> _createCargo() => _runAction('Create cargo tariff', () async {
+  Future<void> _createCargo() => _runAction('Создать грузовой тариф', () async {
         await AdminApiClient.instance.post('/admin/tariffs/cargo', data: {
           'name': 'Cargo Standard',
           'basePrice': 1500,
@@ -1079,7 +1092,7 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
       _runAction('Deactivate city tariff', () async {
         final id = _cityTariffIdCtrl.text.trim();
         if (id.isEmpty) {
-          setState(() => _message = 'City tariff ID is required');
+          setState(() => _message = 'Укажите ID городского тарифа');
           return;
         }
         await AdminApiClient.instance
@@ -1091,7 +1104,7 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
       _runAction('Deactivate cargo tariff', () async {
         final id = _cargoTariffIdCtrl.text.trim();
         if (id.isEmpty) {
-          setState(() => _message = 'Cargo tariff ID is required');
+          setState(() => _message = 'Укажите ID грузового тарифа');
           return;
         }
         await AdminApiClient.instance
@@ -1103,7 +1116,7 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
       _runAction('Deactivate delivery tariff', () async {
         final id = _deliveryTariffIdCtrl.text.trim();
         if (id.isEmpty) {
-          setState(() => _message = 'Delivery tariff ID is required');
+          setState(() => _message = 'Укажите ID тарифа доставки');
           return;
         }
         await AdminApiClient.instance
@@ -1112,7 +1125,7 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
       });
 
   Future<void> _createDelivery() =>
-      _runAction('Create delivery tariff', () async {
+      _runAction('Создать тариф доставки', () async {
         await AdminApiClient.instance.post('/admin/tariffs/delivery', data: {
           'name': 'Delivery Standard',
           'basePrice': 800,
@@ -1134,7 +1147,7 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
           _StatusBanner(message: _message),
           const SizedBox(height: 16),
           _SectionCard(
-            title: 'Tariff actions',
+            title: 'Управление тарифами',
             trailing: _RefreshButton(
                 onPressed: _loading ? null : _load, loading: _loading),
             child: Column(
@@ -1197,17 +1210,17 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
                 TextField(
                     controller: _cityTariffIdCtrl,
                     decoration: const InputDecoration(
-                        labelText: 'City tariff ID to deactivate')),
+                        labelText: 'ID городского тарифа для отключения')),
                 const SizedBox(height: 12),
                 TextField(
                     controller: _cargoTariffIdCtrl,
                     decoration: const InputDecoration(
-                        labelText: 'Cargo tariff ID to deactivate')),
+                        labelText: 'ID грузового тарифа для отключения')),
                 const SizedBox(height: 12),
                 TextField(
                     controller: _deliveryTariffIdCtrl,
                     decoration: const InputDecoration(
-                        labelText: 'Delivery tariff ID to deactivate')),
+                        labelText: 'ID тарифа доставки для отключения')),
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 8,
@@ -1223,23 +1236,23 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
                         child: const Text('Сохранить изменения тарифа')),
                     FilledButton(
                         onPressed: _busyAction == null ? _createCargo : null,
-                        child: const Text('Create cargo tariff')),
+                        child: const Text('Создать грузовой тариф')),
                     FilledButton(
                         onPressed: _busyAction == null ? _createDelivery : null,
-                        child: const Text('Create delivery tariff')),
+                        child: const Text('Создать тариф доставки')),
                     FilledButton.tonal(
                         onPressed:
                             _busyAction == null ? _deactivateCityTariff : null,
-                        child: const Text('Deactivate city')),
+                        child: const Text('Отключить городской тариф')),
                     FilledButton.tonal(
                         onPressed:
                             _busyAction == null ? _deactivateCargoTariff : null,
-                        child: const Text('Deactivate cargo')),
+                        child: const Text('Отключить грузовой тариф')),
                     FilledButton.tonal(
                         onPressed: _busyAction == null
                             ? _deactivateDeliveryTariff
                             : null,
-                        child: const Text('Deactivate delivery')),
+                        child: const Text('Отключить тариф доставки')),
                   ],
                 ),
               ],
@@ -1260,11 +1273,11 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
                   onEdit: _editCityTariff)),
           const SizedBox(height: 16),
           _SectionCard(
-              title: 'Cargo tariffs',
+              title: 'Грузовые тарифы',
               child: _TariffList(items: _cargo, onDelete: _deleteCargoTariff)),
           const SizedBox(height: 16),
           _SectionCard(
-              title: 'Delivery tariffs',
+              title: 'Тарифы доставки',
               child: _TariffList(
                   items: _delivery, onDelete: _deleteDeliveryTariff)),
         ],
@@ -1305,12 +1318,14 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
     setState(() => _loading = true);
     try {
       final res = await AdminApiClient.instance.get('/admin/settings');
+      if (!mounted) return;
       setState(() {
         _settings = List<dynamic>.from(res.data as List);
-        _message = 'Loaded ${_settings.length} settings';
+        _message = 'Загружено настроек: ${_settings.length}';
       });
     } catch (e) {
-      setState(() => _message = 'Load failed: $e');
+      if (!mounted) return;
+      setState(() => _message = 'Не удалось загрузить настройки: $e');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -1327,7 +1342,8 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
       });
       await _load();
     } catch (e) {
-      setState(() => _message = 'Save failed: $e');
+      if (!mounted) return;
+      setState(() => _message = 'Не удалось сохранить настройку: $e');
     } finally {
       if (mounted) {
         setState(() => _saving = false);
@@ -1338,8 +1354,8 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
   @override
   Widget build(BuildContext context) {
     return AdminShell(
-      title: 'Settings',
-      subtitle: 'Store runtime values without leaving the admin panel.',
+      title: 'Настройки',
+      subtitle: 'Параметры приложения и правила работы сервиса.',
       child: ListView(
         children: [
           _StatusBanner(message: _message),
@@ -1349,14 +1365,15 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
           const _DriverDailyBonusSettingsCard(),
           const SizedBox(height: 16),
           _SectionCard(
-            title: 'Settings editor',
+            title: 'Редактор настроек',
             trailing: _RefreshButton(
                 onPressed: _loading ? null : _load, loading: _loading),
             child: Column(
               children: [
                 TextField(
                     controller: _keyCtrl,
-                    decoration: const InputDecoration(labelText: 'Key')),
+                    decoration:
+                        const InputDecoration(labelText: 'Ключ настройки')),
                 const SizedBox(height: 8),
                 Wrap(spacing: 8, children: [
                   for (final preset in const {
@@ -1382,17 +1399,17 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
                 const SizedBox(height: 12),
                 TextField(
                     controller: _valueCtrl,
-                    decoration: const InputDecoration(labelText: 'Value')),
+                    decoration: const InputDecoration(labelText: 'Значение')),
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 8,
                   children: [
                     FilledButton(
                         onPressed: _saving ? null : _save,
-                        child: const Text('Save setting')),
+                        child: const Text('Сохранить настройку')),
                     OutlinedButton(
                         onPressed: _loading ? null : _load,
-                        child: const Text('Refresh')),
+                        child: const Text('Обновить')),
                   ],
                 ),
               ],
@@ -1400,9 +1417,9 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
           ),
           const SizedBox(height: 16),
           _SectionCard(
-            title: 'Current settings',
+            title: 'Текущие настройки',
             child: _settings.isEmpty
-                ? const Text('No settings found.')
+                ? const Text('Настроек пока нет.')
                 : Column(
                     children: _settings.map((s) {
                       final m = s as Map<String, dynamic>;
@@ -1444,6 +1461,7 @@ class _AdminTopupsPageState extends State<AdminTopupsPage> {
     try {
       await task();
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = '$action failed: $e');
     } finally {
       if (mounted) {
@@ -1456,12 +1474,14 @@ class _AdminTopupsPageState extends State<AdminTopupsPage> {
     setState(() => _loading = true);
     try {
       final res = await AdminApiClient.instance.get('/admin/topups');
+      if (!mounted) return;
       setState(() {
         _topups = List<dynamic>.from(res.data as List);
-        _message = 'Loaded ${_topups.length} topups';
+        _message = 'Загружено пополнений: ${_topups.length}';
       });
     } catch (e) {
-      setState(() => _message = 'Load failed: $e');
+      if (!mounted) return;
+      setState(() => _message = 'Не удалось загрузить данные: $e');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -1486,18 +1506,18 @@ class _AdminTopupsPageState extends State<AdminTopupsPage> {
   @override
   Widget build(BuildContext context) {
     return AdminShell(
-      title: 'Topups',
-      subtitle: 'Approve or reject wallet topups.',
+      title: 'Пополнения',
+      subtitle: 'Проверка заявок на пополнение кошельков.',
       child: ListView(
         children: [
           _StatusBanner(message: _message),
           const SizedBox(height: 16),
           _SectionCard(
-            title: 'Requests',
+            title: 'Заявки',
             trailing: _RefreshButton(
                 onPressed: _loading ? null : _load, loading: _loading),
             child: _topups.isEmpty
-                ? const Text('No topup requests.')
+                ? const Text('Заявок на пополнение пока нет.')
                 : Column(
                     children: _topups.map((t) {
                       final m = t as Map<String, dynamic>;
@@ -1509,21 +1529,29 @@ class _AdminTopupsPageState extends State<AdminTopupsPage> {
                           tileColor: const Color(0xFFF7FAFC),
                           title: Text(
                               'Сумма ${m['amount']} ${rideCurrencySymbol(m)}'),
-                          subtitle: Text('ID ${m['id']} • ${m['status']}'),
-                          trailing: Wrap(
-                            spacing: 8,
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              FilledButton.tonal(
-                                onPressed: _busyAction == null
-                                    ? () => _approve(m['id'] as String)
-                                    : null,
-                                child: const Text('Approve'),
-                              ),
-                              OutlinedButton(
-                                onPressed: _busyAction == null
-                                    ? () => _reject(m['id'] as String)
-                                    : null,
-                                child: const Text('Reject'),
+                              Text('ID ${m['id']} • ${m['status']}'),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                children: [
+                                  FilledButton.tonal(
+                                    onPressed: _busyAction == null &&
+                                            m['status'] == 'PENDING'
+                                        ? () => _approve(m['id'] as String)
+                                        : null,
+                                    child: const Text('Одобрить'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: _busyAction == null &&
+                                            m['status'] == 'PENDING'
+                                        ? () => _reject(m['id'] as String)
+                                        : null,
+                                    child: const Text('Отклонить'),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
@@ -1562,6 +1590,7 @@ class _AdminPayoutsPageState extends State<AdminPayoutsPage> {
     try {
       await task();
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = '$action failed: $e');
     } finally {
       if (mounted) {
@@ -1574,12 +1603,14 @@ class _AdminPayoutsPageState extends State<AdminPayoutsPage> {
     setState(() => _loading = true);
     try {
       final res = await AdminApiClient.instance.get('/admin/payouts');
+      if (!mounted) return;
       setState(() {
         _payouts = List<dynamic>.from(res.data as List);
-        _message = 'Loaded ${_payouts.length} payouts';
+        _message = 'Загружено выплат: ${_payouts.length}';
       });
     } catch (e) {
-      setState(() => _message = 'Load failed: $e');
+      if (!mounted) return;
+      setState(() => _message = 'Не удалось загрузить данные: $e');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -1604,18 +1635,18 @@ class _AdminPayoutsPageState extends State<AdminPayoutsPage> {
   @override
   Widget build(BuildContext context) {
     return AdminShell(
-      title: 'Payouts',
-      subtitle: 'Process driver payout requests.',
+      title: 'Выплаты',
+      subtitle: 'Обработка заявок водителей на вывод средств.',
       child: ListView(
         children: [
           _StatusBanner(message: _message),
           const SizedBox(height: 16),
           _SectionCard(
-            title: 'Requests',
+            title: 'Заявки',
             trailing: _RefreshButton(
                 onPressed: _loading ? null : _load, loading: _loading),
             child: _payouts.isEmpty
-                ? const Text('No payout requests.')
+                ? const Text('Заявок на вывод пока нет.')
                 : Column(
                     children: _payouts.map((p) {
                       final m = p as Map<String, dynamic>;
@@ -1627,21 +1658,29 @@ class _AdminPayoutsPageState extends State<AdminPayoutsPage> {
                           tileColor: const Color(0xFFF7FAFC),
                           title: Text(
                               'Сумма ${m['amount']} ${rideCurrencySymbol(m)}'),
-                          subtitle: Text('ID ${m['id']} • ${m['status']}'),
-                          trailing: Wrap(
-                            spacing: 8,
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              FilledButton.tonal(
-                                onPressed: _busyAction == null
-                                    ? () => _approve(m['id'] as String)
-                                    : null,
-                                child: const Text('Approve'),
-                              ),
-                              OutlinedButton(
-                                onPressed: _busyAction == null
-                                    ? () => _reject(m['id'] as String)
-                                    : null,
-                                child: const Text('Reject'),
+                              Text('ID ${m['id']} • ${m['status']}'),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                children: [
+                                  FilledButton.tonal(
+                                    onPressed: _busyAction == null &&
+                                            m['status'] == 'PENDING'
+                                        ? () => _approve(m['id'] as String)
+                                        : null,
+                                    child: const Text('Одобрить'),
+                                  ),
+                                  OutlinedButton(
+                                    onPressed: _busyAction == null &&
+                                            m['status'] == 'PENDING'
+                                        ? () => _reject(m['id'] as String)
+                                        : null,
+                                    child: const Text('Отклонить'),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
@@ -1679,11 +1718,13 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
     setState(() => _loading = true);
     try {
       final res = await AdminApiClient.instance.get('/admin/orders');
+      if (!mounted) return;
       setState(() {
         _orders = List<dynamic>.from(res.data as List);
         _message = 'Загружено заказов: ${_orders.length}';
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = 'Ошибка загрузки: $e');
     } finally {
       if (mounted) {
@@ -1702,6 +1743,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
       setState(() => _message = 'Статус заказа $id изменён на $status');
       await _load();
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = 'Ошибка смены статуса: $e');
     } finally {
       if (mounted) {
@@ -1747,6 +1789,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         ),
       );
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = 'Ошибка загрузки таймлайна: $e');
     }
   }
@@ -1861,6 +1904,7 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
     try {
       await task();
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = '$action failed: $e');
     } finally {
       if (mounted) {
@@ -1900,10 +1944,11 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
         _jobsByCampaign
           ..clear()
           ..addAll(map);
-        _message = 'Loaded ${_campaigns.length} campaigns';
+        _message = 'Загружено кампаний: ${_campaigns.length}';
       });
     } catch (e) {
-      setState(() => _message = 'Load failed: $e');
+      if (!mounted) return;
+      setState(() => _message = 'Не удалось загрузить данные: $e');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -1913,7 +1958,7 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
 
   Future<void> _create() => _runAction('Create campaign', () async {
         if (_titleCtrl.text.trim().isEmpty || _bodyCtrl.text.trim().isEmpty) {
-          setState(() => _message = 'Title and body are required');
+          setState(() => _message = 'Укажите заголовок и текст уведомления');
           return;
         }
         await AdminApiClient.instance.post('/admin/notifications', data: {
@@ -2090,11 +2135,13 @@ class _AdminFinanceAuditPageState extends State<AdminFinanceAuditPage> {
       }
       final res = await AdminApiClient.instance
           .get('/admin/wallet-transactions', query: q);
+      if (!mounted) return;
       setState(() {
         _items = List<dynamic>.from(res.data as List);
         _message = 'Загружено транзакций кошелька: ${_items.length}';
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = 'Ошибка загрузки: $e');
     } finally {
       if (mounted) {
@@ -2118,9 +2165,14 @@ class _AdminFinanceAuditPageState extends State<AdminFinanceAuditPage> {
           .get('/admin/reports/wallet-transactions/csv', query: q);
       final map = Map<String, dynamic>.from(res.data as Map);
       final csv = (map['csv'] ?? '').toString();
-      final rows = csv.isEmpty ? 0 : '\n'.allMatches(csv).length + 1;
-      setState(() => _message = 'CSV готов: $rows строк');
+      final downloaded =
+          await exportCsv(csv, filename: 'wallet-transactions.csv');
+      if (!mounted) return;
+      setState(() => _message = downloaded
+          ? 'CSV скачан: wallet-transactions.csv'
+          : 'CSV готов и скопирован в буфер обмена');
     } catch (e) {
+      if (!mounted) return;
       setState(() => _message = 'Ошибка экспорта CSV: $e');
     } finally {
       if (mounted) {

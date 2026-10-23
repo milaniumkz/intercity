@@ -219,6 +219,14 @@ class ApiClient {
 
   bool _shouldAttemptRefresh(DioException error) {
     if (error.response?.statusCode != 401) return false;
+    // An authenticated password check can fail while the session is valid.
+    // Preserve that error instead of retrying it as an expired access token.
+    final body = error.response?.data;
+    if (error.requestOptions.path.endsWith('/auth/change-password') &&
+        body is Map &&
+        body['message'] == 'Неверный текущий пароль') {
+      return false;
+    }
     if (error.requestOptions.extra[_retriedRequestKey] == true) return false;
     if (error.requestOptions.extra[_skipRefreshKey] == true) return false;
     return !_isNonRefreshableRequest(error.requestOptions.path);

@@ -161,6 +161,9 @@ String? _translateServerMessage(String? message) {
   if (lower.contains('phone already registered')) {
     return t('Этот номер уже зарегистрирован.', 'Бұл нөмір тіркеліп қойған.');
   }
+  if (lower.contains('неверный текущий пароль')) {
+    return t('Неверный текущий пароль.', 'Қазіргі құпия сөз қате.');
+  }
   if (lower.contains('invalid credentials')) {
     return t(
       'Неверный номер телефона или пароль.',

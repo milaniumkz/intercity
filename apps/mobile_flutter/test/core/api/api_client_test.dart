@@ -68,6 +68,36 @@ void main() {
   });
 
   group('ApiClient refresh flow', () {
+    test('wrong current password preserves the authenticated session',
+        () async {
+      final store = _MemoryTokenStore()
+        ..values[AppConstants.accessTokenKey] = 'valid-access'
+        ..values[AppConstants.refreshTokenKey] = 'valid-refresh';
+      var refreshCalls = 0;
+      final apiDio = _buildMockDio((options) async {
+        expect(options.headers['Authorization'], 'Bearer valid-access');
+        if (options.path == '/auth/change-password') {
+          return _jsonBody({'message': 'Неверный текущий пароль'},
+              statusCode: 401);
+        }
+        return _jsonBody({'id': 'user'});
+      });
+      final refresh = _buildMockDio((_) async {
+        refreshCalls++;
+        return _jsonBody({}, statusCode: 401);
+      });
+      final client = ApiClient(
+          dio: apiDio,
+          refreshDio: refresh,
+          tokenStore: store,
+          baseUrl: 'https://api.example.com/api');
+      await expectLater(client.post('/auth/change-password', data: {}),
+          throwsA(isA<DioException>()));
+      expect(refreshCalls, 0);
+      expect(store.values[AppConstants.accessTokenKey], 'valid-access');
+      expect((await client.get('/me')).data['id'], 'user');
+    });
+
     test('reuses one refresh request for concurrent unauthorized calls',
         () async {
       final store = _MemoryTokenStore()

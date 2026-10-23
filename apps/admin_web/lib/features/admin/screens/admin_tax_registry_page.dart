@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../../core/utils/csv_export.dart';
 import 'package:dio/dio.dart';
-import 'package:flutter/services.dart';
 import '../../../core/api/admin_api_client.dart';
 import 'admin_dashboard_page.dart';
 
@@ -305,11 +305,12 @@ class _AdminTaxRegistryPageState extends State<AdminTaxRegistryPage> {
       final response = await AdminApiClient.instance.get(
           '/admin/tax/registry/csv',
           query: {'period': _period.text.trim(), 'kind': widget.kind});
-      await Clipboard.setData(ClipboardData(text: '${response.data['csv']}'));
+      final downloaded = await exportCsv('${response.data['csv']}',
+          filename: 'tax-registry-${widget.kind}-${_period.text.trim()}.csv');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(
-                'Учётный CSV с ИИН скопирован. Доступ записан в журнал. Это не сдача отчёта в КГД.')));
+                'Учётный CSV с ИИН ${downloaded ? 'скачан' : 'скопирован'}. Доступ записан в журнал. Это не сдача отчёта в КГД.')));
       }
     } catch (e) {
       if (mounted) {

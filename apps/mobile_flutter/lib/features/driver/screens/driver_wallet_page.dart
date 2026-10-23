@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:go_router/go_router.dart';
 
 import 'package:flutter/material.dart';
 import 'package:intercity_shared/intercity_shared.dart';
@@ -642,28 +643,33 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
             ],
           ),
           const SizedBox(height: 14),
-          _bonusLine(
-            icon: Icons.trending_up_rounded,
-            title: 'Начисление бонусов',
-            subtitle: 'За завершённые поездки и активность',
-            value: '+120',
-            positive: true,
-          ),
-          _bonusLine(
-            icon: Icons.rocket_launch_rounded,
-            title: 'Списание бонусов',
-            subtitle: 'Поднятие заявки в топ',
-            value: '-80',
-            positive: false,
-          ),
+          if ((_wallet?['transactions'] as List? ?? [])
+              .whereType<Map>()
+              .where((row) => row['balanceSource'] == 'BONUS')
+              .isEmpty)
+            const Text('Бонусных операций пока нет')
+          else
+            for (final row in (_wallet?['transactions'] as List? ?? [])
+                .whereType<Map>()
+                .where((row) => row['balanceSource'] == 'BONUS')
+                .take(3))
+              _bonusLine(
+                icon: row['direction'] == 'DEBIT'
+                    ? Icons.trending_down_rounded
+                    : Icons.trending_up_rounded,
+                title: row['direction'] == 'DEBIT'
+                    ? 'Списание бонусов'
+                    : 'Начисление бонусов',
+                subtitle: (row['note'] ?? 'Бонусная операция').toString(),
+                value:
+                    '${row['direction'] == 'DEBIT' ? '-' : '+'}${_moneyText(row['amount'])}',
+                positive: row['direction'] != 'DEBIT',
+              ),
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => setState(
-                () =>
-                    _message = 'Бонусы можно использовать для поднятия в топ.',
-              ),
+              onPressed: () => context.go('/driver/trip-create'),
               icon: const Icon(Icons.rocket_launch_rounded),
               label: const Text('Поднять заявку в топ за бонусы'),
             ),
@@ -1052,15 +1058,19 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
           (_routeStage('seed') && _currency == 'KZT' ? 540 : 0),
     );
     final payout = _moneyText(
-      _wallet?['payout'] ??
+      _wallet?['withdrawable'] ??
+          _wallet?['payout'] ??
           _wallet?['availablePayout'] ??
           (_routeStage('seed') && _currency == 'KZT' ? 5130 : 0),
     );
-    final earned = _moneyText(
-      _wallet?['earnedTotal'] ??
-          _wallet?['totalEarned'] ??
-          (_routeStage('seed') && _currency == 'KZT' ? 45680 : 0),
-    );
+    final earnedRaw = _wallet?['earnedTotal'] ?? _wallet?['totalEarned'];
+    final earned = earnedRaw == null && !_routeStage('seed')
+        ? '—'
+        : _moneyText(
+            _wallet?['earnedTotal'] ??
+                _wallet?['totalEarned'] ??
+                (_routeStage('seed') && _currency == 'KZT' ? 45680 : 0),
+          );
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       bottomNavigationBar: const DriverBottomNav(currentIndex: 2),
@@ -1147,8 +1157,8 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
                           'К выплате', '$payout $_currencySymbol')),
                   const SizedBox(width: 8),
                   Expanded(
-                      child: _boardStatCard(
-                          'Всего заработано', '$earned $_currencySymbol')),
+                      child: _boardStatCard('Всего заработано',
+                          earned == '—' ? '—' : '$earned $_currencySymbol')),
                 ],
               ),
               const SizedBox(height: 10),
@@ -1423,8 +1433,10 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
           icon: Icons.trending_up_rounded,
           iconColor: const Color(0xFF7C2DFF),
           title: 'Всего заработано',
-          subtitle: 'Сумма завершённых поездок',
-          amount: '$earned $_currencySymbol',
+          subtitle: earned == '—'
+              ? 'Подробности в разделе «Заработок» профиля'
+              : 'Сумма завершённых поездок',
+          amount: earned == '—' ? '—' : '$earned $_currencySymbol',
           amountColor: const Color(0xFF7C2DFF),
           time: 'всего',
         ),

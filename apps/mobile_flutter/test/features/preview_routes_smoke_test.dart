@@ -644,13 +644,13 @@ void main() {
       (tester) async {
     await tapTextAndExpect(
       tester,
-      startRoute: '/orders-history',
+      startRoute: '/orders-history/seed',
       tapText: 'Завершенные',
       expectedText: 'Завершена',
     );
     await tapTextAndExpect(
       tester,
-      startRoute: '/orders-history',
+      startRoute: '/orders-history/seed',
       tapText: 'Маршрут',
       expectedText: 'Поездка',
     );

@@ -1,4 +1,5 @@
 import '../../../core/widgets/account_deletion_dialog.dart';
+import '../../../core/widgets/password_change_dialog.dart';
 import '../../referral/widgets/referral_profile_entry.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -996,7 +997,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
               _boardSupportQuestion('Тарифы и цены'),
               const SizedBox(height: 14),
               ICGradientButton(
-                label: 'Создать обращение',
+                label: 'Скопировать шаблон обращения',
                 onPressed: _createSupportRequestDraft,
               ),
               const SizedBox(height: 12),
@@ -1069,7 +1070,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
       'Как получить чек?' =>
         'Чек доступен в истории поездок после завершения заказа.',
       'Проблема с водителем' =>
-        'Создайте обращение с номером поездки или позвоните в поддержку.',
+        'Сохраните номер поездки и описание проблемы для обращения в поддержку.',
       'Тарифы и цены' => 'Цена зависит от маршрута, класса авто и типа заказа.',
       _ => 'Создайте обращение, и поддержка ответит по этому вопросу.',
     };
@@ -1125,8 +1126,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
                     title: (_user?['phone'] ?? 'Телефон не указан').toString(),
                     value: '',
                     onTap: () => setState(
-                      () =>
-                          _message = 'Телефон меняется через профиль аккаунта.',
+                      () => _message =
+                          'Изменение номера требует подтверждения владельца. Обратитесь к администратору.',
                     ),
                   ),
                   _boardSettingsRow(
@@ -1148,9 +1149,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
                     icon: Icons.verified_user_outlined,
                     title: 'Безопасность',
                     value: '',
-                    onTap: () => setState(
-                      () => _message = 'Вход защищён паролем и токеном сессии.',
-                    ),
+                    onTap: () => showPasswordChangeDialog(context, _api),
                   ),
                 ],
               ),
@@ -1578,7 +1577,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
                                     AppTheme.primaryColor,
                                   ),
                                   _infoChip(
-                                    'Premium',
+                                    'Пассажир',
                                     AppTheme.secondaryColor,
                                   ),
                                 ],
@@ -2247,7 +2246,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: const Text(
-                            'Premium',
+                            'Пассажир',
                             style: TextStyle(
                               color: AppTheme.primaryColor,
                               fontSize: 11,
@@ -2265,8 +2264,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
               const SizedBox(height: 12),
               _boardProfileRow(
                 icon: Icons.location_on_outlined,
-                title: 'Избранные адреса',
-                value: 'Открыть',
+                title: 'Заказать поездку',
+                value: 'Выбрать адреса',
                 onTap: () => context.go('/order/address'),
               ),
               _boardProfileRow(
@@ -2298,7 +2297,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
               _boardProfileRow(
                 icon: Icons.info_outline_rounded,
                 title: 'О приложении',
-                value: 'Версия 2.4.1',
+                value: 'О сервисе',
                 onTap: _openAboutInfo,
               ),
               TextButton.icon(
