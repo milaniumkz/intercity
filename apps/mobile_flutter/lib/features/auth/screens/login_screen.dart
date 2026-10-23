@@ -162,131 +162,140 @@ class _LoginScreenState extends State<LoginScreen> {
               final compact = constraints.maxHeight < 720;
               return ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 430),
-                child: Form(
-                  key: _formKey,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: _CircleBackButton(
-                            onTap: () => context.go('/register'),
-                          ),
-                        ),
-                        const Spacer(flex: 2),
-                        Text(
-                          'Войдите\nв аккаунт',
-                          style: theme.textTheme.headlineMedium?.copyWith(
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0,
-                            fontSize: 30,
-                            height: 1.08,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          'Введите номер телефона и пароль, чтобы продолжить.',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                            height: 1.35,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        SizedBox(height: compact ? 18 : 26),
-                        TextFormField(
-                          controller: _phoneController,
-                          keyboardType: TextInputType.phone,
-                          decoration: _inputDecoration(
-                            hintText: '(999) 123-45-67',
-                            icon: Icons.flag_rounded,
-                            compact: compact,
-                            prefixText: '+7 ',
-                          ),
-                          inputFormatters: <TextInputFormatter>[
-                            KzLocalPhoneInputFormatter(),
-                          ],
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Введите телефон';
-                            }
-                            if (!isValidKzPhone(normalizeKzLocalPhone(value))) {
-                              return 'Формат: (###) ###-##-##';
-                            }
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: 16),
-                        TextFormField(
-                          controller: _passwordController,
-                          obscureText: !_showPassword,
-                          keyboardType: TextInputType.visiblePassword,
-                          textInputAction: TextInputAction.done,
-                          onFieldSubmitted: (_) {
-                            if (!_isLoading) _login();
-                          },
-                          decoration: _inputDecoration(
-                            hintText: 'Пароль',
-                            icon: Icons.lock_outline_rounded,
-                            compact: compact,
-                            suffixIcon: IconButton(
-                              onPressed: () => setState(
-                                () => _showPassword = !_showPassword,
+                child: SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints:
+                        BoxConstraints(minHeight: constraints.maxHeight),
+                    child: IntrinsicHeight(
+                      child: Form(
+                        key: _formKey,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: _CircleBackButton(
+                                  onTap: () => context.go('/register'),
+                                ),
                               ),
-                              icon: Icon(
-                                _showPassword
-                                    ? Icons.visibility_off_rounded
-                                    : Icons.visibility_rounded,
-                                color: theme.colorScheme.onSurfaceVariant,
+                              const Spacer(flex: 2),
+                              Text(
+                                'Войдите\nв аккаунт',
+                                style: theme.textTheme.headlineMedium?.copyWith(
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0,
+                                  fontSize: 30,
+                                  height: 1.08,
+                                ),
                               ),
-                            ),
+                              const SizedBox(height: 10),
+                              Text(
+                                'Введите номер телефона и пароль, чтобы продолжить.',
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                  height: 1.35,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              SizedBox(height: compact ? 18 : 26),
+                              TextFormField(
+                                controller: _phoneController,
+                                keyboardType: TextInputType.phone,
+                                decoration: _inputDecoration(
+                                  hintText: '(999) 123-45-67',
+                                  icon: Icons.flag_rounded,
+                                  compact: compact,
+                                  prefixText: '+7 ',
+                                ),
+                                inputFormatters: <TextInputFormatter>[
+                                  KzLocalPhoneInputFormatter(),
+                                ],
+                                validator: (value) {
+                                  if (value == null || value.isEmpty) {
+                                    return 'Введите телефон';
+                                  }
+                                  if (!isValidKzPhone(
+                                      normalizeKzLocalPhone(value))) {
+                                    return 'Формат: (###) ###-##-##';
+                                  }
+                                  return null;
+                                },
+                              ),
+                              const SizedBox(height: 16),
+                              TextFormField(
+                                controller: _passwordController,
+                                obscureText: !_showPassword,
+                                keyboardType: TextInputType.visiblePassword,
+                                textInputAction: TextInputAction.done,
+                                onFieldSubmitted: (_) {
+                                  if (!_isLoading) _login();
+                                },
+                                decoration: _inputDecoration(
+                                  hintText: 'Пароль',
+                                  icon: Icons.lock_outline_rounded,
+                                  compact: compact,
+                                  suffixIcon: IconButton(
+                                    onPressed: () => setState(
+                                      () => _showPassword = !_showPassword,
+                                    ),
+                                    icon: Icon(
+                                      _showPassword
+                                          ? Icons.visibility_off_rounded
+                                          : Icons.visibility_rounded,
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ),
+                                validator: (value) {
+                                  if (value == null || value.isEmpty) {
+                                    return 'Введите пароль';
+                                  }
+                                  if (value.length < 6) {
+                                    return 'Минимум 6 символов';
+                                  }
+                                  return null;
+                                },
+                              ),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: ICPremiumTextButton(
+                                  label: 'Забыли пароль?',
+                                  onPressed: _isLoading
+                                      ? null
+                                      : () => context.push('/forgot-password'),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              ICGradientButton(
+                                label: 'Войти',
+                                loading: _isLoading,
+                                onPressed: _isLoading ? null : _login,
+                              ),
+                              const SizedBox(height: 18),
+                              Text(
+                                'Продолжая, вы соглашаетесь с Условиями использования и Политикой конфиденциальности.',
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                  height: 1.3,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const Spacer(flex: 3),
+                              ICPremiumTextButton(
+                                label: 'Создать аккаунт',
+                                icon: Icons.person_add_alt_1_rounded,
+                                onPressed: _isLoading
+                                    ? null
+                                    : () => context.push('/register'),
+                              ),
+                            ],
                           ),
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Введите пароль';
-                            }
-                            if (value.length < 6) {
-                              return 'Минимум 6 символов';
-                            }
-                            return null;
-                          },
                         ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: ICPremiumTextButton(
-                            label: 'Забыли пароль?',
-                            onPressed: _isLoading
-                                ? null
-                                : () => context.push('/forgot-password'),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        ICGradientButton(
-                          label: 'Войти',
-                          loading: _isLoading,
-                          onPressed: _isLoading ? null : _login,
-                        ),
-                        const SizedBox(height: 18),
-                        Text(
-                          'Продолжая, вы соглашаетесь с Условиями использования и Политикой конфиденциальности.',
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                            height: 1.3,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const Spacer(flex: 3),
-                        ICPremiumTextButton(
-                          label: 'Создать аккаунт',
-                          icon: Icons.person_add_alt_1_rounded,
-                          onPressed: _isLoading
-                              ? null
-                              : () => context.push('/register'),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
