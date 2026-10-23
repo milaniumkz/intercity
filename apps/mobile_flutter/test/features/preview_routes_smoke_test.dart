@@ -85,6 +85,15 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('document progress never invents uploaded documents',
+      (tester) async {
+    await pumpProductionRoute(tester, '/driver/verification/docs');
+    expect(find.text('0%'), findsOneWidget);
+    expect(find.text('75%'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   final cases = <(String, String)>[
     ('/onboarding', 'Поездки'),
     ('/onboarding/intercity', 'Межгород'),

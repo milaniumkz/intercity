@@ -42,6 +42,16 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
   bool _loading = false;
   String? _docUploadingType;
   final Set<String> _uploadedDocTypes = {};
+  static const _requiredDocumentTypes = {
+    'passport',
+    'driverLicense',
+    'techPassportFront'
+  };
+  int get _uploadedRequiredCount =>
+      _requiredDocumentTypes.where(_uploadedDocTypes.contains).length;
+  double get _documentUploadProgress =>
+      _uploadedRequiredCount / _requiredDocumentTypes.length;
+
   String? _boardStageOverride;
   static const _docTypes = [
     ('selfie', Icons.person_pin_rounded, 'Селфи'),
@@ -83,7 +93,8 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
       if (mounted &&
           profile is Map &&
           profile['status'] != 'REJECTED' &&
-          (profile['activities'] as List? ?? []).contains('49320')) {
+          (profile['kind'] == 'INDIVIDUAL' ||
+              (profile['activities'] as List? ?? []).contains('49320'))) {
         setState(() => _taxSaved = true);
       }
     } catch (_) {/* Form remains available for a new declaration. */}
@@ -727,7 +738,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Проверка аккаунта',
+                          'Загрузка документов',
                           style: TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w900,
@@ -735,7 +746,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Повышайте уровень и получайте больше заказов',
+                          'Прогресс загрузки обязательных документов',
                           style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.78),
                             fontSize: 12,
@@ -748,7 +759,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
                           borderRadius: BorderRadius.circular(99),
                           child: LinearProgressIndicator(
                             minHeight: 5,
-                            value: 0.75,
+                            value: _documentUploadProgress,
                             color: Colors.white,
                             backgroundColor:
                                 Colors.white.withValues(alpha: 0.22),
@@ -758,9 +769,9 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
                     ),
                   ),
                   const SizedBox(width: 16),
-                  const Text(
-                    '75%',
-                    style: TextStyle(
+                  Text(
+                    '${(_documentUploadProgress * 100).round()}%',
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 30,
                       fontWeight: FontWeight.w900,
@@ -1358,9 +1369,9 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Text(
-                  '75%',
-                  style: TextStyle(
+                child: Text(
+                  '${(_documentUploadProgress * 100).round()}%',
+                  style: const TextStyle(
                     color: AppTheme.primaryColor,
                     fontWeight: FontWeight.w900,
                     fontSize: 22,
@@ -1379,7 +1390,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
                   margin: EdgeInsets.only(right: index == 2 ? 0 : 8),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(
-                      alpha: index < 3 ? 0.92 : 0.22,
+                      alpha: index < _uploadedRequiredCount ? 0.92 : 0.22,
                     ),
                     borderRadius: BorderRadius.circular(999),
                   ),
@@ -1392,7 +1403,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
             borderRadius: BorderRadius.circular(999),
             child: LinearProgressIndicator(
               minHeight: 7,
-              value: 0.75,
+              value: _documentUploadProgress,
               backgroundColor: Colors.white.withValues(alpha: 0.18),
               valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
             ),
