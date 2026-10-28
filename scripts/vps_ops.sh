@@ -116,6 +116,23 @@ const {routeRequestTimeRange,routeMatchesRequestSchedule}=require('./dist/src/co
 JSDELIVERYAUDIT
       exit 0
     fi
+    if [[ "$TARGET" == "passenger-login-87785419702" ]]; then
+      docker exec -i intercity-backend node <<'JSPASSLOGIN'
+const {PrismaClient}=require('@prisma/client');const bcrypt=require('bcrypt');
+(async()=>{const p=new PrismaClient();try{await p.$transaction(async db=>{
+ await db.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+ const users=await db.user.findMany({where:{phone:{in:['+77785419702','77785419702','87785419702','7785419702']}},select:{id:true,phone:true,name:true,role:true,password:true,blockedAt:true,mustChangePassword:true,authVersion:true,createdAt:true,updatedAt:true}});
+ console.log(JSON.stringify({kind:'login-account-count',count:users.length}));
+ for(const u of users){let validHash=false;try{validHash=bcrypt.getRounds(u.password)>=4}catch(_){}
+ const sessions=await db.refreshToken.aggregate({where:{userId:u.id},_count:true,_max:{createdAt:true}});
+ console.log(JSON.stringify({kind:'login-account',id:u.id,canonicalPhone:u.phone==='+77785419702',phoneLast4:u.phone.slice(-4),name:u.name,role:u.role,blocked:!!u.blockedAt,mustChangePassword:u.mustChangePassword,authVersion:u.authVersion,passwordHashValid:validHash,createdAt:u.createdAt,updatedAt:u.updatedAt,sessions}));
+ const events=await db.techEvent.findMany({where:{userId:u.id,at:{gte:new Date(Date.now()-86400000)}},orderBy:{at:'desc'},take:20,select:{at:true,action:true,stage:true,result:true,status:true,message:true}});console.log(JSON.stringify({kind:'account-events',userId:u.id,events}));
+ }
+ const failed=await db.techEvent.findMany({where:{action:{contains:'/auth/login'},at:{gte:new Date(Date.now()-3600000)}},orderBy:{at:'desc'},take:20,select:{at:true,action:true,result:true,status:true,message:true}});console.log(JSON.stringify({kind:'recent-login-results',events:failed}));
+ },{timeout:30000})}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSPASSLOGIN
+      exit 0
+    fi
     if [[ "$TARGET" == "tax" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-backend node <<'JSTAXSTATUS'
