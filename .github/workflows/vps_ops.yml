@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - status
+          - reset-passenger-password
           - enable-kz-tax-accounting
           - enable-demo-topups
           - seed-city-tariffs

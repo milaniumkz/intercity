@@ -87,6 +87,37 @@ const p=new PrismaClient();
 })().catch(()=>{console.error('Demo topup operation failed');process.exitCode=1}).finally(()=>p.$disconnect());
 JSENABLEDEMO
     ;;
+  reset-passenger-password)
+    IFS=: read -r expected account_id password_hex <<< "$TARGET"
+    [[ "$expected" =~ ^[0-9a-f]{40}$ && "$account_id" =~ ^[0-9a-f-]{36}$ && "$password_hex" =~ ^[0-9a-f]{120}$ ]] || { echo 'Invalid recovery target'; exit 1; }
+    test "$(cat "$APP_ROOT/current_commit")" = "$expected"
+    test "$(sha256sum "$APP_ROOT/current/backend/src/auth/auth.service.ts" | cut -d' ' -f1)" = "1e24276bbf01c55db55e1828a7321eddb10b7c7eedddeaab6ef92cd2caefda80"
+    test "$(sha256sum "$APP_ROOT/current/backend/src/auth/jwt-auth.guard.ts" | cut -d' ' -f1)" = "3dc812c964a0c21dc449043507f8c5cb30b45b70a7dd05a3950b1bcc3670d8c5"
+    umask 077
+    backup="$APP_ROOT/backups/$(date -u +%Y%m%d-%H%M%S)-passenger-recovery"
+    mkdir -p "$backup"
+    docker exec intercity-postgres sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup/database.dump"
+    test -s "$backup/database.dump"
+    docker exec -i intercity-postgres pg_restore --list < "$backup/database.dump" > "$backup/contents.txt"
+    test -s "$backup/contents.txt"
+    echo "Authentication source and database backup verified: $backup"
+    docker exec -i intercity-backend node - "$account_id" "$password_hex" <<'JSRECOVERPASS'
+const {PrismaClient}=require('@prisma/client'),bcrypt=require('bcrypt'),{randomUUID}=require('crypto');
+(async()=>{const p=new PrismaClient();try{
+ const id=process.argv[2],hash=Buffer.from(process.argv[3],'hex').toString('utf8');if(bcrypt.getRounds(hash)!==12)throw Error('Expected bcrypt cost 12');
+ const result=await p.$transaction(async tx=>{
+  const user=await tx.user.findUnique({where:{id}});if(!user||user.role!=='PASSENGER'||user.blockedAt||!user.phone.endsWith('9702'))throw Error('Expected active passenger account not found');
+  const fresh=await tx.user.update({where:{id},data:{password:hash,mustChangePassword:true,authVersion:{increment:1}},select:{id:true,mustChangePassword:true,authVersion:true}});
+  const revoked=await tx.refreshToken.deleteMany({where:{userId:id}});
+  await tx.techEvent.create({data:{userId:id,objectId:id,requestId:randomUUID(),action:'ACCOUNT_RECOVERY_OWNER_REQUEST',stage:'FINISH',result:'SUCCESS',status:200,details:{mustChangePassword:true,authVersion:fresh.authVersion,revokedSessions:revoked.count}}});
+  return {...fresh,revokedSessions:revoked.count};
+ });
+ console.log(JSON.stringify({passwordReset:true,...result}));
+ const check=await p.user.findUnique({where:{id},select:{password:true,mustChangePassword:true}});if(check.password!==hash||!check.mustChangePassword)throw Error('Recovery verification failed');
+ console.log('Temporary password hash stored; mandatory change enabled; previous tokens revoked');
+ }finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSRECOVERPASS
+    ;;
   status)
     if [[ "$TARGET" == "delivery-oleg" ]]; then
       cat "$APP_ROOT/current_commit"
