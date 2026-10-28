@@ -88,6 +88,34 @@ const p=new PrismaClient();
 JSENABLEDEMO
     ;;
   status)
+    if [[ "$TARGET" == "delivery-oleg" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSDELIVERYAUDIT'
+const {PrismaClient}=require('@prisma/client');
+const {driverPerformance}=require('./dist/src/common/driver-performance');
+const {routeRequestTimeRange,routeMatchesRequestSchedule}=require('./dist/src/common/driver-route-schedule');
+(async()=>{const p=new PrismaClient();try {await p.$transaction(async db=>{
+ await db.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+ const users=await db.user.findMany({where:{name:{contains:'Олег',mode:'insensitive'},driverProfile:{isNot:null}},select:{id:true,name:true,phone:true,role:true,wallet:{select:{money:true,moneyRub:true}},driverProfile:{include:{online:{include:{city:true}},serviceStats:true,intercityRoutes:true}}},take:20});
+ const since=new Date(Date.now()-3*86400000);
+ const requests=await db.intercityRequest.findMany({where:{requestType:{startsWith:'DELIVERY'},OR:[{status:'OPEN'},{createdAt:{gte:since}}]},orderBy:{createdAt:'desc'},take:30,include:{offers:{select:{driverId:true,status:true,createdAt:true}},priorityWindow:true}});
+ const orders=await db.order.findMany({where:{mode:'DELIVERY',OR:[{status:'SEARCHING_DRIVER'},{createdAt:{gte:since}}]},orderBy:{createdAt:'desc'},take:20,select:{id:true,passengerId:true,status:true,requestType:true,cityId:true,fromLat:true,fromLng:true,price:true,currency:true,createdAt:true,scheduledFor:true,dispatchDriverId:true,dispatchExpiresAt:true,dispatchTriedDriverIds:true}});
+ console.log(JSON.stringify({kind:'summary',at:new Date(),drivers:users.length,deliveryRequests:requests.length,deliveryOrders:orders.length}));
+ const activeStatuses=['DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'];
+ for(const u of users){const d=u.driverProfile,o=d.online,city=o?.city,lat=o?.lastLat??city?.lat,lng=o?.lastLng??city?.lng;
+ const activeOrders=await db.order.findMany({where:{driverId:d.id,status:{in:activeStatuses}},select:{id:true,mode:true,status:true}});
+ const activeRequests=await db.intercityRequest.findMany({where:{selectedDriverId:u.id,status:{in:['ACCEPTED',...activeStatuses]}},select:{id:true,requestType:true,status:true}});
+ console.log(JSON.stringify({kind:'driver',userId:u.id,driverId:d.id,name:u.name,phoneLast4:u.phone.slice(-4),role:u.role,status:d.status,delivery:d.acceptDelivery,cityFixed:d.acceptCityFixed,cityAuction:d.acceptCityAuction,intercity:d.acceptIntercity,cargo:d.acceptCargo,online:o?.isOnline,city:city?.name,cityId:o?.cityId,lastLocationAt:o?.lastLocationAt,hasLocation:lat!=null&&lng!=null,activity:driverPerformance(d).activity,wallet:u.wallet,activeOrders,activeRequests,routes:d.intercityRoutes.map(r=>({id:r.id,from:r.fromCity,to:r.toCity,active:r.isActive,seats:r.seatsAvailable,departureAt:r.departureAt,offset:r.departureOffsetMinutes,validSchedule:!!routeRequestTimeRange(r)}))}));
+ for(const r of requests){const local=r.requestType==='DELIVERY_CITY';const bounding=lat!=null&&lng!=null&&r.fromLat!=null&&r.fromLng!=null&&r.fromLat>=lat-0.1&&r.fromLat<=lat+0.1&&r.fromLng>=lng-0.15&&r.fromLng<=lng+0.15;
+ const cityFallback=r.fromLat==null&&!!city?.name&&r.fromCity.toLowerCase().includes(city.name.toLowerCase());
+ console.log(JSON.stringify({kind:'request',driverId:d.id,id:r.id,type:r.requestType,status:r.status,from:r.fromCity,to:r.toCity,date:r.date,createdAt:r.createdAt,price:r.price,currency:r.currency,seats:r.seats,ownRequest:r.passengerId===u.id,selectedThisDriver:r.selectedDriverId===u.id,localOnlineReady:!!(o?.isOnline&&city),insideCityBounds:bounding,cityFallback,routeMatches:d.intercityRoutes.filter(t=>t.isActive&&t.seatsAvailable>=r.seats&&routeMatchesRequestSchedule(t,r)&&r.fromCity.toLowerCase().startsWith(t.fromCity.toLowerCase())&&r.toCity.toLowerCase().startsWith(t.toCity.toLowerCase())).map(t=>t.id),offers:r.offers.filter(a=>a.driverId===u.id),priority:r.priorityWindow}));}
+ for(const r of orders){const {fromLat,fromLng,dispatchTriedDriverIds,...safe}=r;console.log(JSON.stringify({kind:'order',driverId:d.id,...safe,ownRequest:r.passengerId===u.id,dispatchedThisDriver:r.dispatchDriverId===d.id,triedThisDriver:dispatchTriedDriverIds.includes(d.id),sameCity:r.cityId===o?.cityId}));}
+ }
+ const settings=await db.appSettings.findMany({where:{key:{in:['searchRadiusKm','driverMinOnlineBalance','driverAutoAcceptEnabled','kzTaxEnabled','driverRouteTopPolicy']}}});console.log(JSON.stringify({kind:'settings',settings}));
+ },{timeout:60000});}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSDELIVERYAUDIT
+      exit 0
+    fi
     if [[ "$TARGET" == "tax" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-backend node <<'JSTAXSTATUS'
