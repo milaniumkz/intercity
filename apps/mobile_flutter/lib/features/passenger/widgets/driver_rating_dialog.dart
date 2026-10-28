@@ -287,6 +287,7 @@ class _DriverRatingDialogState extends State<_DriverRatingDialog> {
                           const SizedBox(width: 10),
                         ],
                         Expanded(
+                          flex: widget.allowSkip ? 2 : 1,
                           child: ICGradientButton(
                             label: 'Отправить',
                             loading: _submitting,
