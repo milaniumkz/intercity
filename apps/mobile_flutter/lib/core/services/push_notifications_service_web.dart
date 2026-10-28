@@ -1,3 +1,4 @@
+import 'chat_message_notices.dart';
 import 'dart:async';
 import 'dart:js_interop';
 
@@ -212,6 +213,7 @@ class PushNotificationsService {
               title,
               web.NotificationOptions(
                 body: body,
+                silent: payload['type'] == 'chat_message',
                 icon: '/icons/Icon-192.png',
                 tag: tag,
                 renotify: true,
@@ -225,6 +227,7 @@ class PushNotificationsService {
           title,
           web.NotificationOptions(
               body: body,
+              silent: payload['type'] == 'chat_message',
               icon: '/icons/Icon-192.png',
               tag: tag,
               data: payload.jsify()));
@@ -243,6 +246,11 @@ class PushNotificationsService {
   }
 
   Future<void> _onForegroundMessage(RemoteMessage message) async {
+    if (message.data['type'] == 'chat_message') {
+      await ChatMessageNotices.shared
+          .notify(Map<String, dynamic>.from(message.data));
+      return;
+    }
     _payloadStreamController.add(Map<String, dynamic>.from(message.data));
     final tripId = message.data['orderId']?.toString();
     final status = message.data['type'] == 'passenger_leaving'

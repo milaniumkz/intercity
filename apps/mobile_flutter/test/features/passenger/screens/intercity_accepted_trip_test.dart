@@ -6,6 +6,26 @@ import 'package:intercity_mobile/core/api/api_client.dart';
 import 'package:intercity_mobile/features/passenger/screens/intercity_request_page.dart';
 
 void main() {
+  testWidgets('completed intercity prompts rating and stores it once',
+      (tester) async {
+    tester.view.physicalSize = const Size(392, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final api = TripApi(status: 'COMPLETED');
+    await tester.pumpWidget(MaterialApp(
+        home: IntercityRequestPage(
+            requestId: 'trip', apiClient: api, enableLiveMap: false)));
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.byType(Dialog), findsOneWidget);
+    await tester.tap(find.text('Отправить'));
+    await tester.pumpAndSettle();
+    expect(api.ratings, [5]);
+    expect(find.text('Ваша оценка: 5 ★'), findsOneWidget);
+    expect(find.text('Оценить водителя'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   for (final available in [false, true]) {
     testWidgets(
         'pickup ETA ${available ? 'uses real route duration' : 'explicitly awaits GPS'}',
@@ -86,9 +106,16 @@ class TripApi extends ApiClient {
 
   int chatReads = 0;
   final sent = <String>[];
+  final ratings = <int>[];
   @override
   Future<Response<dynamic>> post(String path,
       {dynamic data, Options? options}) async {
+    if (path == '/intercity/requests/trip/rate') {
+      ratings.add(data['rating'] as int);
+      return Response(
+          requestOptions: RequestOptions(path: path),
+          data: {'success': true, 'pendingReview': false});
+    }
     if (path != '/intercity/requests/trip/chat') {
       throw StateError('Wrong chat endpoint $path');
     }
@@ -131,6 +158,7 @@ class TripApi extends ApiClient {
       'id': 'trip',
       'requestType': 'INTERCITY',
       'status': status,
+      'selectedDriverId': 'driver',
       'fromLat': 49.91,
       'fromLng': 82.61,
       'pickupProgress': {'driverLocation': location},

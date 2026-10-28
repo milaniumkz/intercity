@@ -1,3 +1,4 @@
+import {notifyTripChat} from '../common/trip-chat-notification';
 import { settleBonusRidePayment } from '../common/bonus-ride-payment';
 import { lockIncomeAccounting, recordCashDriverIncome } from '../tax/tax-ledger';
 import { CITY_TARIFF_DEFAULTS } from '../common/city-tariff-defaults';
@@ -540,6 +541,8 @@ export class OrdersService {
                 },
             },
         });
+        const passengerSender=order.passengerId===actor.userId;
+        notifyTripChat(this.realtimeService,this.pushService,{kind:'CITY',tripId:orderId,messageId:message.id,recipientUserId:passengerSender?order.driver?.userId:order.passengerId,recipientRole:passengerSender?'DRIVER':'PASSENGER'});
         return this.chatMessageForViewer(message, order, actor.userId);
     }
 

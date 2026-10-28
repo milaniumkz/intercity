@@ -585,6 +585,8 @@ model PromoUsage {
 }
 
 model Complaint {
+  intercityRequestId String?
+  intercityRequest IntercityRequest? @relation(fields:[intercityRequestId],references:[id],onDelete:SetNull)
   id             String          @id @default(uuid())
   type           String
   status         ComplaintStatus @default(NEW)
@@ -683,6 +685,10 @@ model TariffDelivery {
 }
 
 model IntercityRequest {
+  driverRating Int?
+  driverRatingStatus String @default("COUNTED")
+  driverRatingReason String?
+  ratingComplaints Complaint[]
   chatMessages IntercityChatMessage[]
   reservedRouteId String?
   reservedSeats Int @default(0)

@@ -103,10 +103,12 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
     }
   }
 
-  Future<void> _rate(String id, int rating, [String reason = '']) async {
+  Future<void> _rate(String id, int rating,
+      [String reason = '', bool intercity = false]) async {
     try {
-      await _api
-          .post('/orders/$id/rate', data: {'rating': rating, 'reason': reason});
+      await _api.post(
+          intercity ? '/intercity/requests/$id/rate' : '/orders/$id/rate',
+          data: {'rating': rating, 'reason': reason});
       setState(() => _message = 'Оценка для заказа $id отправлена');
       await _load();
     } catch (e) {
@@ -132,7 +134,7 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
       onSubmit: (_) async {},
       onSubmitWithReason: (rating, reason) async {
         try {
-          await _rate(id, rating, reason);
+          await _rate(id, rating, reason, _isIntercityRequest(item));
         } catch (error) {
           throw Exception(errorMessageRu(error));
         }
@@ -184,7 +186,11 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
   }
 
   bool _canRate(Map<String, dynamic> item) {
-    if (_isIntercityRequest(item)) return false;
+    if (_isIntercityRequest(item)) {
+      return item['status'] == 'COMPLETED' &&
+          item['driverRating'] == null &&
+          item['selectedDriverId'] != null;
+    }
     return (item['status'] ?? '').toString().toUpperCase() == 'COMPLETED' &&
         item['driverRating'] == null &&
         item['driverId'] != null;
@@ -193,7 +199,7 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
   bool _canOpenIntercityRequest(Map<String, dynamic> item) {
     if (!_isIntercityRequest(item)) return false;
     final status = (item['status'] ?? '').toString().toUpperCase();
-    return status == 'OPEN' || status == 'ACCEPTED';
+    return status != 'CANCELLED';
   }
 
   DateTime _createdAtOf(Map<String, dynamic> item) {

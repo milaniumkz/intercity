@@ -1,3 +1,6 @@
+import '../../../core/services/chat_message_notices.dart';
+import '../../../core/services/push_notifications_service.dart';
+import '../../../core/services/trip_status_sound.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -15,6 +18,10 @@ Future<void> showOrderChatSheet({
   bool intercity = false,
   ApiClient? apiClient,
 }) {
+  unawaited(TripStatusSound.prepare());
+  unawaited(PushNotificationsService.instance
+      .enableDriverNotifications()
+      .catchError((_) {}));
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -59,6 +66,9 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
   final _scrollCtrl = ScrollController();
   List<dynamic> _messages = const [];
   String _error = '';
+  final _knownMessages = <String>{};
+  bool _messagesInitialized = false;
+  String get _kind => widget.intercity ? 'INTERCITY' : 'CITY';
   bool _loading = true;
   bool _sending = false;
   bool _loadingMessages = false;
@@ -80,12 +90,16 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
   @override
   void initState() {
     super.initState();
+    ChatMessageNotices.shared.openThreads
+        .add(ChatMessageNotices.threadKey(_kind, widget.orderId));
     _load();
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) => _load());
   }
 
   @override
   void dispose() {
+    ChatMessageNotices.shared.openThreads
+        .remove(ChatMessageNotices.threadKey(_kind, widget.orderId));
     _pollTimer?.cancel();
     _messageCtrl.dispose();
     _scrollCtrl.dispose();
@@ -113,6 +127,26 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
         _loading = false;
         _error = '';
       });
+      final incoming = newIncomingChatMessages(
+          known: _knownMessages,
+          initialized: _messagesInitialized,
+          messages: _messages,
+          role: widget.currentRole);
+      _messagesInitialized = true;
+      for (final message in incoming) {
+        final driver = message['participantRole'] == 'DRIVER';
+        unawaited(ChatMessageNotices.shared.notify({
+          'type': 'chat_message',
+          'kind': _kind,
+          'orderId': widget.orderId,
+          'messageId': message['id'],
+          'recipientRole': widget.currentRole,
+          'title': 'Новое сообщение',
+          'body': driver
+              ? 'Водитель написал вам в чате'
+              : 'Пассажир написал вам в чате'
+        }));
+      }
       final last = _messages.isEmpty ? null : (_messages.last as Map)['id'];
       if (follow && (forceScroll || previousLast != last)) _scrollToBottom();
     } catch (e) {

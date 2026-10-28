@@ -1,3 +1,4 @@
+import 'chat_message_notices.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -142,6 +143,11 @@ class PushNotificationsService {
   }
 
   Future<void> _onForegroundMessage(RemoteMessage message) async {
+    if (message.data['type'] == 'chat_message') {
+      await ChatMessageNotices.shared
+          .notify(Map<String, dynamic>.from(message.data));
+      return;
+    }
     final tripId = message.data['orderId']?.toString();
     final status = message.data['type'] == 'passenger_leaving'
         ? 'passenger_leaving'
@@ -233,15 +239,18 @@ class PushNotificationsService {
       notificationId ?? Object.hash(orderId, title),
       title,
       body,
-      const NotificationDetails(
-        iOS: DarwinNotificationDetails(presentSound: true),
+      NotificationDetails(
+        iOS: DarwinNotificationDetails(
+            presentSound: data?['type'] != 'chat_message'),
         android: AndroidNotificationDetails(
-          'intercity_default_channel',
+          data?['type'] == 'chat_message'
+              ? 'intercity_chat_foreground'
+              : 'intercity_default_channel',
           'INTERCITY уведомления',
           channelDescription: 'Заказы, статусы, сообщения сервиса',
           importance: Importance.max,
           priority: Priority.high,
-          playSound: true,
+          playSound: data?['type'] != 'chat_message',
         ),
       ),
       payload: encodePushPayload({

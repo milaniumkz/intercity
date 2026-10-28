@@ -17,6 +17,12 @@ export class RealtimeController {
         private readonly driverService: DriverService,
     ) { }
 
+    @Sse('me/stream')
+    userStream(@Request() req: any): Observable<MessageEvent> {
+        const events=this.realtimeService.stream().pipe(filter(event=>event.entity==='user' && event.entityId===req.user.sub),map(event=>({type:'event',data:event})));
+        return merge(interval(15000).pipe(map(()=>({type:'heartbeat',data:{at:new Date().toISOString()}}))),events);
+    }
+
     @Get('health')
     @ApiOperation({ summary: 'Realtime module health check' })
     health() {
@@ -93,6 +99,7 @@ export class RealtimeController {
             })),
         );
         const events$ = this.realtimeService.stream().pipe(
+            filter((event) => event.entity !== 'user'),
             filter((event) => !entity || event.entity === entity),
             filter((event) => !entityId || event.entityId === entityId),
             map((event) => ({ type: 'event', data: event })),

@@ -9,7 +9,8 @@ test('intercity participants exchange persisted messages; outsiders and closed w
   const users=[];for(let i=0;i<3;i++)users.push(await tx.user.create({data:{phone:'chat:'+randomUUID(),password:'qa',name:'QA '+i,refCode:randomUUID(),refLink:'test'}}));
   const [passenger,driver,outsider]=users;
   const trip=await tx.intercityRequest.create({data:{passengerId:passenger.id,selectedDriverId:driver.id,status:'DRIVER_ASSIGNED',fromCity:'QA',toCity:'QA2',date:new Date(),price:3000}});
-  const s=new IntercityService(db,{});
+  const events=[],pushes=[];
+  const s=new IntercityService(db,{},null,{publish:event=>events.push(event)},{sendToUser:async(userId,payload)=>pushes.push({userId,payload})});
   assert.deepEqual(await s.getChat(trip.id,passenger.id),[]);
   await assert.rejects(s.getChat(trip.id,outsider.id),/Нет доступа/);
   await assert.rejects(s.sendChat(trip.id,outsider.id,'test'),/Нет доступа/);
@@ -17,6 +18,10 @@ test('intercity participants exchange persisted messages; outsiders and closed w
   await assert.rejects(s.sendChat(trip.id,driver.id,'x'.repeat(1001)),/длинное/);
   const first=await s.sendChat(trip.id,passenger.id,'  Здравствуйте  ');assert.equal(first.text,'Здравствуйте');assert.equal(first.participantRole,'PASSENGER');
   const second=await s.sendChat(trip.id,driver.id,'Еду к вам');assert.equal(second.participantRole,'DRIVER');
+  await new Promise(r=>setImmediate(r));
+  assert.deepEqual(events.map(e=>e.entityId),[driver.id,passenger.id]);
+  assert.deepEqual(pushes.map(e=>e.userId),[driver.id,passenger.id]);
+  assert(events.every(e=>e.entity==='user'));
   const messages=await s.getChat(trip.id,driver.id);assert.equal(messages.length,2);assert.equal(messages.find(m=>m.id===first.id).isMine,false);assert.equal(messages.find(m=>m.id===second.id).isMine,true);
   assert.equal(messages[0].sender.password,undefined);
   await tx.intercityRequest.update({where:{id:trip.id},data:{status:'COMPLETED'}});

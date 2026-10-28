@@ -1,3 +1,5 @@
+import 'core/services/chat_message_notices.dart';
+import 'core/services/sse_service.dart';
 import 'features/referral/screens/referral_account_page.dart';
 import 'core/services/trip_status_sound.dart';
 import 'features/passenger/screens/shared_trip_page.dart';
@@ -137,14 +139,14 @@ GoRouter createRouter({
         GoRoute(
           path: '/order/searching/:id',
           builder: (context, state) => OrderSearchingPage(
-            key: ValueKey('order:${state.pathParameters['id']}'),
+            key: ValueKey(state.uri.toString()),
             orderId: state.pathParameters['id'] ?? '',
           ),
         ),
         GoRoute(
           path: '/intercity/request/:id',
           builder: (context, state) => IntercityRequestPage(
-            key: ValueKey('market:${state.pathParameters['id']}'),
+            key: ValueKey(state.uri.toString()),
             apiClient: orderApiClient,
             requestId: state.pathParameters['id'] ?? '',
           ),
@@ -152,7 +154,7 @@ GoRouter createRouter({
         GoRoute(
           path: '/market/request/:id',
           builder: (context, state) => IntercityRequestPage(
-            key: ValueKey('market:${state.pathParameters['id']}'),
+            key: ValueKey(state.uri.toString()),
             apiClient: orderApiClient,
             requestId: state.pathParameters['id'] ?? '',
           ),
@@ -191,8 +193,9 @@ GoRouter createRouter({
         ),
         GoRoute(
           path: '/driver/home',
-          builder: (context, state) =>
-              DriverHomePage(mapTileProvider: mapTileProvider),
+          builder: (context, state) => DriverHomePage(
+              key: ValueKey(state.uri.toString()),
+              mapTileProvider: mapTileProvider),
         ),
         GoRoute(
           path: '/driver/home/:stage',
@@ -267,6 +270,7 @@ class IntercityApp extends ConsumerStatefulWidget {
 }
 
 class _IntercityAppState extends ConsumerState<IntercityApp> {
+  final _chatMessenger = GlobalKey<ScaffoldMessengerState>();
   late final GoRouter _router = createRouter(
     initialLocation: _initialLocationFromUri(),
     disableAuthRedirect:
@@ -286,6 +290,7 @@ class _IntercityAppState extends ConsumerState<IntercityApp> {
     final urlLightOverride = Uri.base.toString().contains('light=1');
     return MaterialApp.router(
       title: 'INTERCITY',
+      scaffoldMessengerKey: _chatMessenger,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: urlLightOverride
@@ -316,6 +321,7 @@ class _IntercityAppState extends ConsumerState<IntercityApp> {
             onPointerDown: (_) => unawaited(TripStatusSound.prepare()),
             child: _ModeSwitcherOverlay(
               router: _router,
+              messengerKey: _chatMessenger,
               child: child ?? const SizedBox.shrink(),
             ),
           ),
@@ -329,22 +335,40 @@ class _IntercityAppState extends ConsumerState<IntercityApp> {
 class _ModeSwitcherOverlay extends StatefulWidget {
   const _ModeSwitcherOverlay({
     required this.router,
+    required this.messengerKey,
     required this.child,
   });
 
   final GoRouter router;
+  final GlobalKey<ScaffoldMessengerState> messengerKey;
   final Widget child;
 
   @override
   State<_ModeSwitcherOverlay> createState() => _ModeSwitcherOverlayState();
 }
 
-class _ModeSwitcherOverlayState extends State<_ModeSwitcherOverlay> {
+class _ModeSwitcherOverlayState extends State<_ModeSwitcherOverlay>
+    with WidgetsBindingObserver {
+  SseConnection? _chatConnection;
+  StreamSubscription<Map<String, dynamic>>? _chatSub,
+      _chatNoticeSub,
+      _chatTapSub;
+  Timer? _chatRetry;
+  bool _chatConnecting = false;
+  int _chatGeneration = 0;
   String _path = '';
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _chatNoticeSub = ChatMessageNotices.shared.events.listen(_showChatNotice);
+    _chatTapSub = PushNotificationsService.instance.onNotificationPayload
+        .listen((payload) {
+      if (payload['type'] == 'chat_message' && payload['route'] is String) {
+        _openChatNotice(payload['route'] as String);
+      }
+    });
     _syncPath();
     widget.router.routerDelegate.addListener(_syncPath);
   }
@@ -360,6 +384,11 @@ class _ModeSwitcherOverlayState extends State<_ModeSwitcherOverlay> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _chatRetry?.cancel();
+    unawaited(_chatNoticeSub?.cancel());
+    unawaited(_chatTapSub?.cancel());
+    unawaited(_closeChatEvents());
     widget.router.routerDelegate.removeListener(_syncPath);
     super.dispose();
   }
@@ -368,11 +397,110 @@ class _ModeSwitcherOverlayState extends State<_ModeSwitcherOverlay> {
     final next = widget.router.routerDelegate.currentConfiguration.uri.path;
     if (next == _path) return;
     unawaited(TechnicalTelemetry.screenOpened(next));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_connectChatEvents());
+    });
     if (mounted) {
       setState(() => _path = next);
     } else {
       _path = next;
     }
+  }
+
+  bool get _chatEnabled =>
+      _path.isNotEmpty &&
+      ![
+        '/login',
+        '/register',
+        '/startup',
+        '/onboarding',
+        '/forgot-password',
+        '/admin',
+        '/ref/'
+      ].any(_path.startsWith);
+  bool get _foreground =>
+      WidgetsBinding.instance.lifecycleState == null ||
+      WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_connectChatEvents());
+    } else {
+      unawaited(_closeChatEvents());
+    }
+  }
+
+  Future<void> _closeChatEvents({bool retry = false}) async {
+    _chatGeneration++;
+    _chatRetry?.cancel();
+    final sub = _chatSub, connection = _chatConnection;
+    _chatSub = null;
+    _chatConnection = null;
+    await sub?.cancel();
+    await connection?.close();
+    if (retry && mounted && _chatEnabled && _foreground) {
+      _chatRetry = Timer(
+          const Duration(seconds: 4), () => unawaited(_connectChatEvents()));
+    }
+  }
+
+  Future<void> _connectChatEvents() async {
+    if (!mounted || !_chatEnabled || !_foreground) {
+      await _closeChatEvents();
+      return;
+    }
+    if (_chatConnecting || _chatConnection != null) return;
+    _chatConnecting = true;
+    final generation = _chatGeneration;
+    try {
+      final connection = await SseService.connect('/realtime/me/stream');
+      if (!mounted ||
+          generation != _chatGeneration ||
+          !_chatEnabled ||
+          !_foreground) {
+        await connection?.close();
+        return;
+      }
+      if (connection == null) return;
+      _chatConnection = connection;
+      _chatSub = connection.stream.listen((event) {
+        final data = event['data'];
+        if (data is Map &&
+            data['type'] == 'chat.message.created' &&
+            data['payload'] is Map) {
+          unawaited(ChatMessageNotices.shared
+              .notify(Map<String, dynamic>.from(data['payload'] as Map)));
+        }
+      },
+          onDone: () => unawaited(_closeChatEvents(retry: true)),
+          onError: (Object _) => unawaited(_closeChatEvents(retry: true)));
+    } catch (_) {
+      await _closeChatEvents(retry: true);
+    } finally {
+      _chatConnecting = false;
+    }
+  }
+
+  void _openChatNotice(String route) {
+    widget.router.routerDelegate.navigatorKey.currentState
+        ?.popUntil((route) => route is PageRoute);
+    widget.router.go(route);
+  }
+
+  void _showChatNotice(Map<String, dynamic> notice) {
+    if (!mounted ||
+        !_chatEnabled ||
+        !_foreground ||
+        ChatMessageNotices.shared.openThreads.contains(
+            ChatMessageNotices.threadKey(
+                '${notice['kind']}', '${notice['orderId']}'))) {
+      return;
+    }
+    widget.messengerKey.currentState?.showSnackBar(SnackBar(
+        content: Text('${notice['body'] ?? 'Новое сообщение в чате'}'),
+        action: SnackBarAction(
+            label: 'Открыть',
+            onPressed: () => _openChatNotice('${notice['route']}'))));
   }
 
   bool get _showSwitcher {

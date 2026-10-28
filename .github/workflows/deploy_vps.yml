@@ -47,7 +47,7 @@ jobs:
 
       - name: Check browser push configuration
         env:
-          INTERCITY_FIREBASE_WEB_VAPID_KEY: ${{ secrets.INTERCITY_FIREBASE_WEB_VAPID_KEY }}
+          INTERCITY_FIREBASE_WEB_VAPID_KEY: ${{ secrets.INTERCITY_FIREBASE_WEB_VAPID_KEY || 'BDZrOhmB5H72F6JLJz0lOkqQ33hFQwtNk51fggrZHVo-nUXQqz_WW-0aXmkQ12LzJuW3KYLteOziZo-I0gmcwWg' }}
           REQUIRE_BROWSER_PUSH: ${{ github.event_name != 'workflow_dispatch' || inputs.require_browser_push }}
         run: |
           if [[ -z "$INTERCITY_FIREBASE_WEB_VAPID_KEY" ]]; then
@@ -100,7 +100,7 @@ jobs:
       - name: Build bundle
         env:
           INTERCITY_API_BASE_URL: ${{ secrets.INTERCITY_API_BASE_URL }}
-          INTERCITY_FIREBASE_WEB_VAPID_KEY: ${{ secrets.INTERCITY_FIREBASE_WEB_VAPID_KEY }}
+          INTERCITY_FIREBASE_WEB_VAPID_KEY: ${{ secrets.INTERCITY_FIREBASE_WEB_VAPID_KEY || 'BDZrOhmB5H72F6JLJz0lOkqQ33hFQwtNk51fggrZHVo-nUXQqz_WW-0aXmkQ12LzJuW3KYLteOziZo-I0gmcwWg' }}
         run: |
           test -n "$INTERCITY_API_BASE_URL"
           bash scripts/build_vps_release_bundle.sh

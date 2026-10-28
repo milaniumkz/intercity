@@ -2038,6 +2038,21 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
   }
 
+  bool _linkedChatOpened = false;
+  void _openLinkedChatIfNeeded(Map<String, dynamic> order) {
+    final query = Uri.tryParse(currentRouteText(context))?.queryParameters;
+    final requestedId = query?['intercityRequestId'] ?? query?['orderId'];
+    if (_linkedChatOpened ||
+        query?['chat'] != '1' ||
+        requestedId != order['id']) {
+      return;
+    }
+    _linkedChatOpened = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_openActiveOrderChat(order));
+    });
+  }
+
   Future<void> _loadOrderById(String id) async {
     try {
       final res = await _api.get('/orders/$id');
@@ -2047,6 +2062,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       unawaited(_paymentNotifier.notify(context, order, 'DRIVER'));
       setState(() => _activeOrder = order);
       _notifyPassengerLeaving(order);
+      _openLinkedChatIfNeeded(order);
       await _syncActiveRoutePolyline(order);
       if (const ['COMPLETED', 'CANCELLED'].contains(status)) {
         _activeOrderPollTimer?.cancel();
@@ -2094,6 +2110,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       unawaited(_paymentNotifier.notify(context, request, 'DRIVER'));
       setState(() => _activeOrder = request);
       _notifyPassengerLeaving(request);
+      _openLinkedChatIfNeeded(request);
       await _syncActiveRoutePolyline(request);
     } catch (e) {
       if (!mounted) return;
@@ -2213,6 +2230,16 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _restoreActiveOrderIfAny() async {
+    final cityId =
+        Uri.tryParse(currentRouteText(context))?.queryParameters['orderId'];
+    if (cityId != null && cityId.isNotEmpty) {
+      await _loadOrderById(cityId);
+      if (_activeOrder?['id'] == cityId) {
+        _startActiveOrderPolling(cityId);
+        return;
+      }
+    }
+    if (!mounted) return;
     final requestedId = Uri.tryParse(currentRouteText(context))
         ?.queryParameters['intercityRequestId'];
     if (requestedId != null && requestedId.isNotEmpty) {

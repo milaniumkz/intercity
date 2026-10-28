@@ -1,3 +1,5 @@
+import '../widgets/driver_rating_dialog.dart';
+import '../../../core/utils/route_query.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/utils/freight_details.dart';
 import '../widgets/passenger_offers_panel.dart';
@@ -54,6 +56,9 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
   Map<String, dynamic>? _request;
   bool _loading = true;
   bool _actionBusy = false;
+  bool _ratingDialogOpen = false;
+  bool _ratingPrompted = false;
+  bool _linkedChatOpened = false;
   String? _actionError;
   double? _pickupEtaMinutes;
   String? _pickupEtaKey;
@@ -121,6 +126,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
         ),
         'DRIVER_ARRIVED': ('Водитель прибыл', 'Водитель уже на месте подачи.'),
         'IN_PROGRESS': ('Поездка началась', 'Хорошей поездки.'),
+        'COMPLETED': ('Поездка завершена', 'Оцените работу водителя.'),
       };
       if (status != _lastNotifiedStatus && notices.containsKey(status)) {
         unawaited(TripStatusSound.playOnce(widget.requestId, status));
@@ -170,6 +176,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
           offers.length,
         );
       });
+      _openLinkedChatIfNeeded();
+      _promptRatingIfNeeded();
       unawaited(_refreshPickupEta(request));
       _fitMap();
       if (_isFinalStatus((request['status'] ?? '').toString())) {
@@ -221,6 +229,71 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                 ? 'Водитель уведомлён: выхожу'
                 : 'Выхожу'),
       ));
+
+  bool get _canRateDriver =>
+      _request?['status'] == 'COMPLETED' &&
+      _request?['selectedDriverId'] != null &&
+      _request?['driverRating'] == null;
+
+  void _promptRatingIfNeeded() {
+    if (!_canRateDriver ||
+        _ratingPrompted ||
+        _ratingDialogOpen ||
+        ModalRoute.of(context)?.isCurrent != true) {
+      return;
+    }
+    _ratingPrompted = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_rateDriver());
+    });
+  }
+
+  Future<void> _rateDriver() async {
+    if (!_canRateDriver || _ratingDialogOpen) return;
+    _ratingDialogOpen = true;
+    final offers = (_request?['offers'] as List? ?? []).whereType<Map>();
+    final accepted = offers.where((o) => o['status'] == 'ACCEPTED').firstOrNull;
+    try {
+      await showDriverRatingDialog(
+          context: context,
+          driverName: accepted?['driver']?['name']?.toString(),
+          allowSkip: true,
+          onSubmit: (_) async {},
+          onSubmitWithReason: (rating, reason) async {
+            try {
+              final response = await _api.post(
+                  '/intercity/requests/${widget.requestId}/rate',
+                  data: {'rating': rating, 'reason': reason});
+              if (mounted) {
+                setState(() => _request = {
+                      ...?_request,
+                      'driverRating': rating,
+                      'driverRatingStatus': response.data is Map &&
+                              response.data['pendingReview'] == true
+                          ? 'PENDING'
+                          : 'COUNTED'
+                    });
+              }
+            } catch (error) {
+              throw Exception(errorMessageRu(error));
+            }
+          });
+    } finally {
+      _ratingDialogOpen = false;
+    }
+  }
+
+  void _openLinkedChatIfNeeded() {
+    if (_linkedChatOpened ||
+        _request == null ||
+        Uri.tryParse(currentRouteText(context))?.queryParameters['chat'] != '1') {
+      return;
+    }
+    _linkedChatOpened = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_openIntercityChat());
+    });
+  }
 
   Future<void> _refreshPickupEta(Map<String, dynamic> request) async {
     final progress = request['pickupProgress'];
@@ -744,6 +817,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
       intercity: true,
       apiClient: _api,
     );
+    if (mounted) _promptRatingIfNeeded();
   }
 
   Widget _metaChip({
@@ -1934,6 +2008,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
           'DRIVER_EN_ROUTE',
           'DRIVER_ARRIVED',
           'IN_PROGRESS',
+          'COMPLETED',
         }.contains(normalizedStatus)) {
       return _boardActiveIntercityTripScreen();
     }
@@ -2472,6 +2547,15 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                         ),
                       ],
                     ),
+                    if (_canRateDriver)
+                      FilledButton.icon(
+                          onPressed: _ratingDialogOpen ? null : _rateDriver,
+                          icon: const Icon(Icons.star_outline),
+                          label: const Text('Оценить водителя')),
+                    if (_request?['driverRating'] != null)
+                      Text(_request?['driverRatingStatus'] == 'PENDING'
+                          ? 'Оценка отправлена на проверку'
+                          : 'Ваша оценка: ${_request?['driverRating']} ★'),
                     if (!['IN_PROGRESS', 'COMPLETED', 'CANCELLED']
                         .contains(status))
                       TextButton.icon(

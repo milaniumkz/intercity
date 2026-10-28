@@ -415,6 +415,7 @@ export class AdminService {
                     user: { select: adminUserSelect },
                     driver: { include: { user: { select: adminUserSelect } } },
                     order: true,
+                    intercityRequest: true,
                 },
                 take: 500,
             }),
@@ -440,17 +441,23 @@ export class AdminService {
         if (complaint.type === 'LOW_DRIVER_RATING') {
             const {decision,note,rating} = validateReviewDecision(data);
             const result = await this.prisma.$transaction(async tx => {
-                const order = await tx.order.findUnique({where:{id:complaint.orderId!}});
-                if (!order?.driverId || order.driverRating == null) throw new BadRequestException('Оценка поездки не найдена');
-                await tx.$executeRaw`SELECT id FROM "DriverProfile" WHERE id = ${order.driverId} FOR UPDATE`;
-                const fresh = await tx.order.findUnique({where:{id:order.id}});
-                const oldRating = fresh!.driverRatingStatus === 'COUNTED' ? fresh!.driverRating : null;
-                const effectiveRating = decision === 'REJECT' ? null : decision === 'CHANGE' ? rating : fresh!.driverRating!;
-                await reviseDriverRating(tx,order.driverId,oldRating,effectiveRating);
-                await tx.order.update({where:{id:order.id},data:{driverRating:effectiveRating ?? fresh!.driverRating,driverRatingStatus:decision==='REJECT'?'REJECTED':'COUNTED'}});
+                const isIntercity=!!complaint.intercityRequestId;
+                const delegate=isIntercity ? tx.intercityRequest : tx.order;
+                const tripId=complaint.intercityRequestId ?? complaint.orderId;
+                if(!tripId) throw new BadRequestException('Оценка поездки не найдена');
+                const order=await (delegate as any).findUnique({where:{id:tripId}});
+                const profile=isIntercity && order?.selectedDriverId ? await tx.driverProfile.findUnique({where:{userId:order.selectedDriverId},select:{id:true}}) : null;
+                const driverId=isIntercity ? profile?.id : order?.driverId;
+                if (!driverId || order.driverRating == null || (isIntercity && driverId!==complaint.driverId)) throw new BadRequestException('Оценка поездки не найдена');
+                await tx.$executeRaw`SELECT id FROM "DriverProfile" WHERE id = ${driverId} FOR UPDATE`;
+                const fresh=await (delegate as any).findUnique({where:{id:tripId}});
+                const oldRating=fresh.driverRatingStatus==='COUNTED'?fresh.driverRating:null;
+                const effectiveRating=decision==='REJECT'?null:decision==='CHANGE'?rating:fresh.driverRating;
+                await reviseDriverRating(tx,driverId,oldRating,effectiveRating);
+                await (delegate as any).update({where:{id:tripId},data:{driverRating:effectiveRating ?? fresh.driverRating,driverRatingStatus:decision==='REJECT'?'REJECTED':'COUNTED'}});
                 return tx.complaint.update({where:{id},data:{status:'RESOLVED',resolutionNote:`${decision}: ${note}`}});
             });
-            this.realtimeService.publish({type:'driver.rating.updated',entity:'driver',entityId:complaint.driverId!,at:new Date().toISOString(),payload:{driverId:complaint.driverId,orderId:complaint.orderId}});
+            this.realtimeService.publish({type:'driver.rating.updated',entity:'driver',entityId:complaint.driverId!,at:new Date().toISOString(),payload:{driverId:complaint.driverId,orderId:complaint.orderId,intercityRequestId:complaint.intercityRequestId}});
             return result;
         }
         const payload: Record<string, unknown> = {};

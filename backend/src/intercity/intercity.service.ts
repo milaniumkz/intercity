@@ -1,3 +1,5 @@
+import {notifyTripChat} from '../common/trip-chat-notification';
+import {reviseDriverRating,ratingReviewHint} from '../common/driver-rating-review';
 import {routeMatchesRequestSchedule} from '../common/driver-route-schedule';
 import { settleBonusRidePayment } from '../common/bonus-ride-payment';
 import { driverPerformance } from '../common/driver-performance';
@@ -47,13 +49,38 @@ export class IntercityService {
   async sendChat(requestId: string, userId: string, text: unknown) {
     if (typeof text !== 'string' || !text.trim()) throw new BadRequestException('Введите сообщение');
     if (text.trim().length > 1000) throw new BadRequestException('Сообщение слишком длинное');
-    return this.prisma.$transaction(async tx=>{
+    const result = await this.prisma.$transaction(async tx=>{
       await tx.$executeRaw`SELECT id FROM "IntercityRequest" WHERE id=${requestId} FOR UPDATE`;
       const request = await this.chatParticipant(tx,requestId,userId);
       if (!['ACCEPTED','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'].includes(request.status)) throw new BadRequestException('Чат закрыт для этого заказа');
       const message=await tx.intercityChatMessage.create({data:{requestId,senderId:userId,text:text.trim()},include:{sender:{select:{publicId:true,name:true}}}});
-      return {...message,isMine:true,participantRole:request.passengerId===userId?'PASSENGER':'DRIVER'};
+      return {message:{...message,isMine:true,participantRole:request.passengerId===userId?'PASSENGER':'DRIVER'},request};
     });
+    const passengerSender=result.request.passengerId===userId;
+    notifyTripChat(this.realtime,this.push,{kind:'INTERCITY',tripId:requestId,messageId:result.message.id,recipientUserId:passengerSender?result.request.selectedDriverId!:result.request.passengerId,recipientRole:passengerSender?'DRIVER':'PASSENGER'});
+    return result.message;
+  }
+
+  async rateDriver(requestId: string, userId: string, rating: unknown, reason: unknown) {
+    if (!Number.isInteger(rating) || Number(rating)<1 || Number(rating)>5) throw new BadRequestException('Выберите оценку от 1 до 5');
+    const value=Number(rating),explanation=typeof reason==='string'?reason.trim():'';
+    const low=value<=2;
+    if(low && (explanation.length<10 || explanation.length>2000)) throw new BadRequestException('Для низкой оценки опишите случившееся: от 10 до 2000 символов');
+    const driverId=await this.prisma.$transaction(async tx=>{
+      const request=await tx.intercityRequest.findUnique({where:{id:requestId}});
+      if(!request || request.passengerId!==userId) throw new ForbiddenException('Нет доступа к этой поездке');
+      if(request.status!=='COMPLETED' || !request.selectedDriverId) throw new BadRequestException('Оценить водителя можно после завершения поездки');
+      const profile=await tx.driverProfile.findUnique({where:{userId:request.selectedDriverId},select:{id:true}});
+      if(!profile) throw new BadRequestException('Профиль водителя не найден');
+      await tx.$executeRaw`SELECT id FROM "DriverProfile" WHERE id=${profile.id} FOR UPDATE`;
+      const changed=await tx.intercityRequest.updateMany({where:{id:requestId,passengerId:userId,status:'COMPLETED',driverRating:null},data:{driverRating:value,driverRatingStatus:low?'PENDING':'COUNTED',driverRatingReason:low?explanation:null}});
+      if(changed.count!==1) throw new BadRequestException('Оценка уже отправлена');
+      if(low) await tx.complaint.create({data:{type:'LOW_DRIVER_RATING',status:'NEW',text:JSON.stringify({rating:value,reason:explanation,automation:ratingReviewHint(explanation)}),userId,driverId:profile.id,intercityRequestId:requestId}});
+      else await reviseDriverRating(tx,profile.id,null,value);
+      return profile.id;
+    });
+    this.realtime?.publish?.({type:'driver.rating.updated',entity:'driver',entityId:driverId,at:new Date().toISOString(),payload:{driverId,intercityRequestId:requestId}});
+    return {success:true,pendingReview:low};
   }
 
   async passengerLeaving(requestId: string, userId: string) {
