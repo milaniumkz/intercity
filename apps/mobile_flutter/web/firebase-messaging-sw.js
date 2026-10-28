@@ -1,3 +1,40 @@
+// Register before Firebase: its default click handler stops later listeners.
+self.addEventListener('notificationclick', (event) => {
+  event.stopImmediatePropagation();
+  event.notification.close();
+
+  const notificationData = event.notification.data || {};
+  // Automatically displayed FCM notifications wrap our payload in FCM_MSG.
+  const payload = notificationData.FCM_MSG?.data || notificationData;
+  const targetRoute = payload.route || '/profile';
+  const targetUrl = new URL(targetRoute.startsWith('/#') ? targetRoute : `/#${targetRoute}`, self.location.origin).href;
+
+  event.waitUntil((async () => {
+    const clientsList = await clients.matchAll({
+      type: 'window',
+      includeUncontrolled: true,
+    });
+
+    for (const client of clientsList) {
+      if ('focus' in client) {
+        await client.focus();
+      }
+      if ('postMessage' in client) {
+        client.postMessage({
+          type: 'notification-click',
+          payload,
+        });
+      }
+      if ('navigate' in client && client.url !== targetUrl) {
+        await client.navigate(targetUrl);
+      }
+      return;
+    }
+
+    await clients.openWindow(targetUrl);
+  })());
+});
+
 importScripts('https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js');
 
@@ -32,37 +69,3 @@ messaging.onBackgroundMessage((payload) => {
   self.registration.showNotification(title, options);
 });
 
-self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
-
-  const notificationData = event.notification.data || {};
-  // Automatically displayed FCM notifications wrap our payload in FCM_MSG.
-  const payload = notificationData.FCM_MSG?.data || notificationData;
-  const targetRoute = payload.route || '/profile';
-  const targetUrl = new URL(targetRoute.startsWith('/#') ? targetRoute : `/#${targetRoute}`, self.location.origin).href;
-
-  event.waitUntil((async () => {
-    const clientsList = await clients.matchAll({
-      type: 'window',
-      includeUncontrolled: true,
-    });
-
-    for (const client of clientsList) {
-      if ('focus' in client) {
-        await client.focus();
-      }
-      if ('postMessage' in client) {
-        client.postMessage({
-          type: 'notification-click',
-          payload,
-        });
-      }
-      if ('navigate' in client && client.url !== targetUrl) {
-        await client.navigate(targetUrl);
-      }
-      return;
-    }
-
-    await clients.openWindow(targetUrl);
-  })());
-});
