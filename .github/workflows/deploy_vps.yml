@@ -152,7 +152,8 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
         run: |
           bundle="output/intercity-vps-${GITHUB_SHA}.tar.gz"
-          scp "$bundle" "scripts/vps_deploy_release.sh" "$VPS_USER@$VPS_HOST:/tmp/"
+          python3 scripts/vps_transfer_bundle.py "$bundle" "$GITHUB_SHA"
+          scp "scripts/vps_deploy_release.sh" "$VPS_USER@$VPS_HOST:/tmp/"
           key_file="$RUNNER_TEMP/yandex-geocoder.json"
           trap 'rm -f "$key_file"' EXIT
           if [[ -n "$YANDEX_GEOCODER_API_KEY" || -n "$FIREBASE_SERVICE_ACCOUNT_JSON" ]]; then

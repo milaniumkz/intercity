@@ -14,10 +14,14 @@ class RouteDepartureField extends StatelessWidget {
       {super.key,
       required this.value,
       required this.onChanged,
-      this.enabled = true});
+      this.enabled = true,
+      this.title = 'Дата и время отправления',
+      this.helperText =
+          'Заказы только на выбранный день, до времени отправления. Время по настройкам устройства.'});
   final DateTime? value;
   final ValueChanged<DateTime> onChanged;
   final bool enabled;
+  final String title, helperText;
 
   Future<void> _pick(BuildContext context) async {
     final now = DateTime.now();
@@ -62,8 +66,7 @@ class RouteDepartureField extends StatelessWidget {
           label: Padding(
               padding: const EdgeInsets.symmetric(vertical: 10),
               child: Column(children: [
-                const Text('Дата и время отправления',
-                    textAlign: TextAlign.center),
+                Text(title, textAlign: TextAlign.center),
                 Text(
                     value == null
                         ? 'Выбрать дату и время'
@@ -72,8 +75,6 @@ class RouteDepartureField extends StatelessWidget {
               ])),
         ),
         const SizedBox(height: 6),
-        Text(
-            'Заказы только на выбранный день, до времени отправления. Время по настройкам устройства.',
-            style: Theme.of(context).textTheme.bodySmall),
+        Text(helperText, style: Theme.of(context).textTheme.bodySmall),
       ]);
 }

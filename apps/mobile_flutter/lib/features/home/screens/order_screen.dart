@@ -1,3 +1,4 @@
+import '../../driver/widgets/route_departure_field.dart';
 import '../../../core/services/trip_status_sound.dart';
 import '../../../core/services/push_notifications_service.dart';
 import '../widgets/city_order_composer.dart';
@@ -479,6 +480,7 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _intercitySmokingAllowed = false;
   bool _manualAddressForFrom = true;
   DateTime _intercityTripDate = _defaultIntercityTripDate();
+  bool _intercityDateConfirmed = false;
   List<Map<String, dynamic>> _intercityReadyTrips = const [];
   bool _intercityReadyTripsLoading = false;
   bool _passengerMapHomeEnabled = true;
@@ -738,6 +740,9 @@ class _OrderScreenState extends State<OrderScreen> {
       'fromLng': from?.longitude,
       'toLat': to?.latitude,
       'toLng': to?.longitude,
+      'intercityDate': _intercityDateConfirmed
+          ? _intercityTripDate.toUtc().toIso8601String()
+          : null,
       'intercityFromCityId': _intercityFromCityId,
       'intercityToCityId': _intercityToCityId,
       'intercityFromCityName': _intercityFromCityName,
@@ -761,6 +766,8 @@ class _OrderScreenState extends State<OrderScreen> {
     try {
       final draft = Map<String, dynamic>.from(jsonDecode(raw) as Map);
       final fromLat = (draft['fromLat'] as num?)?.toDouble();
+      final chosenDate =
+          DateTime.tryParse('${draft['intercityDate']}')?.toLocal();
       final fromLng = (draft['fromLng'] as num?)?.toDouble();
       final toLat = (draft['toLat'] as num?)?.toDouble();
       final toLng = (draft['toLng'] as num?)?.toDouble();
@@ -774,6 +781,10 @@ class _OrderScreenState extends State<OrderScreen> {
           (draft['intercityToCityLng'] as num?)?.toDouble();
       if (!mounted) return;
       setState(() {
+        if (chosenDate != null && chosenDate.isAfter(DateTime.now())) {
+          _intercityTripDate = chosenDate;
+          _intercityDateConfirmed = true;
+        }
         _modeIndex = (draft['modeIndex'] as num?)?.toInt() ?? _modeIndex;
         _cityModeIndex =
             (draft['cityModeIndex'] as num?)?.toInt() ?? _cityModeIndex;
@@ -1096,6 +1107,11 @@ class _OrderScreenState extends State<OrderScreen> {
 
   Future<void> _continueBoardIntercityStart() async {
     _modeIndex = 1;
+    if (!_intercityDateConfirmed ||
+        !_intercityTripDate.isAfter(DateTime.now())) {
+      setState(() => _statusText = 'Выберите будущую дату и время поездки');
+      return;
+    }
     if (!_hasIntercitySearchCity(isFrom: true) ||
         !_hasIntercitySearchCity(isFrom: false)) {
       setState(() {
@@ -5604,14 +5620,6 @@ class _OrderScreenState extends State<OrderScreen> {
                   ),
                 ),
                 const SizedBox(height: 14),
-                _intercityCitySelectorCard(),
-                const SizedBox(height: 12),
-                _routeAddressPanel(),
-                if (_statusText.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  ICPremiumInfoBanner(text: _statusText),
-                ],
-                const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
@@ -5626,20 +5634,31 @@ class _OrderScreenState extends State<OrderScreen> {
                       _boardIntercityInfoRow(
                         icon: Icons.calendar_month_rounded,
                         label: 'Дата',
-                        value: _formatIntercityDate(_intercityTripDate),
+                        value: _intercityDateConfirmed
+                            ? _formatIntercityDate(_intercityTripDate)
+                            : 'Выберите дату',
                         onTap: _pickIntercityDate,
                       ),
                       const Divider(height: 18),
                       _boardIntercityInfoRow(
                         icon: Icons.schedule_rounded,
                         label: 'Время',
-                        value:
-                            '${_intercityTripDate.hour.toString().padLeft(2, '0')}:${_intercityTripDate.minute.toString().padLeft(2, '0')}',
+                        value: _intercityDateConfirmed
+                            ? '${_intercityTripDate.hour.toString().padLeft(2, '0')}:${_intercityTripDate.minute.toString().padLeft(2, '0')}'
+                            : 'Выберите время',
                         onTap: _pickIntercityDate,
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(height: 12),
+                _intercityCitySelectorCard(),
+                const SizedBox(height: 12),
+                _routeAddressPanel(),
+                if (_statusText.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ICPremiumInfoBanner(text: _statusText),
+                ],
                 const SizedBox(height: 12),
                 Container(
                   height: 58,
@@ -7611,6 +7630,22 @@ class _OrderScreenState extends State<OrderScreen> {
       if (_requestType() == requestTypeIntercity) ...[
         _intercityCitySelectorCard(),
         const SizedBox(height: 8),
+        RouteDepartureField(
+            value: _intercityDateConfirmed ? _intercityTripDate : null,
+            title: 'Дата и время поездки',
+            helperText:
+                'Укажите, когда хотите поехать. Время по настройкам устройства.',
+            enabled: !_loading,
+            onChanged: (value) {
+              setState(() {
+                _intercityTripDate = value;
+                _intercityDateConfirmed = true;
+                _statusText = '';
+              });
+              unawaited(_saveBoardDraft());
+              _scheduleIntercityReadyTripsSearch();
+            }),
+        const SizedBox(height: 8),
       ],
       if (_requestType() != requestTypeIntercity) ...[
         _addressSearchHeroCard(),
@@ -8223,68 +8258,73 @@ class _OrderScreenState extends State<OrderScreen> {
   Future<void> _openIntercityCitySearch(
       {required bool isFrom, bool forCityRide = false}) async {
     var dialogOpen = true;
-    final selected = await showDialog<Map<String, dynamic>>(
+    final controller = TextEditingController(
+      text: forCityRide ? _currentCityName : _intercityCityName(isFrom: isFrom),
+    );
+    Timer? debounce;
+    var loading = false;
+    var results = <Map<String, dynamic>>[];
+    var message = controller.text.trim().isEmpty
+        ? 'Введите город, например Алматы, Астана, Усть-Каменогорск.'
+        : 'Начните вводить город.';
+
+    Future<void> runSearch(
+      String query,
+      void Function(void Function()) setSheetState,
+    ) async {
+      if (!dialogOpen) return;
+      final normalized = query.trim();
+      if (normalized.length < 2) {
+        setSheetState(() {
+          results = [];
+          message = 'Введите минимум 2 символа.';
+          loading = false;
+        });
+        return;
+      }
+      setSheetState(() {
+        loading = true;
+        message = '';
+      });
+      try {
+        final found = await _searchCitiesInDatabase(normalized);
+        if (!mounted || !dialogOpen || controller.text.trim() != normalized) {
+          return;
+        }
+        setSheetState(() {
+          results = found;
+          message = found.isEmpty ? 'Город не найден. Уточните запрос.' : '';
+          loading = false;
+        });
+      } catch (e) {
+        if (!mounted || !dialogOpen || controller.text.trim() != normalized) {
+          return;
+        }
+        setSheetState(() {
+          results = [];
+          message = 'Не удалось выполнить поиск. Попробуйте ещё раз.';
+          loading = false;
+        });
+      }
+    }
+
+    void closeSearch(BuildContext dialogContext,
+        [Map<String, dynamic>? result]) {
+      if (!dialogOpen ||
+          !dialogContext.mounted ||
+          ModalRoute.of(dialogContext)?.isCurrent != true) {
+        return;
+      }
+      dialogOpen = false;
+      debounce?.cancel();
+      Navigator.of(dialogContext).pop(result);
+    }
+
+    final cityRoute = DialogRoute<Map<String, dynamic>>(
       context: context,
       useSafeArea: false,
       builder: (dialogContext) {
         final theme = Theme.of(dialogContext);
-        final controller = TextEditingController(
-          text: forCityRide
-              ? _currentCityName
-              : _intercityCityName(isFrom: isFrom),
-        );
-        Timer? debounce;
-        var loading = false;
-        var results = <Map<String, dynamic>>[];
-        var message = controller.text.trim().isEmpty
-            ? 'Введите город, например Алматы, Астана, Усть-Каменогорск.'
-            : 'Начните вводить город.';
-
-        Future<void> runSearch(
-          String query,
-          void Function(void Function()) setSheetState,
-        ) async {
-          if (!dialogOpen) return;
-          final normalized = query.trim();
-          if (normalized.length < 2) {
-            setSheetState(() {
-              results = [];
-              message = 'Введите минимум 2 символа.';
-              loading = false;
-            });
-            return;
-          }
-          setSheetState(() {
-            loading = true;
-            message = '';
-          });
-          try {
-            final found = await _searchCitiesInDatabase(normalized);
-            if (!mounted ||
-                !dialogOpen ||
-                controller.text.trim() != normalized) {
-              return;
-            }
-            setSheetState(() {
-              results = found;
-              message =
-                  found.isEmpty ? 'Город не найден. Уточните запрос.' : '';
-              loading = false;
-            });
-          } catch (e) {
-            if (!mounted ||
-                !dialogOpen ||
-                controller.text.trim() != normalized) {
-              return;
-            }
-            setSheetState(() {
-              results = [];
-              message = 'Не удалось выполнить поиск. Попробуйте ещё раз.';
-              loading = false;
-            });
-          }
-        }
-
         return StatefulBuilder(
           builder: (context, setSheetState) {
             return Scaffold(
@@ -8298,7 +8338,7 @@ class _OrderScreenState extends State<OrderScreen> {
                       Row(
                         children: [
                           IconButton(
-                            onPressed: () => Navigator.of(context).pop(),
+                            onPressed: () => closeSearch(dialogContext),
                             icon: const Icon(Icons.arrow_back_rounded),
                           ),
                           Expanded(
@@ -8404,8 +8444,7 @@ class _OrderScreenState extends State<OrderScreen> {
                               ),
                               trailing: const Icon(Icons.chevron_right_rounded),
                               onTap: () {
-                                debounce?.cancel();
-                                Navigator.of(context).pop(item);
+                                closeSearch(dialogContext, item);
                               },
                             );
                           },
@@ -8419,7 +8458,12 @@ class _OrderScreenState extends State<OrderScreen> {
           },
         );
       },
-    ).whenComplete(() => dialogOpen = false);
+    );
+    final selected = await Navigator.of(context).push(cityRoute);
+    dialogOpen = false;
+    await cityRoute.completed;
+    debounce?.cancel();
+    controller.dispose();
 
     if (selected == null || !mounted) return;
     final point = _pointFromGeoItem(selected);
@@ -11637,14 +11681,25 @@ class _OrderScreenState extends State<OrderScreen> {
     final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(_intercityTripDate),
-      helpText: 'Ориентировочное время',
+      helpText: 'Время поездки',
+      builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+          child: child!),
       cancelText: 'Отмена',
       confirmText: 'Выбрать',
     );
-    if (!mounted) return;
-    final nextHour = time?.hour ?? _intercityTripDate.hour;
-    final nextMinute = time?.minute ?? _intercityTripDate.minute;
+    if (time == null || !mounted) return;
+    final selected =
+        DateTime(picked.year, picked.month, picked.day, time.hour, time.minute);
+    if (!selected.isAfter(DateTime.now())) {
+      setState(() => _statusText = 'Выберите будущую дату и время поездки');
+      return;
+    }
+    final nextHour = time.hour;
+    final nextMinute = time.minute;
     setState(() {
+      _statusText = '';
+      _intercityDateConfirmed = true;
       _intercityTripDate = DateTime(
         picked.year,
         picked.month,
@@ -11653,6 +11708,7 @@ class _OrderScreenState extends State<OrderScreen> {
         nextMinute,
       );
     });
+    unawaited(_saveBoardDraft());
     _scheduleIntercityReadyTripsSearch();
   }
 
@@ -11920,6 +11976,7 @@ class _OrderScreenState extends State<OrderScreen> {
       _boardDistance = null;
       _boardDuration = null;
       _intercityTripDate = _defaultIntercityTripDate();
+      _intercityDateConfirmed = false;
       _intercityBaggage = 1;
       _intercityPets = 'Нет';
       _intercityChildSeats = 0;
@@ -12340,7 +12397,8 @@ class _OrderScreenState extends State<OrderScreen> {
                                 isFrom: isFrom,
                                 point: selected,
                               );
-                              if (context.mounted) {
+                              if (context.mounted &&
+                                  ModalRoute.of(context)?.isCurrent == true) {
                                 Navigator.of(context).pop();
                               }
                             },
@@ -12377,13 +12435,6 @@ class _OrderScreenState extends State<OrderScreen> {
     await _saveBoardDraft();
     _scheduleAutoBoard();
     _scheduleIntercityReadyTripsSearch();
-    if (!isFrom &&
-        _requestType() == requestTypeIntercity &&
-        _fromLocation != null &&
-        _toLocation != null) {
-      await _board();
-      if (mounted) _goOrderBoard('intercity_options');
-    }
   }
 
   Future<Map<String, dynamic>> _reversePoint(LatLng point) =>
@@ -13136,13 +13187,6 @@ class _OrderScreenState extends State<OrderScreen> {
           await _board();
           if (mounted) _goOrderBoard('routeprice');
         }
-        if (navigateAfterApply &&
-            _requestType() == requestTypeIntercity &&
-            _fromLocation != null &&
-            _toLocation != null) {
-          await _board();
-          if (mounted) _goOrderBoard('intercity_options');
-        }
       }
     } catch (e) {
       setState(
@@ -13242,13 +13286,6 @@ class _OrderScreenState extends State<OrderScreen> {
       await _board();
       if (mounted) _goOrderBoard('routeprice');
       return;
-    }
-
-    if (_requestType() == requestTypeIntercity &&
-        _fromLocation != null &&
-        _toLocation != null) {
-      await _board();
-      if (mounted) _goOrderBoard('intercity_options');
     }
   }
 
@@ -13471,6 +13508,12 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   bool _validateBeforeCreate() {
+    if (_requestType() == requestTypeIntercity &&
+        (!_intercityDateConfirmed ||
+            !_intercityTripDate.isAfter(DateTime.now()))) {
+      _statusText = 'Выберите будущую дату и время поездки';
+      return false;
+    }
     if (_requestType() == requestTypeCityAuction) {
       if (_fromLocation == null || _toLocation == null) {
         _statusText = 'Выберите адреса или обе точки на карте.';

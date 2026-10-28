@@ -873,44 +873,60 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
     final expectsSeats = requestType == requestTypeIntercity;
     final priceCtrl = TextEditingController();
     final commentCtrl = TextEditingController();
-    final seatsCtrl = TextEditingController(
-      text: ((request['seats'] as num?)?.toInt() ?? 1).toString(),
-    );
+    final requiredSeats =
+        ((request['seats'] as num?)?.toInt() ?? 1).clamp(1, 8);
+    int seats = requiredSeats;
+    String? priceError, sendError;
+    bool sending = false;
+    BuildContext? offerContext;
 
     Future<void> submitOffer(StateSetter setDialogState) async {
-      final price = double.tryParse(priceCtrl.text.trim());
-      final seats = expectsSeats ? int.tryParse(seatsCtrl.text.trim()) : 1;
-      if (price == null || price <= 0 || seats == null || seats <= 0) {
-        setDialogState(() {});
-        return;
-      }
-
+      if (sending) return;
+      final raw = priceCtrl.text.trim().replaceAll(',', '.');
+      final price = double.tryParse(raw);
+      final valid = RegExp(r'^\d+(?:\.\d{1,2})?$').hasMatch(raw) &&
+          price != null &&
+          price.isFinite &&
+          price > 0 &&
+          price <= 10000000;
+      setDialogState(() {
+        priceError = valid
+            ? null
+            : raw.isEmpty
+                ? 'Введите вашу цену за поездку'
+                : 'Введите сумму от 0,01 до 10 000 000, не более двух знаков после запятой';
+        sendError = null;
+      });
+      if (!valid) return;
+      setDialogState(() => sending = true);
       try {
-        await _api.post(
-          '/intercity/requests/${request['id']}/offers',
-          data: {
-            'price': price,
-            'seats': seats,
-            'comment': commentCtrl.text.trim().isEmpty
-                ? null
-                : commentCtrl.text.trim(),
-          },
-        );
-        if (!mounted) return;
-        Navigator.of(context).pop();
+        await _api.post('/intercity/requests/${request['id']}/offers', data: {
+          'price': price,
+          'seats': expectsSeats ? seats : 1,
+          'comment':
+              commentCtrl.text.trim().isEmpty ? null : commentCtrl.text.trim(),
+        });
+        if (!mounted || offerContext?.mounted != true) return;
+        Navigator.of(offerContext!).pop();
         setState(() => _message = 'Отклик на заявку отправлен');
         await _loadDriverIntercityData(silent: true);
       } catch (e) {
-        if (!mounted) return;
-        setState(() => _message = errorMessageRu(e));
+        if (offerContext?.mounted == true) {
+          setDialogState(() => sendError = errorMessageRu(e));
+        }
+      } finally {
+        if (offerContext?.mounted == true) {
+          setDialogState(() => sending = false);
+        }
       }
     }
 
-    await showDialog<void>(
+    final offerRoute = DialogRoute<void>(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            offerContext = context;
             final title = requestType == requestTypeIntercity
                 ? 'Откликнуться на межгород'
                 : requestType == requestTypeCityAuction
@@ -1083,7 +1099,15 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                               ),
                             ),
                             const SizedBox(height: 8),
-                            _quickOfferPrices(priceCtrl, setDialogState),
+                            IgnorePointer(
+                                ignoring: sending,
+                                child: _quickOfferPrices(
+                                    priceCtrl,
+                                    (change) => setDialogState(() {
+                                          change();
+                                          priceError = null;
+                                          sendError = null;
+                                        }))),
                             const SizedBox(height: 12),
                             TextField(
                               controller: priceCtrl,
@@ -1092,19 +1116,43 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                                 decimal: true,
                               ),
                               decoration: _inputDecoration(
-                                label: 'Предложение по цене',
+                                label:
+                                    'Ваша цена за поездку ($_offerCurrencySymbol)',
                                 icon: Icons.payments_outlined,
-                              ),
+                              ).copyWith(
+                                  errorText: priceError,
+                                  helperText:
+                                      'Сумма за всю поездку, не за одно место'),
+                              enabled: !sending,
+                              onChanged: (_) => setDialogState(() {
+                                priceError = null;
+                                sendError = null;
+                              }),
                             ),
                             if (expectsSeats) ...[
                               const SizedBox(height: 12),
-                              TextField(
-                                controller: seatsCtrl,
-                                keyboardType: TextInputType.number,
+                              DropdownButtonFormField<int>(
+                                initialValue: seats,
                                 decoration: _inputDecoration(
-                                  label: 'Количество мест',
-                                  icon: Icons.event_seat_rounded,
-                                ),
+                                        label: 'Количество мест',
+                                        icon: Icons.event_seat_rounded)
+                                    .copyWith(
+                                        helperText:
+                                            'Пассажиру нужно мест: $requiredSeats'),
+                                items: [
+                                  for (var count = requiredSeats;
+                                      count <= 8;
+                                      count++)
+                                    DropdownMenuItem(
+                                        value: count, child: Text('$count'))
+                                ],
+                                onChanged: sending
+                                    ? null
+                                    : (value) {
+                                        if (value != null) {
+                                          setDialogState(() => seats = value);
+                                        }
+                                      },
                               ),
                             ],
                             const SizedBox(height: 12),
@@ -1116,6 +1164,14 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                               ),
                               maxLines: 2,
                             ),
+                            if (sendError != null)
+                              Padding(
+                                  padding: const EdgeInsets.only(top: 12),
+                                  child: Text(sendError!,
+                                      style: TextStyle(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .error))),
                             const SizedBox(height: 16),
                             Row(
                               children: [
@@ -1130,9 +1186,12 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: ICGradientButton(
-                                    label: 'Отправить',
-                                    onPressed: () =>
-                                        submitOffer(setDialogState),
+                                    label:
+                                        sending ? 'Отправляем…' : 'Отправить',
+                                    loading: sending,
+                                    onPressed: sending
+                                        ? null
+                                        : () => submitOffer(setDialogState),
                                   ),
                                 ),
                               ],
@@ -1149,6 +1208,10 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
         );
       },
     );
+    await Navigator.of(context).push(offerRoute);
+    await offerRoute.completed;
+    priceCtrl.dispose();
+    commentCtrl.dispose();
   }
 
   Widget _card({required Widget child, EdgeInsets? padding}) {
