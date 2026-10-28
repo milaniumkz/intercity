@@ -22,7 +22,7 @@ on:
         required: false
 
 concurrency:
-  group: intercity-production-vps-ops
+  group: ${{ inputs.action == 'status' && 'intercity-production-vps-readonly' || 'intercity-production-vps-ops' }}
   cancel-in-progress: false
 
 jobs:

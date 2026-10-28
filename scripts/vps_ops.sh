@@ -91,7 +91,7 @@ JSENABLEDEMO
     if [[ "$TARGET" == deploy-progress:* ]]; then
       deploy_sha="${TARGET#deploy-progress:}"
       [[ "$deploy_sha" =~ ^[a-f0-9]{40}$ ]] || exit 1
-      for path in "/tmp/intercity-vps-$deploy_sha.tar.gz" "$APP_ROOT/releases/$deploy_sha" "$APP_ROOT"/backups/*-"$deploy_sha"; do
+      for path in "/tmp/intercity-transfer-$deploy_sha" "/tmp/intercity-vps-$deploy_sha.tar.gz" "$APP_ROOT/releases/$deploy_sha" "$APP_ROOT"/backups/*-"$deploy_sha"; do
         if [[ -e "$path" ]]; then
           stat -c 'progress_path=%n bytes=%s modified=%y' "$path"
           if [[ -d "$path" ]]; then du -sb "$path"; fi
