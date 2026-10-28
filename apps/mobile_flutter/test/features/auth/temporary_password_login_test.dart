@@ -12,12 +12,13 @@ class RecoveryApi extends ApiClient {
   @override
   Future<Response<dynamic>> post(String path,
       {dynamic data, Options? options}) async {
-    if (path == '/auth/login')
+    if (path == '/auth/login') {
       return Response(requestOptions: RequestOptions(path: path), data: {
         'accessToken': 'local-only',
         'refreshToken': 'local-only',
         'user': {'id': 'qa', 'role': 'PASSENGER', 'mustChangePassword': true}
       });
+    }
     if (path == '/auth/change-password') {
       changes.add(Map<String, dynamic>.from(data as Map));
       throw DioException(
