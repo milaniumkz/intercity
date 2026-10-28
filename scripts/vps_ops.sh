@@ -128,7 +128,7 @@ const {PrismaClient}=require('@prisma/client');const bcrypt=require('bcrypt');
  console.log(JSON.stringify({kind:'login-account',id:u.id,canonicalPhone:u.phone==='+77785419702',phoneLast4:u.phone.slice(-4),name:u.name,role:u.role,blocked:!!u.blockedAt,mustChangePassword:u.mustChangePassword,authVersion:u.authVersion,passwordHashValid:validHash,createdAt:u.createdAt,updatedAt:u.updatedAt,sessions}));
  const events=await db.techEvent.findMany({where:{userId:u.id,at:{gte:new Date(Date.now()-86400000)}},orderBy:{at:'desc'},take:20,select:{at:true,action:true,stage:true,result:true,status:true,message:true}});console.log(JSON.stringify({kind:'account-events',userId:u.id,events}));
  }
- const failed=await db.techEvent.findMany({where:{action:{contains:'/auth/login'},at:{gte:new Date(Date.now()-3600000)}},orderBy:{at:'desc'},take:20,select:{at:true,action:true,result:true,status:true,message:true}});console.log(JSON.stringify({kind:'recent-login-results',events:failed}));
+ const failed=await db.techEvent.findMany({where:{OR:[{action:{contains:'login'}},{status:{gte:400}}],at:{gte:new Date(Date.now()-3600000)}},orderBy:{at:'desc'},take:40,select:{at:true,action:true,result:true,status:true,message:true}});console.log(JSON.stringify({kind:'recent-login-results',events:failed}));
  },{timeout:30000})}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
 JSPASSLOGIN
       exit 0
