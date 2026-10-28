@@ -4,7 +4,7 @@ const database=process.env.DISPATCH_TEST_DATABASE_URL;
 test('self deletion removes the original account, credentials, driver documents and cards while preserving anonymous ledger',{skip:!database},async()=>{
  const url=new URL(database);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.pathname,'/dispatch_test');
  const p=new PrismaClient({datasources:{db:{url:database}}});const root=await fs.mkdtemp(path.join(os.tmpdir(),'account-erasure-'));const oldRoot=process.env.UPLOAD_DIR;process.env.UPLOAD_DIR=root;
- const password='delete-test-password';const phone='+7'+String(Date.now()).slice(-10);let user,peer,profile,order,archiveId,replacement;
+ const password='delete-test-password';const phone='+7'+String(Date.now()).slice(-10);let user,peer,profile,order,archiveId,replacement,intercity;
  try {
   user=await p.user.create({data:{phone,name:'Private Name',password:await bcrypt.hash(password,4),refCode:randomUUID(),refLink:'private-link',pushToken:'private-push',wallet:{create:{money:123,bonus:15}}},include:{wallet:true}});
   peer=await p.user.create({data:{phone:'peer:'+randomUUID(),name:'Peer',password:'test',refCode:randomUUID(),refLink:'test',referredBy:user.refCode}});
@@ -12,6 +12,8 @@ test('self deletion removes the original account, credentials, driver documents 
   await fs.mkdir(path.join(root,profile.id));await fs.writeFile(path.join(root,profile.id,'selfie.jpg'),'private-document');
   order=await p.order.create({data:{passengerId:user.id,status:'COMPLETED',fromLat:49.9,fromLng:82.6,toLat:50,toLng:83,fromAddress:'Private pickup',toAddress:'Private destination',comment:'Private note'}});
   await p.orderChatMessage.create({data:{orderId:order.id,senderId:user.id,text:'Private chat'}});
+  intercity=await p.intercityRequest.create({data:{passengerId:user.id,selectedDriverId:peer.id,status:'COMPLETED',fromCity:'Private',toCity:'Private destination',date:new Date(),price:1000}});
+  await p.intercityChatMessage.createMany({data:[{requestId:intercity.id,senderId:user.id,text:'Private intercity chat'},{requestId:intercity.id,senderId:peer.id,text:'Private peer reply'}]});
   await p.rideEvent.create({data:{orderId:order.id,toStatus:'COMPLETED',actorUserId:user.id,payload:{phone}}});
   await p.walletTransaction.create({data:{walletId:user.wallet.id,type:'TOPUP',direction:'CREDIT',amount:123,note:phone,actorUserId:user.id}});
   await p.refreshToken.create({data:{userId:user.id,token:'refresh:'+user.id,expiresAt:new Date(Date.now()+60000)}});
@@ -34,6 +36,7 @@ test('self deletion removes the original account, credentials, driver documents 
   const erased=await p.order.findUnique({where:{id:order.id}});archiveId=erased.passengerId;assert.notEqual(archiveId,user.id);assert.equal(erased.fromAddress,'Удалено');assert.equal(erased.fromLat,0);
   assert.equal(await p.taxProfile.findUnique({where:{userId:user.id}}),null);
   assert.equal((await p.taxIncomeEntry.findUnique({where:{eventKey:'tax-erasure:'+user.id}})).ownerKey,archiveId);
+  assert.equal(await p.intercityChatMessage.count({where:{requestId:intercity.id}}),0);
   assert.equal(await p.taxAccountingIdentity.findUnique({where:{ownerKey:user.id}}),null);
   assert.ok(await p.taxAccountingIdentity.findUnique({where:{ownerKey:archiveId}}));
   const owner=await p.user.findUnique({where:{id:archiveId}});assert.equal(owner.password,'');assert.notEqual(owner.phone,phone);assert.equal(owner.pushToken,null);
@@ -43,6 +46,7 @@ test('self deletion removes the original account, credentials, driver documents 
   await assert.rejects(service.deleteOwnAccount(user.id,password));
  } finally {
   if(oldRoot===undefined)delete process.env.UPLOAD_DIR;else process.env.UPLOAD_DIR=oldRoot;
+  if(intercity){await p.intercityChatMessage.deleteMany({where:{requestId:intercity.id}});await p.intercityRequest.deleteMany({where:{id:intercity.id}});}
   if(order){await p.orderChatMessage.deleteMany({where:{orderId:order.id}});await p.rideEvent.deleteMany({where:{orderId:order.id}});await p.order.deleteMany({where:{id:order.id}});}
   if(profile){await p.accountDeletionFileJob.deleteMany({where:{directory:profile.id}});await p.vehicle.deleteMany({where:{driverId:profile.id}});await p.driverOnline.deleteMany({where:{driverId:profile.id}});await p.driverRating.deleteMany({where:{driverId:profile.id}});await p.driverServiceStats.deleteMany({where:{driverId:profile.id}});await p.driverProfile.deleteMany({where:{id:profile.id}});}
   await p.taxIncomeEntry.deleteMany({where:{ownerKey:{in:[user?.id,archiveId].filter(Boolean)}}});

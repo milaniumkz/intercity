@@ -40,6 +40,23 @@ class _HomeApi extends ApiClient {
 
 void main() {
   testWidgets(
+      'accepted intercity restores even while both optional feeds never respond',
+      (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    await tester.pumpWidget(MaterialApp(
+        home: DriverHomePage(
+            apiClient: _UnavailableFeedsApi(),
+            mapTileProvider: MemoryTileProvider(),
+            realtimeConnector: (_) async => null)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const ValueKey('driver-primary-ride-action')),
+        findsOneWidget);
+    expect(find.text('Начать поездку'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
       'registered route request appears on the map and accepts a price offer',
       (tester) async {
     FlutterSecureStorage.setMockInitialValues({});
@@ -370,5 +387,17 @@ class _MatchingRouteApi extends _HomeApi {
       sentSeats = data['seats'];
     }
     return Response(requestOptions: RequestOptions(path: path), data: {});
+  }
+}
+
+class _UnavailableFeedsApi extends _IntercityApi {
+  @override
+  Future<Response<dynamic>> get(String path,
+      {Map<String, dynamic>? queryParameters, Options? options}) {
+    if (path == '/ridesharing/trips/my' ||
+        path == '/driver/intercity/matching') {
+      return Completer<Response<dynamic>>().future;
+    }
+    return super.get(path, queryParameters: queryParameters, options: options);
   }
 }

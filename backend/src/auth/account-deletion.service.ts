@@ -33,6 +33,7 @@ export class AccountDeletionService implements OnModuleInit, OnModuleDestroy {
             const archiveId = randomUUID();
             await tx.user.create({data: {id: archiveId, phone: `erased:${archiveId}`, name: 'Удалённый аккаунт', password: '', refCode: `erased:${archiveId}`, refLink: ''}});
             const ownOrders = (await tx.order.findMany({where: {passengerId: userId}, select: {id: true}})).map(item => item.id);
+            await tx.intercityChatMessage.deleteMany({where:{OR:[{senderId:userId},{request:{OR:[{passengerId:userId},{selectedDriverId:userId}]}}]}});
             await tx.orderChatMessage.deleteMany({where: {OR: [{senderId: userId},{orderId: {in: ownOrders}}]}});
             await tx.rideEvent.updateMany({where: {OR: [{actorUserId: userId},{orderId: {in: ownOrders}}]}, data: {actorUserId: null, payload: Prisma.DbNull, reason: null}});
             await tx.order.updateMany({where: {passengerId: userId, status: {in: ['CREATED','SEARCHING_DRIVER']}}, data: {status: 'CANCELLED', dispatchDriverId: null, dispatchExpiresAt: null}});

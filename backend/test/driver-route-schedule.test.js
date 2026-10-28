@@ -29,6 +29,12 @@ test('scheduled route matches only selected local day, validates offers, preserv
   await assert.rejects(service.addIntercityRoute(driver.id,data),/принятые заказы/);assert.equal((await tx.driverIntercityRoute.findUnique({where:{id:route.id}})).seatsAvailable,1);
   await tx.driverIntercityRoute.update({where:{id:route.id},data:{departureAt:new Date(Date.now()-1000)}});assert.deepEqual(await service.getMatchingIntercityRequests(driver.id),[]);
   assert((await service.getActiveIntercity(driver.id)).some(r=>r.id===ids[2]));
+  const pickup=await intercity.getRequest(passenger.id,ids[2]);assert.equal(pickup.pickupProgress.route.seatsAvailable,1);assert.equal(pickup.pickupProgress.driverLocation,null);
+  await intercity.updateDriverRequestStatus(driver.id,ids[2],'DRIVER_EN_ROUTE');
+  await tx.driverOnline.create({data:{driverId:driver.driverProfile.id,isOnline:true,lastLat:49.9,lastLng:82.6,lastAccuracy:10,lastLocationAt:new Date()}});
+  const enRoute=await intercity.getRequest(passenger.id,ids[2]);assert.equal(enRoute.status,'DRIVER_EN_ROUTE');assert.equal(enRoute.pickupProgress.driverLocation.lat,49.9);
+  await tx.driverOnline.update({where:{driverId:driver.driverProfile.id},data:{lastLocationAt:new Date(Date.now()-180000)}});assert.equal((await intercity.getRequest(passenger.id,ids[2])).pickupProgress.driverLocation,null);
+  await intercity.updateDriverRequestStatus(driver.id,ids[2],'CANCELLED');assert.equal((await tx.driverIntercityRoute.findUnique({where:{id:route.id}})).seatsAvailable,2);
   throw rollback;
  },{timeout:60000}),e=>e===rollback);}finally{await p.$disconnect()}
 });

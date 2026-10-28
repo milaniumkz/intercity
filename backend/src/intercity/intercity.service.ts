@@ -18,6 +18,7 @@ import { requireNoActivePassengerOrder } from '../common/active-passenger-order'
 import { GeoService } from '../geo/geo.service';
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -28,6 +29,32 @@ import { clientUserSelect } from "../common/public-user-select";
 @Injectable()
 export class IntercityService {
   constructor(private prisma: PrismaService, private geoService: GeoService, private cardPayments: CardPaymentsService, private realtime: RealtimeService, private push: PushService) {}
+
+  private async chatParticipant(db: any, requestId: string, userId: string) {
+    const request = await db.intercityRequest.findUnique({where:{id:requestId}});
+    if (!request) throw new NotFoundException('Заявка не найдена');
+    if (request.passengerId !== userId && request.selectedDriverId !== userId) throw new ForbiddenException('Нет доступа к этому чату');
+    if (!request.selectedDriverId) throw new BadRequestException('Чат доступен после выбора водителя');
+    return request;
+  }
+
+  async getChat(requestId: string, userId: string) {
+    const request = await this.chatParticipant(this.prisma,requestId,userId);
+    const messages = await this.prisma.intercityChatMessage.findMany({where:{requestId},orderBy:{createdAt:'desc'},take:200,include:{sender:{select:{publicId:true,name:true}}}});
+    return messages.reverse().map(message=>({...message,isMine:message.senderId===userId,participantRole:message.senderId===request.passengerId?'PASSENGER':'DRIVER'}));
+  }
+
+  async sendChat(requestId: string, userId: string, text: unknown) {
+    if (typeof text !== 'string' || !text.trim()) throw new BadRequestException('Введите сообщение');
+    if (text.trim().length > 1000) throw new BadRequestException('Сообщение слишком длинное');
+    return this.prisma.$transaction(async tx=>{
+      await tx.$executeRaw`SELECT id FROM "IntercityRequest" WHERE id=${requestId} FOR UPDATE`;
+      const request = await this.chatParticipant(tx,requestId,userId);
+      if (!['ACCEPTED','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'].includes(request.status)) throw new BadRequestException('Чат закрыт для этого заказа');
+      const message=await tx.intercityChatMessage.create({data:{requestId,senderId:userId,text:text.trim()},include:{sender:{select:{publicId:true,name:true}}}});
+      return {...message,isMine:true,participantRole:request.passengerId===userId?'PASSENGER':'DRIVER'};
+    });
+  }
 
   async passengerLeaving(requestId: string, userId: string) {
     return passengerLeaving(this.prisma, 'INTERCITY', requestId, userId, this.realtime, this.push);
@@ -314,8 +341,13 @@ export class IntercityService {
       orderBy: [{ price: "asc" }, { createdAt: "asc" }],
     });
 
+    const route = request.reservedRouteId ? await this.prisma.driverIntercityRoute.findUnique({where:{id:request.reservedRouteId},select:{departureAt:true,departureOffsetMinutes:true,seatsTotal:true,seatsAvailable:true}}) : null;
+    const online = request.selectedDriverId && ['DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'].includes(request.status)
+      ? await this.prisma.driverOnline.findFirst({where:{driver:{userId:request.selectedDriverId}},select:{lastLat:true,lastLng:true,lastLocationAt:true,lastAccuracy:true}}) : null;
+    const freshLocation = online?.lastAccuracy != null && online.lastAccuracy <= 100 && online.lastLocationAt && online.lastLocationAt.getTime() > Date.now()-120000 && online.lastLat != null && online.lastLng != null ? {lat:online.lastLat,lng:online.lastLng,at:online.lastLocationAt} : null;
     return {
       ...request,
+      pickupProgress: {route,driverLocation:freshLocation},
       cardPayment: this.cardPayments ? await this.cardPayments.state('INTERCITY',request.id) : null,
       offers: await this.enrichOffers(offers),
     };
@@ -555,6 +587,7 @@ export class IntercityService {
   ) {
     const target = (status || "").toString().toUpperCase();
     const allowedTargets = new Set([
+      "DRIVER_EN_ROUTE",
       "DRIVER_ARRIVED",
       "IN_PROGRESS",
       "COMPLETED",
@@ -577,8 +610,8 @@ export class IntercityService {
     }
 
     const transitions: Record<string, Set<string>> = {
-      ACCEPTED: new Set(["DRIVER_ARRIVED", "CANCELLED"]),
-      DRIVER_ASSIGNED: new Set(["DRIVER_ARRIVED", "CANCELLED"]),
+      ACCEPTED: new Set(["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "CANCELLED"]),
+      DRIVER_ASSIGNED: new Set(["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "CANCELLED"]),
       DRIVER_EN_ROUTE: new Set(["DRIVER_ARRIVED", "CANCELLED"]),
       DRIVER_ARRIVED: new Set(["IN_PROGRESS", "CANCELLED"]),
       IN_PROGRESS: new Set(["COMPLETED"]),

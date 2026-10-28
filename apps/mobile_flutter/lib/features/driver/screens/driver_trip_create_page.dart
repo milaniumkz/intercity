@@ -37,6 +37,9 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   bool _promoteToTop = false;
   DateTime _departureTime = _defaultDepartureTime();
   List<dynamic> _openRequests = [];
+  List<Map<String, dynamic>> _activeRequests = [];
+  String? _loadWarning;
+  bool _refreshing = false;
   List<dynamic> _myTrips = [];
   List<Map<String, dynamic>> _cities = const [];
   List<Map<String, dynamic>> _intercityRoutes = const [];
@@ -427,15 +430,29 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   }
 
   Future<void> _loadDriverIntercityData({bool silent = false}) async {
+    if (_refreshing) return;
+    _refreshing = true;
     if (!silent) {
       setState(() => _loading = true);
     }
 
+    List<Map<String, dynamic>> activeRequests = _activeRequests;
     List<dynamic> openRequests = _openRequests;
     List<dynamic> myTrips = _myTrips;
     List<Map<String, dynamic>> cities = _cities;
     List<Map<String, dynamic>> intercityRoutes = _intercityRoutes;
     String? warning;
+
+    try {
+      final res = await _api.get('/driver/intercity/active');
+      activeRequests = (res.data as List)
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+      if (mounted) setState(() => _activeRequests = activeRequests);
+    } catch (e) {
+      warning = 'Не удалось обновить принятые заказы: ${errorMessageRu(e)}';
+    }
 
     try {
       final res = await _api.get('/driver/intercity/matching');
@@ -454,22 +471,24 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
       warning ??= 'Не удалось загрузить мои поездки: ${errorMessageRu(e)}';
     }
 
-    try {
-      final citiesRes = await _api.get('/geo/cities');
-      cities = citiesRes.data is List
-          ? (citiesRes.data as List)
-              .whereType<Map>()
-              .map((item) => Map<String, dynamic>.from(item))
-              .toList()
-          : <Map<String, dynamic>>[];
-      cities.sort(
-        (a, b) => (a['name'] ?? '').toString().compareTo(
-              (b['name'] ?? '').toString(),
-            ),
-      );
-    } catch (e) {
-      debugPrint('Failed to load cities: $e');
-      warning ??= 'Не удалось загрузить города: ${errorMessageRu(e)}';
+    if (cities.isEmpty) {
+      try {
+        final citiesRes = await _api.get('/geo/cities');
+        cities = citiesRes.data is List
+            ? (citiesRes.data as List)
+                .whereType<Map>()
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList()
+            : <Map<String, dynamic>>[];
+        cities.sort(
+          (a, b) => (a['name'] ?? '').toString().compareTo(
+                (b['name'] ?? '').toString(),
+              ),
+        );
+      } catch (e) {
+        debugPrint('Failed to load cities: $e');
+        warning ??= 'Не удалось загрузить города: ${errorMessageRu(e)}';
+      }
     }
 
     try {
@@ -486,15 +505,15 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
           'Не удалось загрузить межгород-маршруты: ${errorMessageRu(e)}';
     }
 
+    _refreshing = false;
     if (!mounted) return;
     setState(() {
+      _activeRequests = activeRequests;
+      _loadWarning = warning;
       _openRequests = openRequests;
       _myTrips = myTrips;
       _cities = cities;
       _intercityRoutes = intercityRoutes;
-      if (warning != null) {
-        _message = warning;
-      }
       _loading = false;
     });
   }
@@ -2972,6 +2991,34 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
               ],
             ),
             const SizedBox(height: 12),
+            if (_activeRequests.isNotEmpty) ...[
+              Text('Принятые пассажиры', style: theme.textTheme.titleMedium),
+              ..._activeRequests.map((request) => Card(
+                    child: ListTile(
+                      key: ValueKey('active-intercity-${request['id']}'),
+                      leading: const Icon(Icons.person_pin_circle_outlined),
+                      title:
+                          Text('${request['fromCity']} → ${request['toCity']}'),
+                      subtitle: Text(
+                          '${(request['passenger'] as Map?)?['name'] ?? 'Пассажир'} · ${request['seats'] ?? 1} мест(а)\n${_activeStatusLabel(request['status'])}'),
+                      isThreeLine: true,
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => context.go(Uri(
+                          path: '/driver/home',
+                          queryParameters: {
+                            'intercityRequestId': '${request['id']}'
+                          }).toString()),
+                    ),
+                  )),
+              const SizedBox(height: 14),
+            ],
+            if (_loadWarning != null) ...[
+              ICPremiumInfoBanner(text: _loadWarning!),
+              TextButton.icon(
+                  onPressed: () => _loadDriverIntercityData(),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Повторить загрузку')),
+            ],
             Card(
                 child: ExpansionTile(
               key: ValueKey('route-panel-${_intercityRoutes.isEmpty}'),
@@ -3033,7 +3080,9 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
               ],
             ),
             const SizedBox(height: 14),
-            if (_boardFilteredRequests.isEmpty)
+            if (!_loading &&
+                _loadWarning == null &&
+                _boardFilteredRequests.isEmpty)
               const ICPremiumInfoBanner(
                 text: 'Нет заявок по выбранным фильтрам.',
               )
@@ -3059,6 +3108,13 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
       ),
     );
   }
+
+  String _activeStatusLabel(dynamic status) => switch ('$status') {
+        'IN_PROGRESS' => 'Поездка идёт',
+        'DRIVER_ARRIVED' => 'Водитель на месте',
+        'DRIVER_EN_ROUTE' => 'Водитель едет к пассажиру',
+        _ => 'Предложение принято пассажиром',
+      };
 
   Widget _boardRequestDetailScreen(Map<String, dynamic> order) {
     final theme = Theme.of(context);

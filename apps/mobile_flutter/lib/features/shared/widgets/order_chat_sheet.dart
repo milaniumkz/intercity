@@ -12,6 +12,8 @@ Future<void> showOrderChatSheet({
   required String orderStatus,
   required String title,
   required String currentRole,
+  bool intercity = false,
+  ApiClient? apiClient,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -23,6 +25,8 @@ Future<void> showOrderChatSheet({
       orderStatus: orderStatus,
       title: title,
       currentRole: currentRole,
+      intercity: intercity,
+      apiClient: apiClient,
     ),
   );
 }
@@ -35,6 +39,7 @@ class OrderChatSheet extends StatefulWidget {
     required this.title,
     required this.currentRole,
     this.apiClient,
+    this.intercity = false,
   });
 
   final String orderId;
@@ -42,6 +47,7 @@ class OrderChatSheet extends StatefulWidget {
   final String title;
   final String currentRole;
   final ApiClient? apiClient;
+  final bool intercity;
 
   @override
   State<OrderChatSheet> createState() => _OrderChatSheetState();
@@ -59,7 +65,12 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
   bool _reloadAfterSend = false;
   Timer? _pollTimer;
 
-  bool get _canWrite => const {
+  String get _chatPath => widget.intercity
+      ? '/intercity/requests/${widget.orderId}/chat'
+      : '/orders/${widget.orderId}/chat';
+
+  bool get _canWrite => {
+        if (widget.intercity) 'ACCEPTED',
         'DRIVER_ASSIGNED',
         'DRIVER_EN_ROUTE',
         'DRIVER_ARRIVED',
@@ -94,7 +105,7 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
     final previousLast =
         _messages.isEmpty ? null : (_messages.last as Map)['id'];
     try {
-      final res = await _api.get('/orders/${widget.orderId}/chat');
+      final res = await _api.get(_chatPath);
       if (!mounted) return;
       setState(() {
         _messages =
@@ -124,7 +135,7 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
     if (!_canWrite || text.isEmpty || _sending) return;
     setState(() => _sending = true);
     try {
-      await _api.post('/orders/${widget.orderId}/chat', data: {'text': text});
+      await _api.post(_chatPath, data: {'text': text});
       _messageCtrl.clear();
       await _load(forceScroll: true);
     } catch (e) {
@@ -324,6 +335,7 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
                   ),
                   const SizedBox(width: 8),
                   IconButton.filled(
+                    tooltip: 'Отправить сообщение',
                     onPressed: _canWrite && !_sending ? _send : null,
                     icon: _sending
                         ? const SizedBox(

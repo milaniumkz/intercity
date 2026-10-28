@@ -666,46 +666,68 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _loadIntercityMainState() async {
-    try {
-      final responses = await Future.wait([
-        _api.get('/driver/intercity/active'),
-        _api.get('/ridesharing/trips/my'),
-        _api.get('/driver/intercity/matching'),
-      ]);
-      if (!mounted) return;
-      final active = List<dynamic>.from(responses[0].data as List)
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .toList();
-      final trips = List<dynamic>.from(responses[1].data as List)
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .where((trip) {
-        final status = (trip['status'] ?? '').toString().toUpperCase();
-        return const ['OPEN', 'FULL'].contains(status);
-      }).toList();
-      final restoreActive = _activeOrder == null && active.isNotEmpty;
-      setState(() {
-        if (restoreActive) _activeOrder = active.first;
-        _activeIntercityRequests = active;
-        _myIntercityTrips = trips;
-        _matchingIntercityRequests = responses[2].data is List
-            ? (responses[2].data as List)
-                .whereType<Map>()
-                .map((item) => Map<String, dynamic>.from(item))
-                .toList()
-            : [];
-      });
-      if (restoreActive) {
-        _startActiveOrderPolling('${active.first['id']}');
-        unawaited(_syncActiveRoutePolyline(active.first));
+    Future<void> loadActive() async {
+      try {
+        final response = await _api.get('/driver/intercity/active');
+        if (!mounted) return;
+        final active = (response.data as List)
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList();
+        final requestedId = Uri.tryParse(currentRouteText(context))
+            ?.queryParameters['intercityRequestId'];
+        final selected =
+            active.where((item) => item['id'] == requestedId).firstOrNull ??
+                active.firstOrNull;
+        final restore = selected != null &&
+            (_activeOrder == null ||
+                (requestedId != null && _activeOrder?['id'] != selected['id']));
+        setState(() {
+          _activeIntercityRequests = active;
+          if (restore) _activeOrder = selected;
+        });
+        if (restore) {
+          _startActiveOrderPolling('${selected['id']}');
+          _startLocationUpdates();
+          unawaited(_updateLocation(autoDetect: true, silent: true));
+          unawaited(_syncActiveRoutePolyline(selected));
+        }
+        for (final request in active) {
+          _notifyPassengerLeaving(request);
+        }
+      } catch (_) {
+        // Keep the last known active trip during a temporary connection failure.
       }
-      for (final request in active) {
-        _notifyPassengerLeaving(request);
-      }
-    } catch (_) {
-      // Межгородний блок вспомогательный, не мешаем основному экрану.
     }
+
+    Future<void> loadList(String path, bool trips) async {
+      try {
+        final response = await _api.get(path);
+        if (!mounted) return;
+        final items = (response.data as List)
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList();
+        setState(() {
+          if (trips) {
+            _myIntercityTrips = items
+                .where((trip) => ['OPEN', 'FULL']
+                    .contains('${trip['status']}'.toUpperCase()))
+                .toList();
+          } else {
+            _matchingIntercityRequests = items;
+          }
+        });
+      } catch (_) {
+        // An optional feed must never block restoration of accepted passengers.
+      }
+    }
+
+    await Future.wait([
+      loadActive(),
+      loadList('/ridesharing/trips/my', true),
+      loadList('/driver/intercity/matching', false)
+    ]);
   }
 
   Future<void> _acceptMatchedPassengerPrice(
@@ -2191,6 +2213,15 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _restoreActiveOrderIfAny() async {
+    final requestedId = Uri.tryParse(currentRouteText(context))
+        ?.queryParameters['intercityRequestId'];
+    if (requestedId != null && requestedId.isNotEmpty) {
+      await _loadActiveIntercityById(requestedId);
+      if (_activeOrder?['id'] == requestedId) {
+        _startActiveOrderPolling(requestedId);
+        return;
+      }
+    }
     try {
       final res = await _api.get('/driver/orders/active');
       final active = res.data is Map
@@ -2344,7 +2375,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     try {
       final permission = await Geolocator.checkPermission();
       if (!mounted ||
-          !_isOnline ||
+          (!_isOnline && _activeOrder == null) ||
           permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
         return;
@@ -2364,7 +2395,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     unawaited(_startPositionStream());
     _locationTimer?.cancel();
     _locationTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      if (!_isOnline) return;
+      if (!_isOnline && _activeOrder == null) return;
       _updateLocation(autoDetect: true, silent: true);
     });
   }
@@ -2552,7 +2583,10 @@ class _DriverHomePageState extends State<DriverHomePage>
     switch (status.toUpperCase()) {
       case 'ACCEPTED':
       case 'DRIVER_ASSIGNED':
-        return 'Назначен';
+        return _activeOrderIsIntercity &&
+                _activeOrder?['requestType'] == 'INTERCITY'
+            ? 'Собираю пассажиров'
+            : 'Назначен';
       case 'DRIVER_EN_ROUTE':
         return 'Еду к пассажиру';
       case 'DRIVER_ARRIVED':
@@ -2583,6 +2617,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool _canMoveToStatus(String next) {
     final current = (_activeOrder?['status'] ?? '').toString().toUpperCase();
     switch (next) {
+      case 'DRIVER_EN_ROUTE':
+        return _activeOrderIsIntercity &&
+            (current == 'ACCEPTED' || current == 'DRIVER_ASSIGNED');
       case 'DRIVER_ARRIVED':
         return current == 'ACCEPTED' ||
             current == 'DRIVER_EN_ROUTE' ||
@@ -2602,6 +2639,19 @@ class _DriverHomePageState extends State<DriverHomePage>
     switch (status.toUpperCase()) {
       case 'ACCEPTED':
       case 'DRIVER_ASSIGNED':
+        if (_activeOrderIsIntercity &&
+            _activeOrder?['requestType'] == 'INTERCITY') {
+          return (
+            label: 'Выехать к пассажиру',
+            icon: Icons.directions_car,
+            nextStatus: 'DRIVER_EN_ROUTE'
+          );
+        }
+        return (
+          label: 'На месте',
+          icon: Icons.location_on_rounded,
+          nextStatus: 'DRIVER_ARRIVED'
+        );
       case 'DRIVER_EN_ROUTE':
         return (
           label: 'На месте',
@@ -3993,7 +4043,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       map: _activeOrderMap(),
       message: _rideStatusMessage,
       details: freightDetails(order).join(' · '),
-      onBack: () => goBackOr(context, fallback: '/driver/home'),
+      onBack: () => _activeOrderIsIntercity
+          ? context.go('/driver/trip-create')
+          : goBackOr(context, fallback: '/driver/home'),
       passenger: _activePassengerName(order),
       from: (order['fromAddress'] ?? 'Точка подачи').toString(),
       to: (order['toAddress'] ?? 'Точка назначения').toString(),
@@ -4009,6 +4061,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       onRefresh: () => _activeOrderIsIntercity
           ? _loadActiveIntercityById(order['id'].toString())
           : _loadOrderById(order['id'].toString()),
+      onCancel: _activeOrderIsIntercity &&
+              !['IN_PROGRESS', 'COMPLETED', 'CANCELLED']
+                  .contains(activeOrderStatus)
+          ? _confirmCancelIntercity
+          : null,
       onCall: () => _callPassenger(order),
       onChat: () => _openActiveOrderChat(order),
       onNavigate: _openActiveOrderInNavigator,
@@ -4037,6 +4094,24 @@ class _DriverHomePageState extends State<DriverHomePage>
           ? () => _advanceRideStatus(action.nextStatus)
           : null,
     );
+  }
+
+  Future<void> _confirmCancelIntercity() async {
+    final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+                title: const Text('Отменить поездку?'),
+                content: const Text(
+                    'Пассажир увидит отмену. Забронированные места будут освобождены.'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Оставить поездку')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Да, отменить'))
+                ]));
+    if (confirmed == true && mounted) await _advanceRideStatus('CANCELLED');
   }
 
   Future<void> _advanceRideStatus(String status) async {
@@ -6069,6 +6144,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       orderStatus: (order['status'] ?? '').toString(),
       title: 'Чат с пассажиром',
       currentRole: 'DRIVER',
+      intercity: order['sourceType'] == 'INTERCITY_REQUEST',
+      apiClient: _api,
     );
   }
 }

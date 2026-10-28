@@ -20,6 +20,7 @@ class DriverActiveTripView extends StatelessWidget {
       this.details,
       this.message,
       this.onBack,
+      this.onCancel,
       this.actionLabel,
       this.actionIcon,
       this.onAction,
@@ -30,7 +31,7 @@ class DriverActiveTripView extends StatelessWidget {
   final Widget map;
   final String passenger, from, to, price, status, payment;
   final String? instruction, actionLabel, message, details;
-  final VoidCallback? onBack;
+  final VoidCallback? onBack, onCancel;
   final IconData? actionIcon;
   final VoidCallback onRefresh, onCall, onChat, onNavigate;
   final VoidCallback? onAction, onEnableVoice;
@@ -48,6 +49,10 @@ class DriverActiveTripView extends StatelessWidget {
                 : IconButton(
                     onPressed: onBack, icon: const Icon(Icons.arrow_back)),
             actions: [
+              if (onCancel != null)
+                TextButton(
+                    onPressed: busy ? null : onCancel,
+                    child: const Text('Отменить')),
               IconButton(
                   tooltip: 'Обновить',
                   onPressed: onRefresh,

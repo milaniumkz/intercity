@@ -16,6 +16,20 @@ import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 export class IntercityController {
   constructor(private intercityService: IntercityService) {}
 
+  @Get('requests/:id/chat')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  getChat(@Param('id') id: string, @Request() req) {
+    return this.intercityService.getChat(id,req.user.sub);
+  }
+
+  @Post('requests/:id/chat')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  sendChat(@Param('id') id: string, @Request() req, @Body() body: {text?:unknown}) {
+    return this.intercityService.sendChat(id,req.user.sub,body.text);
+  }
+
   @Post("requests")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

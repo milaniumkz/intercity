@@ -1,5 +1,7 @@
+import 'package:url_launcher/url_launcher.dart';
 import '../../../core/utils/freight_details.dart';
 import '../widgets/passenger_offers_panel.dart';
+import '../../driver/widgets/route_departure_field.dart';
 import '../../../core/services/trip_status_sound.dart';
 import '../../../core/services/push_notifications_service.dart';
 import '../../../core/services/payment_fallback_notifier.dart';
@@ -52,6 +54,10 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
   Map<String, dynamic>? _request;
   bool _loading = true;
   bool _actionBusy = false;
+  String? _actionError;
+  double? _pickupEtaMinutes;
+  String? _pickupEtaKey;
+  late final _roadRoutes = RoadRouteRepository(_api);
   bool _leavingBusy = false;
   String? _lastNotifiedStatus;
   final Set<String> _notifiedOffers = {};
@@ -106,12 +112,12 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
       final status = '${request['status'] ?? ''}';
       final notices = <String, (String, String)>{
         'DRIVER_ASSIGNED': (
-          'Водитель назначен',
-          'Водитель принял заказ и едет к вам.'
+          'Водитель собирает пассажиров',
+          'Предложение принято. О выезде к вам сообщим отдельно.'
         ),
         'DRIVER_EN_ROUTE': (
-          'Водитель назначен',
-          'Водитель принял заказ и едет к вам.'
+          'Водитель выехал к вам',
+          'Водитель направляется к вашей точке подачи.'
         ),
         'DRIVER_ARRIVED': ('Водитель прибыл', 'Водитель уже на месте подачи.'),
         'IN_PROGRESS': ('Поездка началась', 'Хорошей поездки.'),
@@ -164,6 +170,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
           offers.length,
         );
       });
+      unawaited(_refreshPickupEta(request));
       _fitMap();
       if (_isFinalStatus((request['status'] ?? '').toString())) {
         _stopPolling();
@@ -215,6 +222,41 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                 : 'Выхожу'),
       ));
 
+  Future<void> _refreshPickupEta(Map<String, dynamic> request) async {
+    final progress = request['pickupProgress'];
+    final location = progress is Map ? progress['driverLocation'] : null;
+    final lat = location is Map ? location['lat'] : null;
+    final lng = location is Map ? location['lng'] : null;
+    final fromLat = request['fromLat'], fromLng = request['fromLng'];
+    if (request['status'] != 'DRIVER_EN_ROUTE' ||
+        lat is! num ||
+        lng is! num ||
+        fromLat is! num ||
+        fromLng is! num) {
+      _pickupEtaKey = null;
+      if (mounted && _pickupEtaMinutes != null) {
+        setState(() => _pickupEtaMinutes = null);
+      }
+      return;
+    }
+    final key = '$lat:$lng:$fromLat:$fromLng';
+    if (_pickupEtaKey == key) return;
+    _pickupEtaKey = key;
+    try {
+      final details = await _roadRoutes.details(
+          LatLng(lat.toDouble(), lng.toDouble()),
+          LatLng(fromLat.toDouble(), fromLng.toDouble()));
+      if (mounted && _pickupEtaKey == key) {
+        setState(() => _pickupEtaMinutes = details.durationMinutes);
+      }
+    } catch (_) {
+      if (mounted && _pickupEtaKey == key) {
+        setState(() => _pickupEtaMinutes = null);
+        _pickupEtaKey = null;
+      }
+    }
+  }
+
   void _startPolling() {
     if (_pollTimer?.isActive == true) return;
     _pollTimer = Timer.periodic(widget.pollingInterval, (_) => _loadRequest());
@@ -232,7 +274,25 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
 
   Future<void> _cancelRequest() async {
     if (_actionBusy || _request == null) return;
-    setState(() => _actionBusy = true);
+    final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+                title: const Text('Отменить заявку?'),
+                content: const Text(
+                    'Водитель увидит отмену, ваше место будет освобождено.'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Оставить поездку')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Да, отменить'))
+                ]));
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _actionBusy = true;
+      _actionError = null;
+    });
     try {
       final messenger = ScaffoldMessenger.of(context);
       final router = GoRouter.of(context);
@@ -246,7 +306,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
       router.go('/order?reset=${DateTime.now().millisecondsSinceEpoch}');
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = errorMessageRu(e));
+      setState(() => _actionError = errorMessageRu(e));
     } finally {
       if (mounted) setState(() => _actionBusy = false);
     }
@@ -257,7 +317,10 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     final offerId = (offer['id'] ?? '').toString();
     if (offerId.isEmpty) return;
 
-    setState(() => _actionBusy = true);
+    setState(() {
+      _actionBusy = true;
+      _actionError = null;
+    });
     try {
       final messenger = ScaffoldMessenger.of(context);
       await _api.post('/intercity/offers/$offerId/accept');
@@ -269,7 +332,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = errorMessageRu(e));
+      setState(() => _actionError = errorMessageRu(e));
     } finally {
       if (mounted) setState(() => _actionBusy = false);
     }
@@ -313,8 +376,9 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
             : '$entityLabel опубликована. Ожидаем отклики $counterpartiesLabel.';
       case 'ACCEPTED':
       case 'DRIVER_ASSIGNED':
+        return 'Водитель собирает пассажиров. О выезде к вам сообщим отдельно.';
       case 'DRIVER_EN_ROUTE':
-        return 'Водитель назначен и едет к вам.';
+        return 'Водитель выехал к вам.';
       case 'DRIVER_ARRIVED':
         return 'Водитель прибыл. Выходите к точке подачи.';
       case 'IN_PROGRESS':
@@ -646,8 +710,15 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     return null;
   }
 
-  Future<void> _copyPhone(String phone) async {
+  Future<void> _callDriver(String phone) async {
     if (phone.trim().isEmpty) return;
+    final number = phone.replaceAll(RegExp(r'[^+0-9]'), '');
+    try {
+      if (number.isNotEmpty &&
+          await launchUrl(Uri(scheme: 'tel', path: number))) {
+        return;
+      }
+    } catch (_) {}
     await Clipboard.setData(ClipboardData(text: phone));
     if (!mounted) return;
     ScaffoldMessenger.of(
@@ -670,6 +741,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
       orderStatus: (request?['status'] ?? 'ACCEPTED').toString(),
       title: 'Чат с водителем',
       currentRole: 'PASSENGER',
+      intercity: true,
+      apiClient: _api,
     );
   }
 
@@ -852,7 +925,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
               child: _requestActionButton(
                 label: 'Скопировать номер водителя',
                 icon: Icons.copy_rounded,
-                onPressed: () => _copyPhone(phone),
+                onPressed: () => _callDriver(phone),
               ),
             ),
           ],
@@ -1604,7 +1677,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                       _compactActionButton(
                         label: 'Скопировать',
                         icon: Icons.copy_rounded,
-                        onPressed: () => _copyPhone(phone),
+                        onPressed: () => _callDriver(phone),
                       ),
                     ],
                   ),
@@ -1715,6 +1788,18 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     );
   }
 
+  LatLng? get _pickupDriverPoint {
+    final progress = _request?['pickupProgress'];
+    final location = progress is Map ? progress['driverLocation'] : null;
+    if (location is! Map ||
+        location['lat'] is! num ||
+        location['lng'] is! num) {
+      return null;
+    }
+    return LatLng((location['lat'] as num).toDouble(),
+        (location['lng'] as num).toDouble());
+  }
+
   Widget _mapLayer() {
     if (!widget.enableLiveMap || (_isActiveTripBoard && _request == null)) {
       return const IntercityMapFallback();
@@ -1736,6 +1821,17 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
               userAgentPackageName: 'com.milanium.intercity',
             ),
             const MapDataAttribution(),
+            if (_pickupDriverPoint != null)
+              MarkerLayer(markers: [
+                Marker(
+                    point: _pickupDriverPoint!,
+                    width: 44,
+                    height: 44,
+                    child: const Tooltip(
+                        message: 'Водитель',
+                        child: Icon(Icons.local_taxi,
+                            color: AppTheme.primaryColor, size: 36)))
+              ]),
             if (_fromPoint != null)
               MarkerLayer(
                 markers: [
@@ -1766,7 +1862,16 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                   ),
                 ],
               ),
-            if (_fromPoint != null && _toPoint != null)
+            if (_request?['status'] == 'DRIVER_EN_ROUTE' &&
+                _pickupDriverPoint != null &&
+                _fromPoint != null)
+              RoadRouteLayer(
+                  from: _pickupDriverPoint!,
+                  to: _fromPoint!,
+                  strokeWidth: 5,
+                  color: AppTheme.primaryColor,
+                  repository: _roadRoutes)
+            else if (_fromPoint != null && _toPoint != null)
               RoadRouteLayer(
                   from: _fromPoint!,
                   to: _toPoint!,
@@ -2139,12 +2244,49 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     final carModel =
         (driverProfile?['carModel'] ?? 'Автомобиль не указан').toString();
     final carNumber = (driverProfile?['carNumber'] ?? '').toString();
-    final ratingText = (rating?['avg'] ??
-            rating?['average'] ??
-            driverProfile?['rating'] ??
-            '—')
-        .toString();
-    final progress = isDark ? 0.50 : 0.42;
+    final ratingValue =
+        rating?['ratingAvg'] ?? rating?['avg'] ?? rating?['average'];
+    final ratingCount = rating?['ratingCount'];
+    final ratingText = ratingValue is num && ratingCount != 0
+        ? ratingValue.toStringAsFixed(1)
+        : '—';
+    final status = '${request?['status'] ?? ''}';
+    final statusTitle = switch (status) {
+      'IN_PROGRESS' => 'Поездка в пути',
+      'DRIVER_ARRIVED' => 'Водитель на месте',
+      'DRIVER_EN_ROUTE' => 'Водитель едет к вам',
+      'ACCEPTED' || 'DRIVER_ASSIGNED' => _requestTypeOf(request) == 'INTERCITY'
+          ? 'Водитель собирает пассажиров'
+          : 'Водитель назначен',
+      'COMPLETED' => 'Поездка завершена',
+      'CANCELLED' => 'Поездка отменена',
+      _ => 'Обновляем поездку',
+    };
+    final pickup = request?['pickupProgress'];
+    final route =
+        pickup is Map && pickup['route'] is Map ? pickup['route'] as Map : null;
+    final departure = DateTime.tryParse('${route?['departureAt']}');
+    final departureText = departure == null
+        ? 'Время отправления пока не указано'
+        : 'Отправление ${formatRouteDeparture(departure, offsetMinutes: route?['departureOffsetMinutes'] as int?)}';
+    final phaseText = switch (status) {
+      'ACCEPTED' || 'DRIVER_ASSIGNED' => _requestTypeOf(request) != 'INTERCITY'
+          ? 'Водитель принял ваш заказ.'
+          : '$departureText. ${route == null ? '' : "Забронировано ${(route['seatsTotal'] as num) - (route['seatsAvailable'] as num)} из ${route['seatsTotal']} мест, свободно ${route['seatsAvailable']}."} Водитель ещё не сообщил о выезде к вам.',
+      'DRIVER_EN_ROUTE' => _pickupEtaMinutes == null
+          ? 'Водитель едет к вам. Время прибытия пока не определено: ожидаем актуальную геопозицию и дорожный маршрут.'
+          : 'До приезда около ${_pickupEtaMinutes!.ceil().clamp(1, 9999)} мин. Оценка по дорожному маршруту, без учёта пробок.',
+      'DRIVER_ARRIVED' =>
+        'Водитель ждёт в точке подачи. Нажмите «Выхожу», когда будете готовы.',
+      'IN_PROGRESS' => 'Вы в пути к месту назначения.',
+      _ => statusTitle,
+    };
+    final progress = switch (status) {
+      'DRIVER_ARRIVED' => 0.5,
+      'IN_PROGRESS' => 0.75,
+      'COMPLETED' => 1.0,
+      _ => 0.25,
+    };
     return Scaffold(
       backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
       bottomNavigationBar: const PassengerBottomNav(currentIndex: 1),
@@ -2169,10 +2311,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                     decoration: BoxDecoration(
                         color: theme.colorScheme.surface,
                         borderRadius: BorderRadius.circular(18)),
-                    child: Text(
-                        _request?['status'] == 'DRIVER_ARRIVED'
-                            ? 'Водитель на месте'
-                            : 'Поездка в пути',
+                    child: Text(statusTitle,
                         textAlign: TextAlign.center,
                         style: TextStyle(
                             color: theme.colorScheme.onSurface,
@@ -2188,6 +2327,9 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
               right: 16,
               bottom: 110,
               child: Container(
+                constraints: BoxConstraints(
+                    maxHeight: (MediaQuery.sizeOf(context).height - 210)
+                        .clamp(180, 800)),
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
                   color: theme.colorScheme.surface,
@@ -2203,14 +2345,15 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                     ),
                   ],
                 ),
-                child: Column(
+                child: SingleChildScrollView(
+                    child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Row(
                       children: [
                         Expanded(
                           child: Text(
-                            '$fromText  →  $toText',
+                            '$fromText — $toText',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -2233,6 +2376,9 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 8),
+                    Text(phaseText,
+                        key: const ValueKey('intercity-pickup-progress')),
                     const SizedBox(height: 10),
                     LinearProgressIndicator(
                       minHeight: 5,
@@ -2298,10 +2444,12 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                     Row(
                       children: [
                         Expanded(
-                          child: _boardTripMetric('В пути', '2 ч 15 мин'),
+                          child: _boardTripMetric('Статус', statusTitle),
                         ),
                         const SizedBox(width: 10),
-                        Expanded(child: _boardTripMetric('Осталось', '210 км')),
+                        Expanded(
+                            child: _boardTripMetric('Стоимость',
+                                '${acceptedOffer?['price'] ?? request?['price'] ?? '—'} ${request?['currency'] == 'RUB' ? 'руб.' : 'тг'}')),
                       ],
                     ),
                     const SizedBox(height: 12),
@@ -2311,7 +2459,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                           child: _boardOutlinedAction(
                             Icons.call_rounded,
                             'Позвонить',
-                            onPressed: () => _copyPhone(phone),
+                            onPressed: () => _callDriver(phone),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -2324,8 +2472,15 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                         ),
                       ],
                     ),
+                    if (!['IN_PROGRESS', 'COMPLETED', 'CANCELLED']
+                        .contains(status))
+                      TextButton.icon(
+                          onPressed: _actionBusy ? null : _cancelRequest,
+                          icon: const Icon(Icons.close),
+                          label: const Text('Отменить заявку')),
+                    if (_actionError != null) Text(_actionError!),
                   ],
-                ),
+                )),
               ),
             ),
           ],

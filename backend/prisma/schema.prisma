@@ -91,6 +91,7 @@ model User {
   adminAuditLogs     AdminAuditLog[] @relation("AdminActorLogs")
   promoUsages        PromoUsage[]
   complaints         Complaint[]    @relation("ComplaintUser")
+  sentIntercityMessages IntercityChatMessage[]
   sentChatMessages   OrderChatMessage[]
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
@@ -682,6 +683,7 @@ model TariffDelivery {
 }
 
 model IntercityRequest {
+  chatMessages IntercityChatMessage[]
   reservedRouteId String?
   reservedSeats Int @default(0)
   priorityWindow IntercityRoutePriorityWindow?
@@ -1144,4 +1146,15 @@ model TechRule {
   key String @id
   value Json
   updatedAt DateTime @updatedAt
+}
+
+model IntercityChatMessage {
+  id String @id @default(uuid())
+  requestId String
+  request IntercityRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  senderId String
+  sender User @relation(fields: [senderId], references: [id])
+  text String
+  createdAt DateTime @default(now())
+  @@index([requestId, createdAt])
 }

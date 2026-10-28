@@ -1105,6 +1105,7 @@ export class AdminService {
         const availableTables = await this.existingOptionalTables(optionalTableNames);
 
         const hardDelete = async () => this.prisma.$transaction(async (tx) => {
+            await tx.intercityChatMessage.deleteMany({where:{OR:[{senderId:userId},{request:{OR:[{passengerId:userId},{selectedDriverId:userId}]}}]}});
             const txAny = tx as any;
             const safeDeleteMany = async (
                 delegateName: string,

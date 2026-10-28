@@ -574,8 +574,10 @@ void main() {
       tester,
       startRoute: '/driver/trip-create',
       tapText: 'По городу',
-      expectedText: 'Нет заявок по выбранным фильтрам.',
+      expectedText: 'По городу',
     );
+    expect(
+        tester.widget<Text>(find.text('По городу')).style?.color, Colors.white);
   });
 
   testWidgets('driver home bottom navigation is interactive', (tester) async {
