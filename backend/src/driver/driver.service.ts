@@ -94,7 +94,13 @@ export class DriverService {
         return profile;
     }
 
-    private driverAcceptModesData(dto: CreateDriverProfileDto) {
+    async updateServiceModes(userId: string, dto: Partial<CreateDriverProfileDto>) {
+        const profile = await this.prisma.driverProfile.findUnique({where: {userId}, select: {id: true}});
+        if (!profile) throw new NotFoundException('Профиль водителя не найден');
+        return this.prisma.driverProfile.update({where: {id: profile.id}, data: this.driverAcceptModesData(dto)});
+    }
+
+    private driverAcceptModesData(dto: Partial<CreateDriverProfileDto>) {
         const data: Record<string, boolean> = {};
         for (const key of [
             'acceptCityFixed',

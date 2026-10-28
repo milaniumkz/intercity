@@ -1,5 +1,5 @@
 import { IsString, IsNumber, IsOptional, IsBoolean, IsInt, Min, Max, IsISO8601, IsIn, IsUUID } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, PickType } from '@nestjs/swagger';
 
 export class CreateDriverProfileDto {
     @IsOptional()
@@ -38,6 +38,8 @@ export class CreateDriverProfileDto {
     @IsBoolean()
     acceptCargo?: boolean;
 }
+
+export class UpdateDriverServiceModesDto extends PickType(CreateDriverProfileDto, ['acceptCityFixed', 'acceptCityAuction', 'acceptIntercity', 'acceptDelivery', 'acceptCargo'] as const) {}
 
 export class UpdateLocationDto {
     @ApiProperty()

@@ -91,6 +91,12 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
         _profile = profileRes.data is Map
             ? Map<String, dynamic>.from(profileRes.data as Map)
             : null;
+        final profile = _profile ?? <String, dynamic>{};
+        _acceptCityFixed = (profile['acceptCityFixed'] ?? true) == true;
+        _acceptCityAuction = (profile['acceptCityAuction'] ?? true) == true;
+        _acceptIntercity = (profile['acceptIntercity'] ?? true) == true;
+        _acceptDelivery = (profile['acceptDelivery'] ?? true) == true;
+        _acceptCargo = (profile['acceptCargo'] ?? true) == true;
         _hasResolvedProfileLoad = true;
         _loading = false;
       });
@@ -130,11 +136,6 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
         _intercityRoutes = routes;
         _carModelCtrl.text = (profile['carModel'] ?? '').toString();
         _carNumberCtrl.text = (profile['carNumber'] ?? '').toString();
-        _acceptCityFixed = (profile['acceptCityFixed'] ?? true) == true;
-        _acceptCityAuction = (profile['acceptCityAuction'] ?? true) == true;
-        _acceptIntercity = (profile['acceptIntercity'] ?? true) == true;
-        _acceptDelivery = (profile['acceptDelivery'] ?? true) == true;
-        _acceptCargo = (profile['acceptCargo'] ?? true) == true;
         final cityId = (online['cityId'] ?? '').toString().trim();
         _selectedCityId = cityId.isEmpty ? null : cityId;
         _message = 'Профиль водителя загружен';
@@ -147,6 +148,30 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
       });
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _saveServiceModes() async {
+    if (_saving || _profile == null) return;
+    setState(() => _saving = true);
+    final modes = <String, dynamic>{
+      'acceptCityFixed': _acceptCityFixed,
+      'acceptCityAuction': _acceptCityAuction,
+      'acceptIntercity': _acceptIntercity,
+      'acceptDelivery': _acceptDelivery,
+      'acceptCargo': _acceptCargo,
+    };
+    try {
+      await _api.post('/driver/profile/service-modes', data: modes);
+      if (!mounted) return;
+      setState(() {
+        _profile = {...?_profile, ...modes};
+        _message = 'Настройки приёма заказов сохранены';
+      });
+    } catch (error) {
+      if (mounted) setState(() => _message = errorMessageRu(error));
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -761,6 +786,16 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                 ),
               ),
               const SizedBox(height: 12),
+              if (_profile != null) ...[
+                _serviceModesCard(),
+                const SizedBox(height: 10),
+                ICGradientButton(
+                  label: 'Сохранить настройки заказов',
+                  loading: _saving,
+                  onPressed: _saving ? null : _saveServiceModes,
+                ),
+                const SizedBox(height: 12),
+              ],
               _boardDriverSection(
                 children: [
                   _boardProfileRow(
@@ -1397,7 +1432,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
           Switch.adaptive(
             value: value,
             activeThumbColor: AppTheme.primaryColor,
-            onChanged: onChanged,
+            onChanged: _saving || _profile == null ? null : onChanged,
           ),
         ],
       ),

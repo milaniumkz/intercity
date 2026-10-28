@@ -8,6 +8,7 @@ import { DriverEarningsService } from './driver-earnings.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import {
     CreateDriverProfileDto,
+    UpdateDriverServiceModesDto,
     UpdateLocationDto,
     SetOnlineDto,
     DriverDocsUploadUrlDto,
@@ -33,6 +34,12 @@ export class DriverController {
     @ApiOperation({ summary: 'Create/update driver profile' })
     async createProfile(@Request() req, @Body() dto: CreateDriverProfileDto) {
         return this.driverService.createProfile(req.user.sub, dto);
+    }
+
+    @Post('profile/service-modes')
+    @ApiOperation({ summary: 'Update accepted order types without changing driver verification' })
+    updateServiceModes(@Request() req, @Body() dto: UpdateDriverServiceModesDto) {
+        return this.driverService.updateServiceModes(req.user.sub, dto);
     }
 
     @Post('location')
