@@ -1,3 +1,4 @@
+import '../widgets/route_departure_field.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -53,6 +54,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   String? _routeToCityId;
   String _routeFromCityName = '';
   String _routeToCityName = '';
+  DateTime? _routeDepartureAt;
 
   static DateTime _defaultDepartureTime() {
     final now = DateTime.now();
@@ -528,12 +530,19 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
       setState(() => _message = 'Укажите количество мест от 1 до 8');
       return;
     }
+    if (_routeDepartureAt == null ||
+        !_routeDepartureAt!.isAfter(DateTime.now())) {
+      setState(() => _message = 'Выберите будущую дату и время отправления');
+      return;
+    }
     setState(() => _routeSaving = true);
     try {
       await _api.post('/driver/intercity/routes', data: {
         'fromCity': fromCity,
         'toCity': toCity,
         'seatsAvailable': seatsAvailable,
+        'departureAt': _routeDepartureAt!.toUtc().toIso8601String(),
+        'departureOffsetMinutes': _routeDepartureAt!.timeZoneOffset.inMinutes,
       });
       if (!mounted) return;
       setState(() {
@@ -542,6 +551,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
         _routeToCityId = null;
         _routeFromCityName = '';
         _routeToCityName = '';
+        _routeDepartureAt = null;
       });
       await _loadDriverIntercityData(silent: true);
     } catch (e) {
@@ -1521,6 +1531,11 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                 _routeSaving ? null : () => _openRouteCitySearch(isFrom: false),
           ),
           const SizedBox(height: 10),
+          RouteDepartureField(
+              value: _routeDepartureAt,
+              enabled: !_routeSaving,
+              onChanged: (value) => setState(() => _routeDepartureAt = value)),
+          const SizedBox(height: 10),
           TextField(
             controller: _routeSeatsCtrl,
             keyboardType: TextInputType.number,
@@ -1653,6 +1668,10 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                 tooltip: 'Отключить маршрут',
                 icon: const Icon(Icons.close_rounded))
           ]),
+          Text(formatRouteDeparture(
+              DateTime.tryParse('${route['departureAt']}'),
+              offsetMinutes:
+                  (route['departureOffsetMinutes'] as num?)?.toInt())),
           Text(
               'Свободно мест: ${route['seatsAvailable'] ?? route['seatsTotal'] ?? 0}'),
           if (top)

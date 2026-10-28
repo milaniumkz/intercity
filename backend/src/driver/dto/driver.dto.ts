@@ -126,6 +126,16 @@ export class CompleteDriverDocsDto {
 
 export class DriverIntercityRouteDto {
     @ApiProperty()
+    @IsISO8601({}, {message:'Укажите дату и время отправления'})
+    departureAt: string;
+
+    @ApiProperty({example:300})
+    @IsInt({message:'Не удалось определить часовой пояс отправления'})
+    @Min(-720)
+    @Max(840)
+    departureOffsetMinutes: number;
+
+    @ApiProperty()
     @IsString()
     fromCity: string;
 

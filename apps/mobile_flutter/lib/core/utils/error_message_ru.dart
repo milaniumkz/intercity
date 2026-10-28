@@ -259,6 +259,11 @@ String? _translateServerMessage(String? message) {
       'Шотты толықтыру қолжетімсіз.',
     );
   }
+  if (lower.contains('insufficient balance')) {
+    return t(
+        'Недостаточно средств на балансе для межгорода. Пополните кошелёк.',
+        'Қалааралық сапар үшін теңгерімде қаражат жеткіліксіз. Әмиянды толықтырыңыз.');
+  }
   if (lower.contains('insufficient funds')) {
     return t(
       'Недостаточно средств.',

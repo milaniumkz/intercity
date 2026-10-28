@@ -1,3 +1,4 @@
+import {routeMatchesRequestSchedule} from '../common/driver-route-schedule';
 import { settleBonusRidePayment } from '../common/bonus-ride-payment';
 import { driverPerformance } from '../common/driver-performance';
 import { ensureRouteTopWindow, canSeePriorityRequest } from '../common/driver-route-top';
@@ -367,6 +368,7 @@ export class IntercityService {
       await tx.$executeRaw`SELECT id FROM "IntercityRequest" WHERE id=${requestId} FOR UPDATE`;
       const fresh=await tx.intercityRequest.findUnique({where:{id:requestId}});
       if(!fresh || fresh.status!=='OPEN') throw new BadRequestException('Этот заказ уже принят другим водителем или закрыт');
+      if (requestType === 'INTERCITY') await this.ensureDriverRouteHasSeats(driverId, fresh, normalizedSeats, tx);
       const existing=await tx.intercityOffer.findFirst({where:{requestId,driverId,status:'PENDING'}});
       const payload={price,seats:normalizedSeats,comment,status:'PENDING'};
       return existing ? tx.intercityOffer.update({where:{id:existing.id},data:payload}) : tx.intercityOffer.create({data:{requestId,driverId,...payload}});
@@ -751,7 +753,7 @@ export class IntercityService {
     });
     if (!wallet || wallet[moneyField(request["currency"])] < fee) {
       throw new BadRequestException(
-        "Insufficient balance to respond to intercity request. Please top up wallet.",
+        "Недостаточно средств на балансе для отклика на межгород. Пополните кошелёк.",
       );
     }
   }
@@ -769,25 +771,27 @@ export class IntercityService {
     driverUserId: string,
     request: Record<string, any>,
     seats: number,
+    db: any = this.prisma,
   ) {
-    const profile = await this.prisma.driverProfile.findUnique({
+    const profile = await db.driverProfile.findUnique({
       where: { userId: driverUserId },
       select: { id: true },
     });
     if (!profile) throw new NotFoundException("Driver profile not found");
-    const routes = await this.prisma.driverIntercityRoute.findMany({
+    const routes = await db.driverIntercityRoute.findMany({
       where: {
         driverId: profile.id,
         isActive: true,
       },
-      select: { fromCity: true, toCity: true, seatsAvailable: true },
+      select: { fromCity: true, toCity: true, seatsAvailable: true, departureAt:true, departureOffsetMinutes:true },
     });
     const route = routes.find(
       (item: any) =>
         this.routeKey(item.fromCity) === this.routeKey(request["fromCity"]) &&
-        this.routeKey(item.toCity) === this.routeKey(request["toCity"]),
+        this.routeKey(item.toCity) === this.routeKey(request["toCity"]) && routeMatchesRequestSchedule(item,request),
     );
-    if (!route || route.seatsAvailable < seats) {
+    if (!route) throw new BadRequestException("Нет подходящего маршрута на выбранную дату и время отправления");
+    if (route.seatsAvailable < seats) {
       throw new BadRequestException("Недостаточно свободных мест на этом маршруте");
     }
   }
@@ -815,16 +819,16 @@ export class IntercityService {
     const route = routes.find(
       (item: any) =>
         this.routeKey(item.fromCity) === this.routeKey(request["fromCity"]) &&
-        this.routeKey(item.toCity) === this.routeKey(request["toCity"]),
+        this.routeKey(item.toCity) === this.routeKey(request["toCity"]) && routeMatchesRequestSchedule(item,request),
     );
-    if (!route) throw new BadRequestException('Недостаточно свободных мест на этом маршруте');
+    if (!route) throw new BadRequestException('Нет подходящего маршрута на выбранную дату и время отправления');
     await tx.$executeRaw`SELECT id FROM "DriverIntercityRoute" WHERE id=${route.id} FOR UPDATE`;
     const freshRoute = await tx.driverIntercityRoute.findUnique({where:{id:route.id}});
     const seatsToReserve = Math.max(
       1,
       Math.trunc(Number(request["seats"] || seats || 1)),
     );
-    if (!freshRoute || !freshRoute.isActive || freshRoute.seatsAvailable < seatsToReserve) {
+    if (!freshRoute || !freshRoute.isActive || !routeMatchesRequestSchedule(freshRoute,request) || freshRoute.seatsAvailable < seatsToReserve) {
       throw new BadRequestException("Недостаточно свободных мест на этом маршруте");
     }
     const nextSeats = freshRoute.seatsAvailable - seatsToReserve;
@@ -922,7 +926,7 @@ export class IntercityService {
     });
     if (!wallet || wallet[moneyField(request["currency"])] < fee) {
       throw new BadRequestException(
-        "Selected driver has insufficient balance for intercity request.",
+        "У выбранного водителя недостаточно средств на балансе для принятия межгородской заявки.",
       );
     }
 
@@ -942,7 +946,7 @@ export class IntercityService {
       where: { id: wallet.id, [moneyField(request["currency"])]: { gte: fee } },
       data: { [moneyField(request["currency"])]: { decrement: fee } },
     });
-    if (charged.count !== 1) throw new BadRequestException("Selected driver has insufficient balance for intercity request.");
+    if (charged.count !== 1) throw new BadRequestException("У выбранного водителя недостаточно средств на балансе для принятия межгородской заявки.");
     await consumeLockedBonus(tx, wallet.id, request["currency"], fee);
     await txAny.walletTransaction
       .create({

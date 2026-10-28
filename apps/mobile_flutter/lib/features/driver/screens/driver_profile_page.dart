@@ -1,3 +1,4 @@
+import '../widgets/route_departure_field.dart';
 import '../../../core/utils/localization_service.dart';
 import '../../../core/widgets/account_deletion_dialog.dart';
 import '../../referral/widgets/referral_profile_entry.dart';
@@ -39,6 +40,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   String? _selectedCityId;
   String? _routeFromCityId;
   String? _routeToCityId;
+  DateTime? _routeDepartureAt;
   bool _loading = false;
   bool _hasResolvedProfileLoad = false;
   bool _saving = false;
@@ -197,17 +199,25 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
       setState(() => _message = 'Выберите город отправления и назначения');
       return;
     }
+    if (_routeDepartureAt == null ||
+        !_routeDepartureAt!.isAfter(DateTime.now())) {
+      setState(() => _message = 'Выберите будущую дату и время отправления');
+      return;
+    }
     setState(() => _routeSaving = true);
     try {
       await _api.post('/driver/intercity/routes', data: {
         'fromCity': fromCity,
         'toCity': toCity,
+        'departureAt': _routeDepartureAt!.toUtc().toIso8601String(),
+        'departureOffsetMinutes': _routeDepartureAt!.timeZoneOffset.inMinutes,
       });
       if (!mounted) return;
       setState(() {
         _message = 'Заявка на маршрут добавлена';
         _routeFromCityId = null;
         _routeToCityId = null;
+        _routeDepartureAt = null;
       });
       await _load();
     } catch (e) {
@@ -1181,6 +1191,11 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                   label: 'Куда', icon: Icons.location_on_rounded),
               onChanged: (value) => setState(() => _routeToCityId = value)),
           const SizedBox(height: 10),
+          RouteDepartureField(
+              value: _routeDepartureAt,
+              enabled: !_routeSaving,
+              onChanged: (value) => setState(() => _routeDepartureAt = value)),
+          const SizedBox(height: 10),
           ICGradientButton(
             label: _routeSaving ? 'Отправляем...' : 'Подать заявку на маршрут',
             loading: _routeSaving,
@@ -1213,7 +1228,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        '$from → $to',
+                        '$from → $to\n${formatRouteDeparture(DateTime.tryParse('${route['departureAt']}'), offsetMinutes: (route['departureOffsetMinutes'] as num?)?.toInt())}',
                         style: TextStyle(
                           color: theme.colorScheme.onSurface,
                           fontWeight: FontWeight.w900,

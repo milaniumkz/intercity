@@ -300,6 +300,8 @@ model DriverProfile {
 }
 
 model DriverIntercityRoute {
+  departureAt DateTime?
+  departureOffsetMinutes Int @default(300)
   topUntil DateTime?
   id             String        @id @default(uuid())
   driverId       String
@@ -312,6 +314,7 @@ model DriverIntercityRoute {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
+  @@index([driverId, isActive, departureAt])
   @@unique([driverId, fromCity, toCity])
   @@index([driverId, isActive])
   @@index([fromCity, toCity, isActive])

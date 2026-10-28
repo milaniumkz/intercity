@@ -13,7 +13,7 @@ test('delivery eligibility and cancellation preserve bonuses and the exact reser
   assert.equal(delivery.fromCity,data.fromCity);assert.equal(delivery.toCity,data.toCity);
   let offer=await svc.createOffer(driver.id,delivery.id,{price:1000});await svc.acceptOffer(passenger.id,offer.id);for(const status of ['DRIVER_ARRIVED','IN_PROGRESS','COMPLETED','COMPLETED']) await svc.updateDriverRequestStatus(driver.id,delivery.id,status);
   const fees=await tx.walletTransaction.findMany({where:{intercityRequestId:delivery.id,direction:'DEBIT',wallet:{userId:driver.id}}});assert.equal(fees.length,1);assert.equal(fees[0].amount,100);
-  const route=await tx.driverIntercityRoute.create({data:{driverId:driver.driverProfile.id,fromCity:data.fromCity,toCity:data.toCity,seatsTotal:4,seatsAvailable:4}});
+  const route=await tx.driverIntercityRoute.create({data:{driverId:driver.driverProfile.id,fromCity:data.fromCity,toCity:data.toCity,seatsTotal:4,seatsAvailable:4,departureAt:new Date(new Date(data.date).setUTCHours(23,59,59,999)),departureOffsetMinutes:0}});
   for(const actor of ['passenger','driver']) {
    const request=await svc.createRequest(passenger.id,{...data,requestType:'INTERCITY',fromAddressLabel:data.fromCity+', exact pickup',toAddressLabel:data.toCity+', exact destination',seats:2,paymentMethod:'BONUS'});
    assert.equal(request.fromCity,data.fromCity);assert.equal(request.toCity,data.toCity);
