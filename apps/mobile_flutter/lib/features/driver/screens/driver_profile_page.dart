@@ -45,8 +45,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   bool _hasResolvedProfileLoad = false;
   bool _saving = false;
   bool _routeSaving = false;
-  bool _acceptCityFixed = true;
-  bool _acceptCityAuction = true;
+  bool _acceptCityTrips = true;
   bool _acceptIntercity = true;
   bool _acceptDelivery = true;
   bool _acceptCargo = true;
@@ -92,8 +91,8 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
             ? Map<String, dynamic>.from(profileRes.data as Map)
             : null;
         final profile = _profile ?? <String, dynamic>{};
-        _acceptCityFixed = (profile['acceptCityFixed'] ?? true) == true;
-        _acceptCityAuction = (profile['acceptCityAuction'] ?? true) == true;
+        _acceptCityTrips = (profile['acceptCityFixed'] ?? true) == true ||
+            (profile['acceptCityAuction'] ?? true) == true;
         _acceptIntercity = (profile['acceptIntercity'] ?? true) == true;
         _acceptDelivery = (profile['acceptDelivery'] ?? true) == true;
         _acceptCargo = (profile['acceptCargo'] ?? true) == true;
@@ -155,8 +154,8 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
     if (_saving || _profile == null) return;
     setState(() => _saving = true);
     final modes = <String, dynamic>{
-      'acceptCityFixed': _acceptCityFixed,
-      'acceptCityAuction': _acceptCityAuction,
+      'acceptCityFixed': _acceptCityTrips,
+      'acceptCityAuction': _acceptCityTrips,
       'acceptIntercity': _acceptIntercity,
       'acceptDelivery': _acceptDelivery,
       'acceptCargo': _acceptCargo,
@@ -182,8 +181,8 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
       await _api.post('/driver/profile', data: {
         'carModel': _carModelCtrl.text.trim(),
         'carNumber': _carNumberCtrl.text.trim(),
-        'acceptCityFixed': _acceptCityFixed,
-        'acceptCityAuction': _acceptCityAuction,
+        'acceptCityFixed': _acceptCityTrips,
+        'acceptCityAuction': _acceptCityTrips,
         'acceptIntercity': _acceptIntercity,
         'acceptDelivery': _acceptDelivery,
         'acceptCargo': _acceptCargo,
@@ -1347,17 +1346,10 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
           const SizedBox(height: 10),
           _serviceSwitch(
             icon: Icons.local_taxi_rounded,
-            title: 'Город',
-            subtitle: 'Фиксированные заказы по городу',
-            value: _acceptCityFixed,
-            onChanged: (value) => setState(() => _acceptCityFixed = value),
-          ),
-          _serviceSwitch(
-            icon: Icons.gavel_rounded,
-            title: 'Аукцион',
-            subtitle: 'Городские заказы с предложением цены',
-            value: _acceptCityAuction,
-            onChanged: (value) => setState(() => _acceptCityAuction = value),
+            title: 'Городские поездки',
+            subtitle: 'Поездки по городу с фиксированной ценой и аукцион',
+            value: _acceptCityTrips,
+            onChanged: (value) => setState(() => _acceptCityTrips = value),
           ),
           _serviceSwitch(
             icon: Icons.alt_route_rounded,

@@ -8,6 +8,7 @@ import 'package:intercity_mobile/features/driver/screens/driver_profile_page.dar
 class _ProfileApi extends ApiClient {
   final cities = Completer<Response<dynamic>>();
   bool delivery = false;
+  bool cityFixed = true, cityAuction = true;
   final saved = <Map<String, dynamic>>[];
   @override
   Future<Response<dynamic>> post(String path,
@@ -17,6 +18,8 @@ class _ProfileApi extends ApiClient {
     }
     saved.add(Map<String, dynamic>.from(data as Map));
     delivery = data['acceptDelivery'] == true;
+    cityFixed = data['acceptCityFixed'] == true;
+    cityAuction = data['acceptCityAuction'] == true;
     return Response(requestOptions: RequestOptions(path: path), data: {});
   }
 
@@ -36,6 +39,8 @@ class _ProfileApi extends ApiClient {
                 'carNumber': '099',
                 'status': 'APPROVED',
                 'acceptDelivery': delivery,
+                'acceptCityFixed': cityFixed,
+                'acceptCityAuction': cityAuction,
                 'rating': {
                   'id': 'private-rating-record',
                   'ratingAvg': 4.8,
@@ -47,6 +52,53 @@ class _ProfileApi extends ApiClient {
 }
 
 void main() {
+  for (final initial in [
+    (false, false),
+    (true, false),
+    (false, true),
+    (true, true)
+  ]) {
+    testWidgets('city trips control saves both modes together from $initial',
+        (tester) async {
+      tester.view.physicalSize = const Size(393, 852);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final api = _ProfileApi()
+        ..cityFixed = initial.$1
+        ..cityAuction = initial.$2;
+      api.cities.complete(Response(
+          requestOptions: RequestOptions(path: '/geo/cities'),
+          data: <dynamic>[]));
+      await tester
+          .pumpWidget(MaterialApp(home: DriverProfilePage(apiClient: api)));
+      await tester.pumpAndSettle();
+      expect(find.text('Городские поездки'), findsOneWidget);
+      expect(find.text('Город'), findsNothing);
+      expect(find.text('Аукцион'), findsNothing);
+      expect(find.byType(Switch), findsNWidgets(4));
+      var value = initial.$1 || initial.$2;
+      expect(tester.widget<Switch>(find.byType(Switch).first).value, value);
+      for (var n = 0; n < 2; n++) {
+        await tester.ensureVisible(find.byType(Switch).first);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(Switch).first);
+        await tester.pumpAndSettle();
+        value = !value;
+        await tester.ensureVisible(find.text('Сохранить настройки заказов'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Сохранить настройки заказов'));
+        await tester.pumpAndSettle();
+        expect(api.saved.last['acceptCityFixed'], value);
+        expect(api.saved.last['acceptCityAuction'], value);
+        await tester.pumpWidget(const SizedBox());
+        await tester
+            .pumpWidget(MaterialApp(home: DriverProfilePage(apiClient: api)));
+        await tester.pumpAndSettle();
+        expect(tester.widget<Switch>(find.byType(Switch).first).value, value);
+      }
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
   testWidgets(
       'current profile exposes delivery, saves modes and preserves edits during optional loading',
       (tester) async {
@@ -58,16 +110,16 @@ void main() {
         .pumpWidget(MaterialApp(home: DriverProfilePage(apiClient: api)));
     await tester.pumpAndSettle();
     expect(find.text('Какие заказы получать'), findsOneWidget);
-    expect(tester.widget<Switch>(find.byType(Switch).at(3)).value, false);
-    await tester.ensureVisible(find.byType(Switch).at(3));
+    expect(tester.widget<Switch>(find.byType(Switch).at(2)).value, false);
+    await tester.ensureVisible(find.byType(Switch).at(2));
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(Switch).at(3));
+    await tester.tap(find.byType(Switch).at(2));
     await tester.pumpAndSettle();
     api.cities.complete(Response(
         requestOptions: RequestOptions(path: '/geo/cities'),
         data: <dynamic>[]));
     await tester.pumpAndSettle();
-    expect(tester.widget<Switch>(find.byType(Switch).at(3)).value, true);
+    expect(tester.widget<Switch>(find.byType(Switch).at(2)).value, true);
     await tester.ensureVisible(find.text('Сохранить настройки заказов'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Сохранить настройки заказов'));
@@ -86,7 +138,7 @@ void main() {
     await tester
         .pumpWidget(MaterialApp(home: DriverProfilePage(apiClient: api)));
     await tester.pumpAndSettle();
-    expect(tester.widget<Switch>(find.byType(Switch).at(3)).value, true);
+    expect(tester.widget<Switch>(find.byType(Switch).at(2)).value, true);
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets(
