@@ -10,7 +10,8 @@ import '../../../core/utils/phone_input_formatter.dart';
 import '../../../core/widgets/ic_premium.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, this.apiClient});
+  final ApiClient? apiClient;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -34,7 +35,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
     try {
-      final apiClient = ApiClient();
+      final apiClient = widget.apiClient ?? ApiClient();
       final response = await apiClient.post(
         '/auth/login',
         data: {
@@ -71,6 +72,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<bool> _requirePasswordChange(ApiClient api) async {
+    final current = TextEditingController();
     final next = TextEditingController();
     final confirm = TextEditingController();
     String? error;
@@ -81,9 +83,17 @@ class _LoginScreenState extends State<LoginScreen> {
       builder: (dialogContext) => StatefulBuilder(
           builder: (context, update) => AlertDialog(
                 title: const Text('Замените временный пароль'),
-                content: Column(mainAxisSize: MainAxisSize.min, children: [
+                content: SingleChildScrollView(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
                   const Text(
                       'Для продолжения установите свой пароль: от 12 до 72 символов.'),
+                  TextField(
+                      controller: current,
+                      obscureText: true,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      decoration: const InputDecoration(
+                          labelText: 'Текущий (временный) пароль')),
                   TextField(
                       controller: next,
                       obscureText: true,
@@ -95,7 +105,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       decoration:
                           const InputDecoration(labelText: 'Повторите пароль')),
                   if (error != null) Text(error!),
-                ]),
+                ])),
                 actions: [
                   TextButton(
                       onPressed: saving
@@ -106,6 +116,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       onPressed: saving
                           ? null
                           : () async {
+                              if (current.text.isEmpty) {
+                                update(() =>
+                                    error = 'Введите текущий временный пароль');
+                                return;
+                              }
                               if (next.text.length < 12 ||
                                   next.text.length > 72 ||
                                   next.text != confirm.text) {
@@ -120,7 +135,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               try {
                                 final response = await api
                                     .post('/auth/change-password', data: {
-                                  'currentPassword': _passwordController.text,
+                                  'currentPassword': current.text,
                                   'newPassword': next.text,
                                 });
                                 await api.setTokens(
@@ -144,6 +159,7 @@ class _LoginScreenState extends State<LoginScreen> {
     );
     // Controllers are released after the dialog route finishes its transition.
     Future<void>.delayed(const Duration(milliseconds: 400), () {
+      current.dispose();
       next.dispose();
       confirm.dispose();
     });
