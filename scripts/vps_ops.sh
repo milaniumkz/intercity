@@ -116,6 +116,34 @@ SELECT key, value ~ '^[0-9]+$' AS numeric_value_present FROM "AppSettings" WHERE
 SQLPAYMENTCONFIG
       exit 0
     fi
+    if [[ "$TARGET" == topup-account:* ]]; then
+      account_phone="${TARGET#topup-account:}"
+      [[ "$account_phone" =~ ^7[0-9]{10}$ ]] || { echo "Invalid account phone" >&2; exit 1; }
+      docker exec -i intercity-backend node - "$account_phone" <<'JSTOPUPAUDIT'
+const {PrismaClient}=require('@prisma/client');
+const {Kassa24Gateway,confirmedPayment}=require('./dist/src/payments/kassa24-gateway');
+const p=new PrismaClient();
+(async()=>{
+ const users=await p.user.findMany({where:{phone:{endsWith:process.argv[2].slice(-10)}},select:{id:true,wallet:{select:{id:true,money:true,moneyRub:true}}}});
+ console.log(JSON.stringify({matchedAccounts:users.length}));
+ const login=process.env.KASSA24_LOGIN||process.env.KASSA24_MERCHANT_ID||'';
+ const demo=process.env.KASSA24_DEMO==='true';
+ const gateway=new Kassa24Gateway({baseUrl:process.env.KASSA24_API_URL||'https://ecommerce.pult24.kz',login,password:process.env.KASSA24_PASSWORD||'',demo});
+ for(const user of users){
+  if(!user.wallet)continue;
+  console.log(JSON.stringify({walletMoneyKzt:user.wallet.money,walletMoneyRub:user.wallet.moneyRub}));
+  const topups=await p.topupRequest.findMany({where:{walletId:user.wallet.id},orderBy:{createdAt:'desc'},take:10});
+  for(const t of topups){
+   console.log(JSON.stringify({id:t.id,amount:t.amount,currency:t.currency,status:t.status,provider:t.provider,createdAt:t.createdAt,creditedRows:await p.walletTransaction.count({where:{topupRequestId:t.id,direction:'CREDIT'}})}));
+   if(t.status==='PENDING'&&t.currency==='KZT'&&['KASSA24','ONLINE'].includes(t.provider)){
+    try{const state=await gateway.status(t.id);console.log(JSON.stringify({id:t.id,bankStatus:state?.status,bankNotFound:!!state?.notFound,bankDemo:state?.demo,confirmedLive:!!confirmedPayment(state,t.id,t.amount,login,false)}));}catch(_){console.log(JSON.stringify({id:t.id,bankStatusUnavailable:true}));}
+   }
+  }
+ }
+})().catch(()=>{console.error('Payment audit unavailable');process.exitCode=1}).finally(()=>p.$disconnect());
+JSTOPUPAUDIT
+      exit 0
+    fi
     if [[ "$TARGET" == driver-account:* ]]; then
       account_phone="${TARGET#driver-account:}"
       [[ "$account_phone" =~ ^[78][0-9]{10}$ ]] || { echo "Invalid account phone" >&2; exit 1; }
