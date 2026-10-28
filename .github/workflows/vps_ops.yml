@@ -10,6 +10,7 @@ on:
         options:
           - status
           - enable-kz-tax-accounting
+          - enable-demo-topups
           - seed-city-tariffs
           - logs
           - restart

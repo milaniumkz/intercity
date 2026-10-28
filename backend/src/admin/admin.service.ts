@@ -681,6 +681,7 @@ export class AdminService {
             const host = key === 'appStoreUrl' ? 'apps.apple.com' : 'play.google.com';
             if (url.protocol !== 'https:' || url.hostname !== host) throw new BadRequestException('Invalid app store URL');
         }
+        if (key === 'allowDemoTopupCredits' && !['true','false'].includes(value)) throw new BadRequestException('Тестовые пополнения: true или false');
         if (key === 'orderCommissionPercent' && (!value.trim() || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100)) throw new BadRequestException('Комиссия должна быть от 0 до 100 процентов');
         const setting = await this.prisma.appSettings.upsert({
             where: { key },

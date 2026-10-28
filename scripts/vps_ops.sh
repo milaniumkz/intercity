@@ -57,6 +57,36 @@ JSENABLETAX
     echo "Verified database backup: $backup/database.dump"
     docker exec -i intercity-backend node < /tmp/seed-all-city-tariffs.cjs
     ;;
+  enable-demo-topups)
+    expected="${TARGET%%:*}"
+    account_phone="${TARGET#*:}"
+    [[ "$expected" =~ ^[a-f0-9]{40}$ && "$account_phone" =~ ^7[0-9]{10}$ ]] || { echo 'Invalid release/account target' >&2; exit 1; }
+    [[ "$(cat "$APP_ROOT/current_commit")" == "$expected" ]] || { echo 'Unexpected deployed release' >&2; exit 1; }
+    backup="$APP_ROOT/backups/$(date +%Y%m%d-%H%M%S)-demo-topups"
+    mkdir -p "$backup"
+    chmod 700 "$backup"
+    docker exec intercity-postgres sh -c 'exec pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$backup/postgres.sql"
+    test -s "$backup/postgres.sql"
+    grep -q 'PostgreSQL database dump complete' "$backup/postgres.sql"
+    echo "Verified backup: $backup"
+    docker exec -i intercity-backend node - "$account_phone" <<'JSENABLEDEMO'
+const {PrismaClient}=require('@prisma/client');
+const {WalletService}=require('./dist/src/wallet/wallet.service');
+const p=new PrismaClient();
+(async()=>{
+ const users=await p.user.findMany({where:{phone:{endsWith:process.argv[2].slice(-10)}},select:{id:true,wallet:{select:{id:true,money:true}}}});
+ if(users.length!==1||!users[0].wallet)throw Error('Unique wallet not found');
+ const user=users[0];
+ await p.appSettings.upsert({where:{key:'allowDemoTopupCredits'},create:{key:'allowDemoTopupCredits',value:'true'},update:{value:'true'}});
+ console.log(JSON.stringify({allowDemoTopupCredits:true,balanceBefore:user.wallet.money}));
+ const service=new WalletService(p,{});
+ const rows=await p.topupRequest.findMany({where:{walletId:user.wallet.id,status:'PENDING',currency:'KZT',provider:{in:['KASSA24','KASSA24_DEMO','ONLINE']}},orderBy:{createdAt:'desc'},take:10});
+ for(const row of rows){try{const result=await service.checkTopupPayment(user.id,row.id);console.log(JSON.stringify(result));}catch(_){console.log(JSON.stringify({id:row.id,verificationUnavailable:true}));}}
+ const wallet=await p.wallet.findUnique({where:{id:user.wallet.id}});
+ console.log(JSON.stringify({balanceAfter:wallet.money,demoCredits:await p.walletTransaction.count({where:{walletId:wallet.id,type:'TOPUP_DEMO_CREDIT'}})}));
+})().catch(()=>{console.error('Demo topup operation failed');process.exitCode=1}).finally(()=>p.$disconnect());
+JSENABLEDEMO
+    ;;
   status)
     if [[ "$TARGET" == "tax" ]]; then
       cat "$APP_ROOT/current_commit"
@@ -135,8 +165,8 @@ const p=new PrismaClient();
   const topups=await p.topupRequest.findMany({where:{walletId:user.wallet.id},orderBy:{createdAt:'desc'},take:10});
   for(const t of topups){
    console.log(JSON.stringify({id:t.id,amount:t.amount,currency:t.currency,status:t.status,provider:t.provider,createdAt:t.createdAt,creditedRows:await p.walletTransaction.count({where:{topupRequestId:t.id,direction:'CREDIT'}})}));
-   if(t.status==='PENDING'&&t.currency==='KZT'&&['KASSA24','ONLINE'].includes(t.provider)){
-    try{const state=await gateway.status(t.id);console.log(JSON.stringify({id:t.id,bankStatus:state?.status,bankNotFound:!!state?.notFound,bankDemo:state?.demo,confirmedLive:!!confirmedPayment(state,t.id,t.amount,login,false)}));}catch(_){console.log(JSON.stringify({id:t.id,bankStatusUnavailable:true}));}
+   if(t.status==='PENDING'&&t.currency==='KZT'&&['KASSA24','KASSA24_DEMO','ONLINE'].includes(t.provider)){
+    try{const state=await gateway.status(t.id);console.log(JSON.stringify({id:t.id,bankStatus:state?.status,bankNotFound:!!state?.notFound,bankDemo:state?.demo,confirmedLive:!!confirmedPayment(state,t.id,t.amount,login,false),confirmedTest:!!confirmedPayment(state,t.id,t.amount,login,true)}));}catch(_){console.log(JSON.stringify({id:t.id,bankStatusUnavailable:true}));}
    }
   }
  }

@@ -1391,6 +1391,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
                 const SizedBox(height: 8),
                 Wrap(spacing: 8, children: [
                   for (final preset in const {
+                    'allowDemoTopupCredits': 'Тестовые пополнения (true/false)',
                     'referralCommissionPercent': 'Бонус от комиссии, %',
                     'appStoreUrl': 'Ссылка App Store',
                     'googlePlayUrl': 'Ссылка Google Play',
