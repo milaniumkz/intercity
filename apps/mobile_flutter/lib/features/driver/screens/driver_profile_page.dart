@@ -44,6 +44,8 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   bool _loading = false;
   bool _hasResolvedProfileLoad = false;
   bool _saving = false;
+  String _serviceModeFeedback = '';
+  bool _serviceModeSaveFailed = false;
   bool _routeSaving = false;
   bool _acceptCityTrips = true;
   bool _acceptIntercity = true;
@@ -67,6 +69,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   }
 
   Future<void> _load() async {
+    if (_saving) return;
     await Future<void>.delayed(Duration.zero);
     if (!mounted) return;
     setState(() => _loading = true);
@@ -150,25 +153,47 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
     }
   }
 
-  Future<void> _saveServiceModes() async {
+  Map<String, bool> get _serviceModeValues => {
+        'acceptCityFixed': _acceptCityTrips,
+        'acceptCityAuction': _acceptCityTrips,
+        'acceptIntercity': _acceptIntercity,
+        'acceptDelivery': _acceptDelivery,
+        'acceptCargo': _acceptCargo,
+      };
+
+  void _applyServiceModes(Map<String, bool> modes) {
+    _acceptCityTrips = modes['acceptCityFixed']!;
+    _acceptIntercity = modes['acceptIntercity']!;
+    _acceptDelivery = modes['acceptDelivery']!;
+    _acceptCargo = modes['acceptCargo']!;
+  }
+
+  Future<void> _changeServiceMode(String key, bool enabled) async {
     if (_saving || _profile == null) return;
-    setState(() => _saving = true);
-    final modes = <String, dynamic>{
-      'acceptCityFixed': _acceptCityTrips,
-      'acceptCityAuction': _acceptCityTrips,
-      'acceptIntercity': _acceptIntercity,
-      'acceptDelivery': _acceptDelivery,
-      'acceptCargo': _acceptCargo,
-    };
+    final previous = _serviceModeValues;
+    final modes = <String, bool>{...previous, key: enabled};
+    if (key == 'acceptCityFixed') modes['acceptCityAuction'] = enabled;
+    setState(() {
+      _applyServiceModes(modes);
+      _saving = true;
+      _serviceModeFeedback = '';
+      _serviceModeSaveFailed = false;
+    });
     try {
       await _api.post('/driver/profile/service-modes', data: modes);
       if (!mounted) return;
       setState(() {
         _profile = {...?_profile, ...modes};
-        _message = 'Настройки приёма заказов сохранены';
+        _serviceModeFeedback = 'Сохранено';
       });
     } catch (error) {
-      if (mounted) setState(() => _message = errorMessageRu(error));
+      if (!mounted) return;
+      setState(() {
+        _applyServiceModes(previous);
+        _serviceModeSaveFailed = true;
+        _serviceModeFeedback =
+            'Не удалось сохранить. Настройка возвращена к прежнему значению. ${errorMessageRu(error)}';
+      });
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -787,12 +812,6 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
               const SizedBox(height: 12),
               if (_profile != null) ...[
                 _serviceModesCard(),
-                const SizedBox(height: 10),
-                ICGradientButton(
-                  label: 'Сохранить настройки заказов',
-                  loading: _saving,
-                  onPressed: _saving ? null : _saveServiceModes,
-                ),
                 const SizedBox(height: 12),
               ],
               _boardDriverSection(
@@ -1349,29 +1368,55 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
             title: 'Городские поездки',
             subtitle: 'Поездки по городу с фиксированной ценой и аукцион',
             value: _acceptCityTrips,
-            onChanged: (value) => setState(() => _acceptCityTrips = value),
+            onChanged: (value) => _changeServiceMode('acceptCityFixed', value),
           ),
           _serviceSwitch(
             icon: Icons.alt_route_rounded,
             title: 'Межгород',
             subtitle: 'Заявки пассажиров на межгород',
             value: _acceptIntercity,
-            onChanged: (value) => setState(() => _acceptIntercity = value),
+            onChanged: (value) => _changeServiceMode('acceptIntercity', value),
           ),
           _serviceSwitch(
             icon: Icons.inventory_2_rounded,
             title: 'Доставка',
             subtitle: 'Доставка по городу и между городами',
             value: _acceptDelivery,
-            onChanged: (value) => setState(() => _acceptDelivery = value),
+            onChanged: (value) => _changeServiceMode('acceptDelivery', value),
           ),
           _serviceSwitch(
             icon: Icons.local_shipping_rounded,
             title: 'Грузовые',
             subtitle: 'Грузовые и крупные заказы',
             value: _acceptCargo,
-            onChanged: (value) => setState(() => _acceptCargo = value),
+            onChanged: (value) => _changeServiceMode('acceptCargo', value),
           ),
+          if (_saving || _serviceModeFeedback.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if (_saving)
+                const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+              else
+                Icon(
+                    _serviceModeSaveFailed
+                        ? Icons.error_outline
+                        : Icons.check_circle_outline,
+                    size: 18,
+                    color: _serviceModeSaveFailed
+                        ? theme.colorScheme.error
+                        : AppTheme.primaryColor),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(_saving ? 'Сохраняем...' : _serviceModeFeedback,
+                      style: TextStyle(
+                          color: _serviceModeSaveFailed
+                              ? theme.colorScheme.error
+                              : theme.colorScheme.onSurfaceVariant))),
+            ]),
+          ],
         ],
       ),
     );

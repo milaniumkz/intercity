@@ -8,6 +8,8 @@ import 'package:intercity_mobile/features/driver/screens/driver_profile_page.dar
 class _ProfileApi extends ApiClient {
   final cities = Completer<Response<dynamic>>();
   bool delivery = false;
+  bool failWrite = false;
+  Completer<void>? pendingWrite;
   bool cityFixed = true, cityAuction = true;
   final saved = <Map<String, dynamic>>[];
   @override
@@ -17,6 +19,12 @@ class _ProfileApi extends ApiClient {
       throw StateError('Unexpected write: $path');
     }
     saved.add(Map<String, dynamic>.from(data as Map));
+    await pendingWrite?.future;
+    if (failWrite) {
+      throw DioException(
+          requestOptions: RequestOptions(path: path),
+          type: DioExceptionType.connectionError);
+    }
     delivery = data['acceptDelivery'] == true;
     cityFixed = data['acceptCityFixed'] == true;
     cityAuction = data['acceptCityAuction'] == true;
@@ -52,6 +60,55 @@ class _ProfileApi extends ApiClient {
 }
 
 void main() {
+  for (final fails in [false, true]) {
+    testWidgets(
+        'autosave disables switches while pending and handles failure=$fails',
+        (tester) async {
+      tester.view.physicalSize = const Size(393, 852);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final pending = Completer<void>();
+      final api = _ProfileApi()
+        ..pendingWrite = pending
+        ..failWrite = fails;
+      api.cities.complete(Response(
+          requestOptions: RequestOptions(path: '/geo/cities'),
+          data: <dynamic>[]));
+      await tester
+          .pumpWidget(MaterialApp(home: DriverProfilePage(apiClient: api)));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byType(Switch).at(2));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(Switch).at(2));
+      await tester.pump();
+      expect(api.saved.length, 1);
+      expect(find.text('Сохраняем...'), findsOneWidget);
+      expect(
+          tester
+              .widgetList<Switch>(find.byType(Switch))
+              .every((s) => s.onChanged == null),
+          true);
+      pending.complete();
+      await tester.pumpAndSettle();
+      expect(tester.widget<Switch>(find.byType(Switch).at(2)).value, !fails);
+      expect(api.delivery, !fails);
+      expect(find.text('Сохранить настройки заказов'), findsNothing);
+      if (fails) {
+        expect(
+            find.textContaining('Не удалось сохранить. Настройка возвращена'),
+            findsOneWidget);
+        api.failWrite = false;
+        await tester.ensureVisible(find.byType(Switch).at(2));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(Switch).at(2));
+        await tester.pumpAndSettle();
+        expect(api.saved.length, 2);
+        expect(api.delivery, true);
+      }
+      expect(find.text('Сохранено'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
   for (final initial in [
     (false, false),
     (true, false),
@@ -76,6 +133,7 @@ void main() {
       expect(find.text('Город'), findsNothing);
       expect(find.text('Аукцион'), findsNothing);
       expect(find.byType(Switch), findsNWidgets(4));
+      expect(find.text('Сохранить настройки заказов'), findsNothing);
       var value = initial.$1 || initial.$2;
       expect(tester.widget<Switch>(find.byType(Switch).first).value, value);
       for (var n = 0; n < 2; n++) {
@@ -84,10 +142,6 @@ void main() {
         await tester.tap(find.byType(Switch).first);
         await tester.pumpAndSettle();
         value = !value;
-        await tester.ensureVisible(find.text('Сохранить настройки заказов'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('Сохранить настройки заказов'));
-        await tester.pumpAndSettle();
         expect(api.saved.last['acceptCityFixed'], value);
         expect(api.saved.last['acceptCityAuction'], value);
         await tester.pumpWidget(const SizedBox());
@@ -120,10 +174,6 @@ void main() {
         data: <dynamic>[]));
     await tester.pumpAndSettle();
     expect(tester.widget<Switch>(find.byType(Switch).at(2)).value, true);
-    await tester.ensureVisible(find.text('Сохранить настройки заказов'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Сохранить настройки заказов'));
-    await tester.pumpAndSettle();
     expect(api.saved.single['acceptDelivery'], true);
     expect(
         api.saved.single.keys,
