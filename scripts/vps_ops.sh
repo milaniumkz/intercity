@@ -88,6 +88,21 @@ const p=new PrismaClient();
 JSENABLEDEMO
     ;;
   status)
+    if [[ "$TARGET" == deploy-progress:* ]]; then
+      deploy_sha="${TARGET#deploy-progress:}"
+      [[ "$deploy_sha" =~ ^[a-f0-9]{40}$ ]] || exit 1
+      for path in "/tmp/intercity-vps-$deploy_sha.tar.gz" "$APP_ROOT/releases/$deploy_sha" "$APP_ROOT"/backups/*-"$deploy_sha"; do
+        if [[ -e "$path" ]]; then
+          stat -c 'progress_path=%n bytes=%s modified=%y' "$path"
+          if [[ -d "$path" ]]; then du -sb "$path"; fi
+        fi
+      done
+      ps -eo comm,etime,pcpu | awk 'NR==1 || $1 ~ /^(scp|sshd|tar|gzip|docker|pg_dump|npm|node|buildkitd|sha256sum)$/ {print}'
+      uptime
+      cat "$APP_ROOT/current_commit"
+      compose ps
+      exit 0
+    fi
     if [[ "$TARGET" == "tax" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-backend node <<'JSTAXSTATUS'
