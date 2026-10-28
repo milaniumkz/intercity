@@ -168,6 +168,8 @@ export class OrdersService {
 
         if (requestType && this.inferMode(requestType) !== mode) throw new BadRequestException('Order mode does not match request type');
         if (mode === 'CARGO' && !dto.itemDescription?.trim()) throw new BadRequestException('Укажите описание груза');
+        const scheduledFor = mode === 'CARGO' && dto.scheduledFor ? new Date(dto.scheduledFor) : null;
+        if (mode === 'CARGO' && (!scheduledFor || !Number.isFinite(scheduledFor.getTime()) || scheduledFor <= new Date())) throw new BadRequestException('Выберите будущую дату и время подачи грузового транспорта');
         const paymentMethod = this.normalizePaymentMethod(dto.paymentMethod);
         const isCityAuction = requestType === 'CITY_AUCTION';
         if (mode === 'CITY' && !isCityAuction && !dto.vehicleClass) {
@@ -239,6 +241,7 @@ export class OrdersService {
                     toManualAddress: null,
                     toAddressSource: 'GEOCODED',
                     mode,
+                    scheduledFor,
                     requestType: requestType ?? (mode === 'CARGO' ? 'CARGO' : mode === 'DELIVERY' ? 'DELIVERY_CITY' : 'CITY_FIXED'),
                     tariffId: preview.tariff?.id || null,
                     deliveryWeightKg: dto.itemWeightKg ?? null,

@@ -481,6 +481,9 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _manualAddressForFrom = true;
   DateTime _intercityTripDate = _defaultIntercityTripDate();
   bool _intercityDateConfirmed = false;
+  DateTime? _cargoDepartureAt;
+  bool get _cargoDepartureReady =>
+      _cargoDepartureAt?.isAfter(DateTime.now()) ?? false;
   List<Map<String, dynamic>> _intercityReadyTrips = const [];
   bool _intercityReadyTripsLoading = false;
   bool _passengerMapHomeEnabled = true;
@@ -593,6 +596,9 @@ class _OrderScreenState extends State<OrderScreen> {
 
   bool _canContinueFromStep(bool canCreate) {
     if (_loading) return false;
+    if (_mode() == 'CARGO' && _orderStep > 0 && !_cargoDepartureReady) {
+      return false;
+    }
     switch (_orderStep) {
       case 0:
         return true;
@@ -626,6 +632,9 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   String _stepHint() {
+    if (_mode() == 'CARGO' && !_cargoDepartureReady) {
+      return 'Выберите дату и время подачи грузового транспорта';
+    }
     switch (_orderStep) {
       case 0:
         return _mode() == 'CITY'
@@ -740,6 +749,7 @@ class _OrderScreenState extends State<OrderScreen> {
       'fromLng': from?.longitude,
       'toLat': to?.latitude,
       'toLng': to?.longitude,
+      'cargoScheduledFor': _cargoDepartureAt?.toUtc().toIso8601String(),
       'intercityDate': _intercityDateConfirmed
           ? _intercityTripDate.toUtc().toIso8601String()
           : null,
@@ -768,6 +778,8 @@ class _OrderScreenState extends State<OrderScreen> {
       final fromLat = (draft['fromLat'] as num?)?.toDouble();
       final chosenDate =
           DateTime.tryParse('${draft['intercityDate']}')?.toLocal();
+      final cargoDate =
+          DateTime.tryParse('${draft['cargoScheduledFor']}')?.toLocal();
       final fromLng = (draft['fromLng'] as num?)?.toDouble();
       final toLat = (draft['toLat'] as num?)?.toDouble();
       final toLng = (draft['toLng'] as num?)?.toDouble();
@@ -781,6 +793,9 @@ class _OrderScreenState extends State<OrderScreen> {
           (draft['intercityToCityLng'] as num?)?.toDouble();
       if (!mounted) return;
       setState(() {
+        if (cargoDate != null && cargoDate.isAfter(DateTime.now())) {
+          _cargoDepartureAt = cargoDate;
+        }
         if (chosenDate != null && chosenDate.isAfter(DateTime.now())) {
           _intercityTripDate = chosenDate;
           _intercityDateConfirmed = true;
@@ -7627,6 +7642,10 @@ class _OrderScreenState extends State<OrderScreen> {
 
   List<Widget> _routeStepContent() {
     return [
+      if (_mode() == 'CARGO') ...[
+        _cargoDepartureField(),
+        const SizedBox(height: 12)
+      ],
       if (_requestType() == requestTypeIntercity) ...[
         _intercityCitySelectorCard(),
         const SizedBox(height: 8),
@@ -8517,6 +8536,10 @@ class _OrderScreenState extends State<OrderScreen> {
 
   List<Widget> _optionsStepContent() {
     return [
+      if (_mode() == 'CARGO') ...[
+        _cargoDepartureField(),
+        const SizedBox(height: 12)
+      ],
       if (_requestType() == requestTypeIntercity || _mode() == 'DELIVERY') ...[
         _scheduleCard(),
         const SizedBox(height: 12),
@@ -8650,6 +8673,9 @@ class _OrderScreenState extends State<OrderScreen> {
             ),
           ),
           const SizedBox(height: 14),
+          if (_mode() == 'CARGO')
+            _confirmDetailRow('Дата и время подачи',
+                formatRouteDeparture(_cargoDepartureAt), Icons.event_rounded),
           if (_supportsVehicleClass)
             _confirmDetailRow('Класс', vehicleClassLabel(_vehicleClass),
                 Icons.airline_seat_recline_extra_rounded),
@@ -10655,6 +10681,22 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
+  Widget _cargoDepartureField() => RouteDepartureField(
+        key: const ValueKey('cargo-departure'),
+        value: _cargoDepartureAt,
+        title: 'Дата и время подачи',
+        helperText:
+            'Обязательно выберите, когда нужен грузовой транспорт. Время по настройкам устройства.',
+        enabled: !_loading,
+        onChanged: (value) {
+          setState(() {
+            _cargoDepartureAt = value;
+            _statusText = '';
+          });
+          unawaited(_saveBoardDraft());
+        },
+      );
+
   Widget _scheduleCard() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -11977,6 +12019,7 @@ class _OrderScreenState extends State<OrderScreen> {
       _boardDuration = null;
       _intercityTripDate = _defaultIntercityTripDate();
       _intercityDateConfirmed = false;
+      _cargoDepartureAt = null;
       _intercityBaggage = 1;
       _intercityPets = 'Нет';
       _intercityChildSeats = 0;
@@ -13508,6 +13551,10 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   bool _validateBeforeCreate() {
+    if (_mode() == 'CARGO' && !_cargoDepartureReady) {
+      _statusText = 'Выберите будущую дату и время подачи грузового транспорта';
+      return false;
+    }
     if (_requestType() == requestTypeIntercity &&
         (!_intercityDateConfirmed ||
             !_intercityTripDate.isAfter(DateTime.now()))) {
@@ -13759,6 +13806,7 @@ class _OrderScreenState extends State<OrderScreen> {
             'paymentMethod': _paymentMethod,
             'vehicleClass': _mode() == 'CITY' ? _vehicleClass : null,
             if (_mode() == 'CARGO') ...{
+              'scheduledFor': _cargoDepartureAt!.toUtc().toIso8601String(),
               'itemWeightKg': double.tryParse(
                   _deliveryWeightController.text.replaceAll(',', '.')),
               'itemDescription': _deliveryItemController.text.trim(),

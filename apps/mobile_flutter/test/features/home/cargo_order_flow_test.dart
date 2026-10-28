@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intercity_mobile/core/api/api_client.dart';
 import 'package:intercity_mobile/core/services/app_preferences.dart';
 import 'package:intercity_mobile/features/home/screens/order_screen.dart';
+import 'package:intercity_mobile/features/driver/widgets/route_departure_field.dart';
 
 class _CargoApi extends ApiClient {
   Map? created;
@@ -47,6 +48,12 @@ void main() {
     addTearDown(tester.view.reset);
     await AppPreferences.setOrderDraft(jsonEncode({
       'modeIndex': 3,
+      'intercityDate':
+          DateTime.now().add(const Duration(days: 1)).toUtc().toIso8601String(),
+      'cargoScheduledFor': DateTime.now()
+          .subtract(const Duration(minutes: 1))
+          .toUtc()
+          .toIso8601String(),
       'fromLat': 43.24,
       'fromLng': 76.94,
       'toLat': 43.25,
@@ -81,6 +88,44 @@ void main() {
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull, reason: 'route step');
+    expect(
+        tester
+            .widget<RouteDepartureField>(
+                find.byKey(const ValueKey('cargo-departure')))
+            .value,
+        isNull);
+    expect(find.text('Выбрать дату и время'), findsOneWidget);
+    expect(api.created, isNull);
+    await tester.ensureVisible(find.text('Далее'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Далее'));
+    await tester.pumpAndSettle();
+    expect(find.text('Параметры груза'), findsNothing);
+    expect(api.created, isNull);
+    await tester.ensureVisible(find.text('Выбрать дату и время'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Выбрать дату и время'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+        of: find.byType(DatePickerDialog), matching: find.text('Далее')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+        of: find.byType(TimePickerDialog), matching: find.text('Отмена')));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<RouteDepartureField>(
+                find.byKey(const ValueKey('cargo-departure')))
+            .value,
+        isNull);
+    final now = DateTime.now();
+    final selected = DateTime(now.year, now.month, now.day + 2, 17, 45);
+    tester
+        .widget<RouteDepartureField>(
+            find.byKey(const ValueKey('cargo-departure')))
+        .onChanged(selected);
+    await tester.pumpAndSettle();
+
     for (var step = 0; step < 2; step++) {
       final next = find.text('Далее');
       await tester.ensureVisible(next);
@@ -95,6 +140,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Cargo created'), findsOneWidget);
     expect(api.created!['requestType'], 'CARGO');
+    expect(api.created!['scheduledFor'], selected.toUtc().toIso8601String());
     expect(api.created!['mode'], 'CARGO');
     expect(api.created!['itemWeightKg'], 25);
     expect(api.created!['itemDescription'], 'Шкаф');

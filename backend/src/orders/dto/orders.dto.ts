@@ -1,5 +1,6 @@
 import {
     IsString,
+    IsISO8601,
     IsInt,
     MaxLength,
     IsNumber,
@@ -13,6 +14,11 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateOrderDto {
+    @ApiPropertyOptional({ description: 'Required future pickup date/time for CARGO, including timezone' })
+    @IsOptional()
+    @IsISO8601()
+    scheduledFor?: string;
+
     @ApiPropertyOptional({ description: 'Passenger suggested price for CITY_AUCTION' })
     @IsOptional()
     @IsNumber()
