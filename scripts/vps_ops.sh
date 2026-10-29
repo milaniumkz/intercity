@@ -119,6 +119,16 @@ const {PrismaClient}=require('@prisma/client'),bcrypt=require('bcrypt'),{randomU
 JSRECOVERPASS
     ;;
   status)
+    if [[ "$TARGET" == "cargo-tariffs" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<'SQLCARGO'
+BEGIN READ ONLY;
+SELECT row_to_json(t) FROM "TariffCargo" t;
+SELECT json_build_object('id',id,'status',status,'price',price,'createdAt',"createdAt",'scheduledFor',"scheduledFor") FROM "Order" WHERE mode='CARGO' ORDER BY "createdAt" DESC LIMIT 5;
+COMMIT;
+SQLCARGO
+      exit 0
+    fi
     if [[ "$TARGET" == "delivery-oleg" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-backend node <<'JSDELIVERYAUDIT'
