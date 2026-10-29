@@ -10116,15 +10116,16 @@ class _OrderScreenState extends State<OrderScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: selected ? Colors.white : theme.colorScheme.onSurface,
-                fontWeight: FontWeight.w900,
-                fontSize: 12,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: selected ? Colors.white : theme.colorScheme.onSurface,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 12,
+                ),
               ),
             ),
             const SizedBox(height: 4),
