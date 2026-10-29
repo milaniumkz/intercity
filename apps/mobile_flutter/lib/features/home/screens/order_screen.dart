@@ -9974,7 +9974,7 @@ class _OrderScreenState extends State<OrderScreen> {
     final isDark = theme.brightness == Brightness.dark;
     const types = [
       ('По городу', requestTypeDeliveryCity),
-      ('Межгород', requestTypeDeliveryIntercity),
+      ('Междугородняя', requestTypeDeliveryIntercity),
       ('По РФ', requestTypeDeliveryRf),
     ];
     return _surfaceCard(

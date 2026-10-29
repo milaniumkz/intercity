@@ -86,7 +86,7 @@ String requestTypeLabel(String requestType) {
       );
     case requestTypeDeliveryIntercity:
       return LocalizationService.translate(
-        'Межгородская доставка',
+        'Междугородняя доставка',
         'Қалааралық жеткізу',
       );
     case requestTypeDeliveryRf:
