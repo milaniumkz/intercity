@@ -356,6 +356,8 @@ export class OrdersService {
                 where: { isActive: true, countryCode: geoResult.currency === 'RUB' ? 'RU' : 'KZ' },
                 orderBy: { basePrice: 'asc' },
             });
+            if (!tariff) throw new BadRequestException('Грузовой тариф для страны отправления не настроен. Обратитесь в поддержку');
+            if (![tariff.basePrice, tariff.pricePerKm, tariff.pricePerKg, tariff.minPrice].every(Number.isFinite) || tariff.basePrice < 0 || tariff.pricePerKm <= 0 || tariff.pricePerKg < 0 || tariff.minPrice <= 0) throw new BadRequestException('Грузовой тариф настроен некорректно. Обратитесь в поддержку');
             if (tariff) {
                 this.validateFreightWeight(dto.itemWeightKg, tariff.pricePerKg);
                 price = Math.max(

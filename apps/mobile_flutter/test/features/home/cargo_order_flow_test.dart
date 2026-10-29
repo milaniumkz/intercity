@@ -11,6 +11,7 @@ import 'package:intercity_mobile/features/driver/widgets/route_departure_field.d
 
 class _CargoApi extends ApiClient {
   Map? created;
+  bool missingTariff = false;
   @override
   Future<Response<dynamic>> get(String path,
           {Map<String, dynamic>? queryParameters, Options? options}) async =>
@@ -24,6 +25,19 @@ class _CargoApi extends ApiClient {
       Map<String, dynamic>? queryParameters,
       Options? options}) async {
     if (path == '/orders/preview') {
+      if (missingTariff) {
+        throw DioException(
+          requestOptions: RequestOptions(path: path),
+          type: DioExceptionType.badResponse,
+          response: Response(
+              requestOptions: RequestOptions(path: path),
+              statusCode: 400,
+              data: {
+                'message':
+                    'Грузовой тариф для страны отправления не настроен. Обратитесь в поддержку'
+              }),
+        );
+      }
       return Response(requestOptions: RequestOptions(path: path), data: {
         'price': 1500,
         'currency': 'KZT',
@@ -39,6 +53,53 @@ class _CargoApi extends ApiClient {
 }
 
 void main() {
+  testWidgets('cargo exposes tariff error and retries calculation',
+      (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    tester.view.physicalSize = const Size(390, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    addTearDown(AppPreferences.clearOrderDraft);
+    await AppPreferences.setOrderDraft(jsonEncode({
+      'modeIndex': 3,
+      'fromLat': 43.24,
+      'fromLng': 76.94,
+      'toLat': 43.25,
+      'toLng': 76.95,
+      'fromText': 'Точка А',
+      'toText': 'Точка Б',
+      'fromAddress': 'Точка А',
+      'toAddress': 'Точка Б',
+      'cargoScheduledFor':
+          DateTime.now().add(const Duration(days: 2)).toUtc().toIso8601String(),
+      'itemDescription': 'Шкаф',
+      'itemWeightKg': '25',
+    }));
+    final api = _CargoApi()..missingTariff = true;
+    final router = GoRouter(routes: [
+      GoRoute(
+          path: '/',
+          builder: (_, __) => OrderScreen(
+              initialStep: 2,
+              apiClient: api,
+              enableLiveMap: false,
+              autoLocateOnStart: false))
+    ]);
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    expect(
+        find.textContaining(
+            'Грузовой тариф для страны отправления не настроен'),
+        findsWidgets);
+    expect(api.created, isNull);
+    api.missingTariff = false;
+    await tester.ensureVisible(find.text('Повторить расчёт'));
+    await tester.tap(find.text('Повторить расчёт'));
+    await tester.pumpAndSettle();
+    expect(find.text('Расчётная цена'), findsOneWidget);
+    expect(find.text('Повторить расчёт'), findsNothing);
+  });
   testWidgets(
       'cargo draft preserves freight details and submits a fixed cargo order',
       (tester) async {

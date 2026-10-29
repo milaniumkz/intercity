@@ -42,3 +42,10 @@ test('driver active-order recovery queries the driver profile, not passenger his
  const s=new DriverService({driverProfile:{findUnique:async({where})=>{assert.equal(where.userId,'driver-user');return{id:'profile'}}},order:{findFirst:async({where})=>{assert.equal(where.driverId,'profile');assert(!where.passengerId);assert.deepEqual(where.status.in,['DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS']);return{id:'active-cargo',mode:'CARGO'}}}},{},{},{},{},{});
  assert.equal((await s.getActiveOrder('driver-user')).id,'active-cargo');
 });
+
+test('cargo preview reports absent or invalid tariff instead of returning zero price',async()=>{
+ for(const tariff of [null,{basePrice:1000,pricePerKm:0,pricePerKg:20,minPrice:1500}]) {
+  const s=new OrdersService({tariffCargo:{findFirst:async()=>tariff}},{getRoute:async()=>({distance:3,duration:6}),reverseGeocode:async()=>({currency:'KZT'})},{},{},{});
+  await assert.rejects(s.previewOrder({...route,requestType:'CARGO',itemWeightKg:20}),/Грузовой тариф/);
+ }
+});

@@ -11129,7 +11129,7 @@ class _OrderScreenState extends State<OrderScreen> {
                         ),
                         const SizedBox(height: 4),
                         const Text(
-                          'Стоимость уже учитывает выбранный класс авто.',
+                          'Стоимость рассчитана по тарифу и параметрам заказа.',
                           style: TextStyle(
                             color: Color(0xFF7C7590),
                             fontWeight: FontWeight.w600,
@@ -11144,9 +11144,25 @@ class _OrderScreenState extends State<OrderScreen> {
             )
           : Padding(
               padding: const EdgeInsets.all(16),
-              child: Text(
-                'Введите адреса "Откуда" и "Куда", чтобы увидеть стоимость поездки',
-                style: TextStyle(color: muted),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _mode() == 'CARGO' && _statusText.isNotEmpty
+                        ? _statusText
+                        : 'Введите адреса "Откуда" и "Куда", чтобы увидеть стоимость поездки',
+                    style: TextStyle(color: muted),
+                  ),
+                  if (_mode() == 'CARGO' &&
+                      _fromLocation != null &&
+                      _toLocation != null)
+                    TextButton(
+                      onPressed: _loading ? null : _board,
+                      child: Text(_loading
+                          ? 'Рассчитываем стоимость…'
+                          : 'Повторить расчёт'),
+                    ),
+                ],
               ),
             ),
     );
@@ -13608,7 +13624,10 @@ class _OrderScreenState extends State<OrderScreen> {
         return false;
       }
       if (_boardPrice == null) {
-        _statusText = 'Дождитесь расчёта стоимости грузового заказа.';
+        if (_statusText.isEmpty) {
+          _statusText =
+              'Не удалось рассчитать стоимость. Вернитесь к параметрам и повторите расчёт.';
+        }
         return false;
       }
     }
