@@ -15,6 +15,9 @@ curl --fail --silent --show-error --max-time 30 \
   "${INTERCITY_API_BASE_URL%/}/geo/cities" > /dev/null
 
 cd "$ROOT_DIR/apps/mobile_flutter"
+# Native asset hooks can retain simulator frameworks between iOS targets.
+# A release must regenerate them for physical devices before archiving.
+"$FLUTTER_BIN" clean
 "$FLUTTER_BIN" pub get
 "$FLUTTER_BIN" build ipa --release \
   "--dart-define=INTERCITY_API_BASE_URL=$INTERCITY_API_BASE_URL" "$@"

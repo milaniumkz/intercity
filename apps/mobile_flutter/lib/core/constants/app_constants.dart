@@ -11,10 +11,16 @@ class AppConstants {
         ),
       );
 
+  static const String fallbackBaseUrl = String.fromEnvironment(
+    'INTERCITY_API_FALLBACK_BASE_URL',
+    defaultValue: 'https://api.intercity.89-207-255-27.nip.io/api',
+  );
+
   // Storage Keys
   static const String accessTokenKey = 'access_token';
   static const String refreshTokenKey = 'refresh_token';
   static const String apiBaseUrlKey = 'api_base_url';
+  static const String preferredApiBaseUrlKey = 'preferred_api_base_url_v1';
   static const String userKey = 'user';
   static const String themeKey = 'theme_mode';
   static const String languageKey = 'language';
