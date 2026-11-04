@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import '../../../core/api/admin_api_client.dart';
 
 class AdminLoginPage extends StatefulWidget {
-  const AdminLoginPage({super.key});
+  const AdminLoginPage({super.key, this.reviewAfterLogin = false});
+  final bool reviewAfterLogin;
 
   @override
   State<AdminLoginPage> createState() => _AdminLoginPageState();
@@ -15,6 +16,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
   bool _loading = false;
   String _message = '';
   bool get _reviewLink =>
+      widget.reviewAfterLogin ||
       Uri.base.fragment.split('?').first == '/identity-reviews';
   @override
   void initState() {

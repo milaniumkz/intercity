@@ -66,7 +66,7 @@ rollback_on_failure() {
     echo 'Release health check failed; restoring the previous application release' >&2
     docker tag "$PREVIOUS_IMAGE" intercity-backend:prod
     cd "$PREVIOUS_RELEASE/infra/vps"
-    compose up -d --no-build identity backend caddy
+    compose up -d --no-build backend caddy
     ln -sfn "$PREVIOUS_RELEASE" "$APP_ROOT/current"
   fi
   exit "$status"

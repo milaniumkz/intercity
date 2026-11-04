@@ -99,7 +99,7 @@ class _IntercityAdminAppState extends State<IntercityAdminApp> {
         '/settings': (context) => const AdminSettingsPage(),
         '/topups': (context) => const AdminTopupsPage(),
         '/payouts': (context) => const AdminPayoutsPage(),
-        '/identity-reviews': (context) => const AdminIdentityReviewsPage(),
+        '/identity-reviews': (context) => const _IdentityReviewAccess(),
         '/notifications': (context) => const AdminNotificationsPage(),
         '/finance-audit': (context) => const AdminFinanceAuditPage(),
         '/orders': (context) => const AdminOrdersPage(),
@@ -110,4 +110,35 @@ class _IntercityAdminAppState extends State<IntercityAdminApp> {
       },
     );
   }
+}
+
+class _IdentityReviewAccess extends StatefulWidget {
+  const _IdentityReviewAccess();
+  @override
+  State<_IdentityReviewAccess> createState() => _IdentityReviewAccessState();
+}
+
+class _IdentityReviewAccessState extends State<_IdentityReviewAccess> {
+  late final Future<bool> _authorized = _check();
+  Future<bool> _check() async {
+    final api = AdminApiClient.instance;
+    if (api is AdminApiClient && !await api.hasSavedSession()) return false;
+    try {
+      final response = await api.get('/auth/me');
+      return response.data is Map && response.data['role'] == 'ADMIN';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<bool>(
+        future: _authorized,
+        builder: (context, snapshot) => snapshot.connectionState !=
+                ConnectionState.done
+            ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+            : snapshot.data == true
+                ? const AdminIdentityReviewsPage()
+                : const AdminLoginPage(reviewAfterLogin: true),
+      );
 }
