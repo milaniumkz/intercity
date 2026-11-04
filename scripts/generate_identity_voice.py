@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import urllib.request
 import wave
+import numpy as np
 from piper import PiperVoice, SynthesisConfig
 
 REVISION = 'e7229f7d33a10e145e109b886d661984201ac3c4'
@@ -45,12 +46,26 @@ def main():
     out = root / 'apps/mobile_flutter/assets/sounds/identity'
     out.mkdir(parents=True, exist_ok=True)
     voice = PiperVoice.load(args.model_dir / 'ru_RU-irina-medium.onnx')
-    config = SynthesisConfig(length_scale=1.05, noise_scale=.5, noise_w_scale=.6)
+    config = SynthesisConfig(length_scale=.78, noise_scale=.55, noise_w_scale=.6)
     clips = {}
     for cue, text in TEXTS.items():
         path = out / (cue + '.wav')
         with wave.open(str(path), 'wb') as wav:
             voice.synthesize_wav(text, wav, config)
+        with wave.open(str(path), 'rb') as wav:
+            rate = wav.getframerate()
+            samples = np.frombuffer(wav.readframes(wav.getnframes()), dtype='<i2').astype(np.float64) / 32768
+        active = np.flatnonzero(np.abs(samples) > 10 ** (-48 / 20))
+        if not len(active):
+            raise RuntimeError('Silent voice output: ' + cue)
+        samples = samples[max(0, active[0] - int(rate * .05)):min(len(samples), active[-1] + int(rate * .10) + 1)]
+        gain = min(.10 / np.sqrt(np.mean(samples ** 2)), .90 / np.max(np.abs(samples)))
+        pcm = np.round(samples * gain * 32767).astype('<i2')
+        with wave.open(str(path), 'wb') as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(rate)
+            wav.writeframes(pcm.tobytes())
         with wave.open(str(path), 'rb') as wav:
             duration = wav.getnframes() / wav.getframerate()
             if cue == 'front' and duration > 1.8:
@@ -64,7 +79,7 @@ def main():
     (root / 'docs/identity-voice.json').write_text(json.dumps({
         'voice': 'Piper ru_RU-irina-medium', 'gender': 'female', 'language': 'ru-RU',
         'repository': 'https://huggingface.co/rhasspy/piper-voices', 'revision': REVISION,
-        'modelSha256': FILES, 'generator': 'piper-tts==1.4.1', 'lengthScale': 1.05,
+        'modelSha256': FILES, 'generator': 'piper-tts==1.4.1', 'lengthScale': .78, 'noiseScale': .55, 'noiseWScale': .6, 'peakCeiling': .90, 'edgeSilenceSeconds': [.05, .10],
         'runtime': 'Bundled audio only; no external speech service', 'clips': clips,
     }, ensure_ascii=False, indent=2) + '\n')
 

@@ -9,58 +9,65 @@
     "ru_RU-irina-medium.onnx.json": "c2ec28bb38e2b59e93b959b3e40348c1afebbd272f30fed5d41205d08e98a9d7"
   },
   "generator": "piper-tts==1.4.1",
-  "lengthScale": 1.05,
+  "lengthScale": 0.78,
+  "noiseScale": 0.55,
+  "noiseWScale": 0.6,
+  "peakCeiling": 0.9,
+  "edgeSilenceSeconds": [
+    0.05,
+    0.1
+  ],
   "runtime": "Bundled audio only; no external speech service",
   "clips": {
     "prepare": {
       "text": "Расположите лицо в овале. Свет должен падать на лицо. Держите телефон неподвижно.",
-      "seconds": 7.129,
-      "sha256": "ec4863ad40e1c19b47533d418ea9a81fbe032557f39bf5d720952f1ec0f0dc92"
+      "seconds": 5.776,
+      "sha256": "2e18256f72664ba255451c4cbca14964a4a81d70e1506f5c343aa06d535c4a4d"
     },
     "front": {
       "text": "Смотрите прямо.",
-      "seconds": 1.219,
-      "sha256": "232e8b410c73f28c8e75635591ff28eb555135fb37158ab95dd6bf212651bebc"
+      "seconds": 1.033,
+      "sha256": "f8b0484f7cd8e8fcf476c4456f2fb710de5d367c5e101b9974dcc8cb0b7f3b30"
     },
     "TURN_LEFT": {
       "text": "Слегка поверните голову налево.",
-      "seconds": 2.194,
-      "sha256": "770662e29343bcf020006ef659b66c567ac434a62416d9967b5bed919cf939d1"
+      "seconds": 1.855,
+      "sha256": "cdd7631a2e593d5766319ec3329057c85639f657a5d8fe9245adce4b32d9e118"
     },
     "TURN_RIGHT": {
       "text": "Слегка поверните голову направо.",
-      "seconds": 2.519,
-      "sha256": "9a7487c712e172cc4ce03640fe1235d2e663f5ad7fe502c5dace02c156d2f3cf"
+      "seconds": 2.09,
+      "sha256": "fce10113063315ea718d3a0cc94bdb7d1624aadf6d8fd94193af39955311a53c"
     },
     "LOOK_UP": {
       "text": "Поднимите подбородок.",
-      "seconds": 1.405,
-      "sha256": "aaf71deff5d5317073f7c77073c88287f93b8cdc77768d73e7187a99074a8bc2"
+      "seconds": 1.294,
+      "sha256": "07bc3a78277009220f4413ec1ac64f701d9d5ed2729322de587221e256e8cf4b"
     },
     "OPEN_MOUTH": {
       "text": "Откройте рот.",
-      "seconds": 1.057,
-      "sha256": "848776e907288732930c9957bbb7b52d8094f4c50feb863b8d8a60c4013a21cb"
+      "seconds": 0.894,
+      "sha256": "8aeefdbc5507e6d419a8d9e350d5bb8561e911555bd7925d069d80a936810c22"
     },
     "BLINK": {
       "text": "Медленно моргните два раза.",
-      "seconds": 2.101,
-      "sha256": "14b7db8f5a2eb9da0f5641da94c403743becc1972f639a9c789477d690bf5fd9"
+      "seconds": 1.629,
+      "sha256": "26435e5d830263cf0ffe7faa14d774b1098a63053906d69ffcc492cf8a6d2b75"
     },
     "done": {
       "text": "Готово. Проверяем запись.",
-      "seconds": 2.508,
-      "sha256": "bad6251f0f82f3ba78ae5d127ef549f0852ae1734dcded9db4ca001436791652"
+      "seconds": 1.9,
+      "sha256": "3f8e877fbcff09642e3274df500cac19123638a89dce9a7e7fd4948b79e6d775"
     },
     "retry": {
       "text": "Проверка не пройдена. Попробуйте ещё раз.",
-      "seconds": 3.379,
-      "sha256": "6fd6b1a503eb6072e76c4cdbe6593b7def2c2fc41d30aded2adc0e2a4adf256a"
+      "seconds": 2.724,
+      "sha256": "b4908abfcc27a35664de9200bf8a8b08eed0d388f1991b8b56d94807196b1a72"
     },
     "ready": {
       "text": "Смотрите прямо в камеру.",
-      "seconds": 1.683,
-      "sha256": "052a03abb9df0d25af631542f18cd01ed7c3372d22c8e1104a7e56d88ff0b410"
+      "seconds": 1.37,
+      "sha256": "28733f3938988925a9acc6995621dfbae1103463b99e5011aabc67b7a2881c5a"
     }
   }
 }
