@@ -175,6 +175,14 @@ SELECT json_build_object('country',c."countryCode",'basePrice',t."basePrice",'pr
 SQLTARIFFAUDIT
       exit 0
     fi
+    if [[ "$TARGET" == "identity-verification" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSIDENTITY'
+const {PrismaClient}=require('@prisma/client'),fs=require('fs');
+(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');console.log(JSON.stringify({enabled:(await tx.appSettings.findUnique({where:{key:'identityVerificationEnabled'},select:{value:true}}))?.value==='true',profiles:await tx.biometricProfile.count(),pendingReviews:await tx.biometricChallenge.count({where:{status:'REVIEW'}}),adminPushDevices:await tx.adminWebPushSubscription.count(),administrativeRoles:await tx.adminUserRole.groupBy({by:['roleId'],_count:true}),permissionPresent:!!await tx.adminPermission.findUnique({where:{key:'identity.review'},select:{id:true}})}));});const root=process.env.TECH_STORAGE_DIR||'/app/technical-data';console.log(JSON.stringify({identityKeyPresent:fs.existsSync(root+'/identity/key.bin'),adminPushKeyPresent:fs.existsSync(root+'/admin-webpush.json')}));const r=await fetch('http://identity:8080/health',{signal:AbortSignal.timeout(10000)});const h=await r.json();console.log(JSON.stringify({engineReady:h.ready,liveness:h.liveness,externalServices:h.externalServices,model:h.model}));if(!h.ready||!h.liveness||h.externalServices!==false)process.exitCode=1;}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSIDENTITY
+      exit 0
+    fi
     if [[ "$TARGET" == "notification-dispatch" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-backend node <<'JSDISPATCH'
