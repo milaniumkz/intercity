@@ -1,0 +1,66 @@
+{
+  "voice": "Piper ru_RU-irina-medium",
+  "gender": "female",
+  "language": "ru-RU",
+  "repository": "https://huggingface.co/rhasspy/piper-voices",
+  "revision": "e7229f7d33a10e145e109b886d661984201ac3c4",
+  "modelSha256": {
+    "ru_RU-irina-medium.onnx": "8ff38212d23da300bbe3705c645e6e5b9475f0bfde01558eb17813e22acaaaaa",
+    "ru_RU-irina-medium.onnx.json": "c2ec28bb38e2b59e93b959b3e40348c1afebbd272f30fed5d41205d08e98a9d7"
+  },
+  "generator": "piper-tts==1.4.1",
+  "lengthScale": 1.05,
+  "runtime": "Bundled audio only; no external speech service",
+  "clips": {
+    "prepare": {
+      "text": "Расположите лицо в овале. Свет должен падать на лицо. Держите телефон неподвижно.",
+      "seconds": 7.129,
+      "sha256": "ec4863ad40e1c19b47533d418ea9a81fbe032557f39bf5d720952f1ec0f0dc92"
+    },
+    "front": {
+      "text": "Смотрите прямо.",
+      "seconds": 1.219,
+      "sha256": "232e8b410c73f28c8e75635591ff28eb555135fb37158ab95dd6bf212651bebc"
+    },
+    "TURN_LEFT": {
+      "text": "Слегка поверните голову налево.",
+      "seconds": 2.194,
+      "sha256": "770662e29343bcf020006ef659b66c567ac434a62416d9967b5bed919cf939d1"
+    },
+    "TURN_RIGHT": {
+      "text": "Слегка поверните голову направо.",
+      "seconds": 2.519,
+      "sha256": "9a7487c712e172cc4ce03640fe1235d2e663f5ad7fe502c5dace02c156d2f3cf"
+    },
+    "LOOK_UP": {
+      "text": "Поднимите подбородок.",
+      "seconds": 1.405,
+      "sha256": "aaf71deff5d5317073f7c77073c88287f93b8cdc77768d73e7187a99074a8bc2"
+    },
+    "OPEN_MOUTH": {
+      "text": "Откройте рот.",
+      "seconds": 1.057,
+      "sha256": "848776e907288732930c9957bbb7b52d8094f4c50feb863b8d8a60c4013a21cb"
+    },
+    "BLINK": {
+      "text": "Медленно моргните два раза.",
+      "seconds": 2.101,
+      "sha256": "14b7db8f5a2eb9da0f5641da94c403743becc1972f639a9c789477d690bf5fd9"
+    },
+    "done": {
+      "text": "Готово. Проверяем запись.",
+      "seconds": 2.508,
+      "sha256": "bad6251f0f82f3ba78ae5d127ef549f0852ae1734dcded9db4ca001436791652"
+    },
+    "retry": {
+      "text": "Проверка не пройдена. Попробуйте ещё раз.",
+      "seconds": 3.379,
+      "sha256": "6fd6b1a503eb6072e76c4cdbe6593b7def2c2fc41d30aded2adc0e2a4adf256a"
+    },
+    "ready": {
+      "text": "Смотрите прямо в камеру.",
+      "seconds": 1.683,
+      "sha256": "052a03abb9df0d25af631542f18cd01ed7c3372d22c8e1104a7e56d88ff0b410"
+    }
+  }
+}
