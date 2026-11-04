@@ -1,3 +1,4 @@
+import { DriverDocumentService } from '../identity/driver-document.service';
 import { DRIVER_TAX_PAUSED_KEY, offlineUnverifiedTaxDrivers } from '../tax/driver-tax-mode';
 import { lockIncomeAccounting } from '../tax/tax-ledger';
 import { dashboardStatistics } from './dashboard-statistics';
@@ -65,6 +66,7 @@ export class AdminService {
         { key: 'orders.view', module: 'orders', action: 'view', description: 'Просмотр заказов' },
         { key: 'orders.manage', module: 'orders', action: 'manage', description: 'Управление заказами' },
         { key: 'drivers.view', module: 'drivers', action: 'view', description: 'Просмотр водителей' },
+        { key: 'identity.review', module: 'identity', action: 'review', description: 'Проверка личности и защищённые биометрические материалы' },
         { key: 'drivers.manage', module: 'drivers', action: 'manage', description: 'Управление водителями' },
         { key: 'users.view', module: 'users', action: 'view', description: 'Просмотр пользователей' },
         { key: 'users.manage', module: 'users', action: 'manage', description: 'Управление пользователями' },
@@ -96,6 +98,7 @@ export class AdminService {
         private prisma: PrismaService,
         private readonly realtimeService: RealtimeService,
         private readonly notificationDispatchService: NotificationDispatchService,
+        private readonly identityDocuments: DriverDocumentService,
     ) { }
 
     private async existingOptionalTables(tableNames: string[]) {
@@ -129,16 +132,11 @@ export class AdminService {
             where: { id: driverId },
         });
         if (!profile) throw new NotFoundException('Driver not found');
-
-        await this.prisma.driverProfile.update({
-            where: { id: driverId },
-            data: { status: 'ACTIVE', rejectionReason: null },
-        });
-
-        // Set service start date
-        await this.prisma.driverServiceStats.update({
-            where: { driverId },
-            data: { serviceStartAt: new Date() },
+        await this.prisma.$transaction(async tx=>{
+            await tx.$executeRaw`SELECT id FROM "User" WHERE id=${profile.userId} FOR UPDATE`;
+            await this.identityDocuments?.assertVerified(profile.userId,tx);
+            await tx.driverProfile.update({where:{id:driverId},data:{status:'ACTIVE',rejectionReason:null}});
+            await tx.driverServiceStats.update({where:{driverId},data:{serviceStartAt:new Date()}});
         });
 
         return { success: true };
@@ -1832,6 +1830,7 @@ export class AdminService {
     }
 
     private resolveModel(collection: string) {
+        if (/^(Biometric|AdminWebPush)/i.test(collection)) throw new BadRequestException('Биометрические данные доступны только в закрытой очереди проверок');
         const model = Prisma.dmmf.datamodel.models.find((m) => m.name === collection);
         if (!model) {
             throw new NotFoundException(`Collection not supported: ${collection}`);
@@ -2345,7 +2344,7 @@ export class AdminService {
         return { items, total, take, skip };
     }
 
-    async adminHasPermission(userId: string, permissionKey: string) {
+    async adminHasPermission(userId: string, permissionKey: string, strict = false) {
         const user = await this.prisma.user.findUnique({
             where: { id: userId },
             select: { role: true },
@@ -2353,7 +2352,7 @@ export class AdminService {
         if (!user || user.role !== 'ADMIN') return false;
         try {
             const roleCount = await (this.prisma as any).adminRole.count();
-            if (roleCount === 0) return true;
+            if (roleCount === 0) return !strict;
 
             const roleRows = await (this.prisma as any).adminUserRole.findMany({
                 where: { userId },
@@ -2374,7 +2373,7 @@ export class AdminService {
             );
         } catch {
             // Legacy mode when RBAC tables are not migrated yet.
-            return true;
+            return !strict;
         }
     }
 

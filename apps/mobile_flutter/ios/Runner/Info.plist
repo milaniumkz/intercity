@@ -27,7 +27,7 @@
 		<key>LSRequiresIPhoneOS</key>
 		<true/>
 		<key>NSCameraUsageDescription</key>
-		<string>Камера нужна для загрузки документов водителя.</string>
+		<string>Камера нужна для видеопроверки личности, восстановления пароля и загрузки документов водителя.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>Галерея нужна для выбора документов водителя.</string>
 		<key>UIApplicationSceneManifest</key>

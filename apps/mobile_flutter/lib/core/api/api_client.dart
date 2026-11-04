@@ -1,3 +1,4 @@
+import '../services/identity_session.dart';
 import '../services/pwa_support.dart';
 import 'dart:async';
 import 'dart:math';
@@ -186,6 +187,11 @@ class ApiClient {
     DioException error,
     ErrorInterceptorHandler handler,
   ) async {
+    if (error.response?.statusCode == 403 &&
+        error.response?.data is Map &&
+        error.response?.data['code'] == 'IDENTITY_REQUIRED') {
+      IdentitySession.required.value = true;
+    }
     if (!_shouldAttemptRefresh(error)) {
       handler.next(error);
       return;
@@ -220,6 +226,10 @@ class ApiClient {
 
   bool _shouldAttemptRefresh(DioException error) {
     if (error.response?.statusCode != 401) return false;
+    if (error.requestOptions.path.endsWith('/auth/identity/enroll') ||
+        error.requestOptions.path.endsWith('/auth/identity/driver-consent')) {
+      return false;
+    }
     // An authenticated password check can fail while the session is valid.
     // Preserve that error instead of retrying it as an expired access token.
     final body = error.response?.data;
@@ -238,7 +248,10 @@ class ApiClient {
     return normalized.endsWith('/auth/refresh') ||
         normalized.endsWith('/auth/login') ||
         normalized.endsWith('/auth/register') ||
-        normalized.endsWith('/auth/reset-password');
+        normalized.endsWith('/auth/reset-password') ||
+        normalized.contains('/auth/identity/recovery') ||
+        normalized.endsWith('/auth/identity/challenge-status') ||
+        normalized.endsWith('/auth/identity/reset-password');
   }
 
   Future<String?> _resolveRetryToken(RequestOptions requestOptions) async {
@@ -424,6 +437,7 @@ class ApiClient {
   }
 
   Future<void> clearTokens() async {
+    IdentitySession.required.value = false;
     await _storage.delete(AppConstants.accessTokenKey);
     await _storage.delete(AppConstants.refreshTokenKey);
     PwaSupport.refresh();

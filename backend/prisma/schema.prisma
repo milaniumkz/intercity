@@ -83,6 +83,9 @@ model User {
   wallet             Wallet?
   taxProfile         TaxProfile?
   driverProfile      DriverProfile?
+  biometricProfile BiometricProfile?
+  biometricChallenges BiometricChallenge[]
+  adminWebPushSubscriptions AdminWebPushSubscription[]
   pushToken          String?
   pushPlatform       String?
   pushTokenUpdatedAt DateTime?
@@ -1163,4 +1166,69 @@ model IntercityChatMessage {
   text String
   createdAt DateTime @default(now())
   @@index([requestId, createdAt])
+}
+
+// Private biometric data: never exposed by generic administrative collections.
+model BiometricProfile {
+  userId         String   @id
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status         String   @default("VERIFIED")
+  model          String
+  template       String
+  referencePath  String
+  consentVersion String
+  driverConsent  Boolean  @default(false)
+  driverDocumentHash String?
+  vehicleData Json?
+  vehicleDocumentHash String?
+  enrolledAt     DateTime @default(now())
+}
+
+model BiometricChallenge {
+  id             String    @id @default(uuid())
+  userId         String?
+  user           User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoSignature String?
+  videoDigest String? @unique
+  subjectHash String
+  ipHash String
+  purpose        String
+  secretHash     String
+  actions        Json
+  authVersion    Int
+  expiresAt      DateTime
+  claimedAt      DateTime?
+  status         String    @default("READY")
+  attempts       Int       @default(0)
+  documentInfo Json?
+  candidate      String?
+  referencePath  String?
+  secondaryPath String?
+  videoPath      String?
+  model          String?
+  reason         String?
+  reviewedBy     String?
+  reviewedAt     DateTime?
+  notifiedAt     DateTime?
+  pushAttempts   Int       @default(0)
+  consentVersion String
+  driverConsent  Boolean   @default(false)
+  resetHash      String?   @unique
+  resetExpiresAt DateTime?
+  consumedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([subjectHash,createdAt])
+  @@index([ipHash,createdAt])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+model AdminWebPushSubscription {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint     String   @unique
+  subscription Json
+  createdAt    DateTime @default(now())
 }

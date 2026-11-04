@@ -292,6 +292,15 @@ class AdminApiClient implements AdminApi {
     return _dio.get<dynamic>(path, queryParameters: query);
   }
 
+  Future<bool> hasSavedSession() async =>
+      (await _storage.read(_accessTokenKey))?.isNotEmpty == true;
+
+  Future<Uint8List> getBytes(String path) async {
+    final response = await _dio.get<List<int>>(path,
+        options: Options(responseType: ResponseType.bytes));
+    return Uint8List.fromList(response.data ?? const []);
+  }
+
   @override
   Future<Response<dynamic>> post(String path, {dynamic data}) {
     return _dio.post<dynamic>(path, data: data);
@@ -305,5 +314,17 @@ class AdminApiClient implements AdminApi {
   @override
   Future<Response<dynamic>> delete(String path) {
     return _dio.delete<dynamic>(path);
+  }
+}
+
+extension AdminPrivateBytes on AdminApi {
+  Future<Uint8List> readPrivateBytes(String path) async {
+    final client = this;
+    if (client is AdminApiClient) return client.getBytes(path);
+    final response = await get(path);
+    if (response.data is List<int>) {
+      return Uint8List.fromList(response.data as List<int>);
+    }
+    throw StateError('Не удалось прочитать закрытый файл');
   }
 }

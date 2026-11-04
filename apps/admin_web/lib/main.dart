@@ -1,3 +1,4 @@
+import 'features/admin/screens/admin_identity_reviews_page.dart';
 import 'features/admin/screens/admin_tax_registry_page.dart';
 import 'features/admin/screens/admin_trip_reviews_page.dart';
 import 'features/admin/screens/admin_rating_reviews_page.dart';
@@ -98,6 +99,7 @@ class _IntercityAdminAppState extends State<IntercityAdminApp> {
         '/settings': (context) => const AdminSettingsPage(),
         '/topups': (context) => const AdminTopupsPage(),
         '/payouts': (context) => const AdminPayoutsPage(),
+        '/identity-reviews': (context) => const AdminIdentityReviewsPage(),
         '/notifications': (context) => const AdminNotificationsPage(),
         '/finance-audit': (context) => const AdminFinanceAuditPage(),
         '/orders': (context) => const AdminOrdersPage(),

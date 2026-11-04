@@ -55,6 +55,14 @@ class _LoginScreenState extends State<LoginScreen> {
           return;
         }
       }
+      if (response.data['user']?['identityRequired'] == true) {
+        if (mounted) {
+          context.go(Uri(path: '/identity', queryParameters: {
+            'driver': response.data['user']?['role'] == 'DRIVER' ? '1' : '0'
+          }).toString());
+        }
+        return;
+      }
       await PushNotificationsService.instance.syncTokenIfAuthorized();
       final role = (response.data['user']?['role'] ?? '').toString();
       final route = await AppModeManager.resolveHomeRoute(apiClient,

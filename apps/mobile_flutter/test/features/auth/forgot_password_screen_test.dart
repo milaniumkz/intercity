@@ -25,11 +25,10 @@ void main() {
 
   for (final dark in [false, true]) {
     testWidgets(
-        'unavailable recovery is explained before requesting a password (dark=$dark)',
+        'video recovery is explained before requesting a password (dark=$dark)',
         (tester) async {
       await open(tester, dark: dark);
-      expect(
-          find.textContaining('Автоматическое восстановление пока недоступно'),
+      expect(find.textContaining('Восстановите доступ по новой видеозаписи'),
           findsOneWidget);
       expect(find.byType(TextFormField), findsOneWidget);
       expect(tester.widget<TextField>(find.byType(TextField)).obscureText,
@@ -59,7 +58,7 @@ void main() {
     addTearDown(() =>
         messenger.setMockMethodCallHandler(SystemChannels.platform, null));
     await open(tester);
-    final button = find.text('Скопировать обращение');
+    final button = find.text('Обратиться к администратору');
     await tester.ensureVisible(button);
     await tester.tap(button);
     await tester.pumpAndSettle();
@@ -72,6 +71,29 @@ void main() {
     expect(copied, contains('Телефон аккаунта: +77000000123'));
     expect(copied, contains('Готов подтвердить'));
     expect(find.textContaining('Текст скопирован.'), findsOneWidget);
+  });
+
+  testWidgets(
+      'video recovery needs a valid phone and consent before opening camera',
+      (tester) async {
+    await open(tester);
+    final button = find.text('Восстановить по видеопроверке');
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text('Введите телефон аккаунта полностью'), findsOneWidget);
+    await tester.enterText(find.byType(TextFormField), '7000000123');
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text('Восстановление по лицу'), findsOneWidget);
+    expect(find.textContaining('Без первичного эталона'), findsOneWidget);
+    expect(find.text('Сохранить новый пароль'), findsNothing);
+    await tester.scrollUntilVisible(find.text('Начать видеопроверку'), 300);
+    final start = tester
+        .widget<FilledButton>(find.byWidgetPredicate((w) => w is FilledButton));
+    expect(start.onPressed, isNull);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('small phone and open keyboard leave the return action reachable',

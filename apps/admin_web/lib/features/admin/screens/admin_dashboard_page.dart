@@ -1,3 +1,4 @@
+import 'admin_identity_reviews_page.dart';
 import 'dart:async';
 import '../widgets/dashboard_statistics.dart';
 import '../widgets/freight_tariff_dialog.dart';
@@ -2340,6 +2341,11 @@ class AdminShell extends StatelessWidget {
     ('/settings', 'Настройки', Icons.tune_rounded),
     ('/topups', 'Пополнения', Icons.account_balance_wallet_outlined),
     ('/payouts', 'Выплаты', Icons.payments_outlined),
+    (
+      '/identity-reviews',
+      'Проверка личности',
+      Icons.face_retouching_natural_outlined
+    ),
     ('/notifications', 'Уведомления', Icons.notifications_active_outlined),
     ('/finance-audit', 'Финансовый аудит', Icons.receipt_long_outlined),
     ('/tax-self-employed', 'Самозанятые', Icons.person_outline),
@@ -2382,6 +2388,7 @@ class AdminShell extends StatelessWidget {
           appBar: AppBar(
             title: Text(title),
             actions: [
+              const AdminIdentityReviewBell(),
               const AdminRatingReviewBell(),
               const AdminTripReviewBell(),
               if (!wide)

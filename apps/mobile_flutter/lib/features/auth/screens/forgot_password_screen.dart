@@ -1,3 +1,4 @@
+import 'face_verification_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -21,6 +22,13 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   void dispose() {
     _phoneController.dispose();
     super.dispose();
+  }
+
+  Future<void> _videoRecovery() async {
+    if (!_formKey.currentState!.validate()) return;
+    final phone = normalizeKzLocalPhone(_phoneController.text.trim());
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) => FaceVerificationPage(phone: phone)));
   }
 
   Future<void> _copyRequest() async {
@@ -91,17 +99,13 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                             const SizedBox(height: 16),
                             const ICPremiumInfoBanner(
                               icon: Icons.info_outline_rounded,
-                              text: 'Автоматическое восстановление пока '
-                                  'недоступно. Для восстановления доступа '
-                                  'обратитесь к администратору InterCity.',
+                              text:
+                                  'Восстановите доступ по новой видеозаписи. Лицо сравнивается с эталоном, сохранённым при первичной проверке.',
                             ),
                             const SizedBox(height: 16),
                             const Text('1. Укажите телефон своего аккаунта.\n'
-                                '2. Скопируйте обращение и отправьте '
-                                'администратору через привычный канал связи.\n'
-                                '3. После подтверждения владельца администратор '
-                                'сможет выдать временный пароль. При первом '
-                                'входе замените его своим.'),
+                                '2. Пройдите видеопроверку по случайным подсказкам.\n'
+                                '3. После подтверждения лица придумайте новый пароль. Если эталона ещё нет или лицо не совпадает, сброс не разрешается.'),
                             const SizedBox(height: 18),
                             TextFormField(
                               controller: _phoneController,
@@ -123,8 +127,14 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                             ),
                             const SizedBox(height: 16),
                             ICGradientButton(
-                              label: 'Скопировать обращение',
-                              icon: Icons.copy_rounded,
+                              label: 'Восстановить по видеопроверке',
+                              icon: Icons.videocam_outlined,
+                              onPressed: _videoRecovery,
+                            ),
+                            const SizedBox(height: 12),
+                            OutlinedButton.icon(
+                              label: const Text('Обратиться к администратору'),
+                              icon: const Icon(Icons.support_agent),
                               onPressed: _copyRequest,
                             ),
                             const SizedBox(height: 12),

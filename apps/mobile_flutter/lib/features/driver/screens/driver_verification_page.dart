@@ -1,3 +1,4 @@
+import '../../auth/screens/face_verification_page.dart';
 import '../../referral/widgets/driver_tax_notice.dart';
 import '../../referral/widgets/tax_status_panel.dart';
 import 'package:dio/dio.dart';
@@ -36,6 +37,10 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
   final _carColorCtrl = TextEditingController();
   final _carNumberCtrl = TextEditingController();
   final _carClassCtrl = TextEditingController();
+  final _identityPassword = TextEditingController();
+  bool _identityEnabled = false,
+      _identityDriverConsent = true,
+      _driverConsentChecked = false;
   String _message = '';
   String _taxCountry = 'KZ';
   bool _taxSaved = false;
@@ -57,7 +62,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
   String? _boardStageOverride;
   static const _docTypes = [
     ('selfie', Icons.person_pin_rounded, 'Селфи'),
-    ('passport', Icons.badge_rounded, 'Удостоверение личности / паспорт РК'),
+    ('passport', Icons.badge_rounded, 'Удостоверение личности / паспорт'),
     ('driverLicense', Icons.drive_eta_rounded, 'Водительское удостоверение РК'),
     (
       'techPassportFront',
@@ -76,6 +81,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
 
   @override
   void dispose() {
+    _identityPassword.dispose();
     _docTypeCtrl.dispose();
     _firstNameCtrl.dispose();
     _lastNameCtrl.dispose();
@@ -129,6 +135,15 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
   }
 
   Future<void> _loadDriverDocs() async {
+    try {
+      final identity = await ApiClient().get('/auth/identity/status');
+      if (mounted && identity.data is Map) {
+        setState(() {
+          _identityEnabled = identity.data['enabled'] == true;
+          _identityDriverConsent = identity.data['driverConsent'] == true;
+        });
+      }
+    } catch (_) {}
     try {
       final res = await ApiClient().get('/driver/profile');
       final data = res.data;
@@ -286,6 +301,11 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
   }
 
   Future<void> _complete() async {
+    if (_identityEnabled && !_identityDriverConsent) {
+      setState(() => _message =
+          'Подтвердите согласие на сверку с удостоверением личности');
+      return;
+    }
     const requiredDocs = {'passport', 'driverLicense', 'techPassportFront'};
     final missingDocs = requiredDocs.difference(_uploadedDocTypes);
     if (missingDocs.isNotEmpty) {
@@ -294,17 +314,26 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
     }
     setState(() => _loading = true);
     try {
-      await ApiClient().post('/driver/docs/complete', data: {});
+      final result = await ApiClient().post('/driver/docs/complete',
+          data: {},
+          options: Options(receiveTimeout: const Duration(seconds: 120)));
+      final checks = result.data is Map ? result.data['documentChecks'] : null;
+      if (checks is Map && checks['identityStatus'] == 'REJECTED') {
+        if (mounted) setState(() => _message = '${checks['message']}');
+        return;
+      }
       await AppModeManager.rememberPassengerMode();
       if (!mounted) return;
-      const message =
-          'Документы отправлены на проверку. Пока проверка идет, вы остаетесь в режиме пассажира.';
+      final vehicle = checks is Map ? checks['vehicle'] : null;
+      final message =
+          'Документы отправлены на проверку. Пока проверка идёт, вы остаетесь в режиме пассажира.'
+          '${vehicle is Map ? ' Автомобиль уточнён по техпаспорту: ${vehicle['brand']} ${vehicle['model']}, ${vehicle['year']} г., ${vehicle['plateNumber']}.' : ''}';
       setState(() => _message = message);
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(
+        ..showSnackBar(SnackBar(
           content: Text(message),
-          duration: Duration(seconds: 3),
+          duration: const Duration(seconds: 3),
         ));
       await Future<void>.delayed(const Duration(milliseconds: 900));
       if (!mounted) return;
@@ -431,6 +460,57 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
               ),
             _verificationHero(theme),
             const SizedBox(height: 12),
+            if (_identityEnabled && !_identityDriverConsent)
+              Card(
+                  child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(children: [
+                        const Text(
+                            'Для водителя видеоэталон дополнительно сверяется с фотографией в удостоверении личности. Данные машины читаются из техпаспорта, владелец машины не проверяется.'),
+                        CheckboxListTile(
+                            value: _driverConsentChecked,
+                            onChanged: (v) => setState(
+                                () => _driverConsentChecked = v == true),
+                            title: const Text(
+                                'Согласен на использование видеоэталона для сверки с удостоверением личности')),
+                        TextField(
+                            controller: _identityPassword,
+                            obscureText: true,
+                            decoration: const InputDecoration(
+                                labelText: 'Пароль аккаунта')),
+                        FilledButton(
+                            onPressed: _loading || !_driverConsentChecked
+                                ? null
+                                : () async {
+                                    setState(() => _loading = true);
+                                    try {
+                                      await ApiClient().post(
+                                          '/auth/identity/driver-consent',
+                                          data: {
+                                            'password': _identityPassword.text,
+                                            'driverConsent': true,
+                                            'consentVersion':
+                                                identityConsentVersion
+                                          });
+                                      _identityPassword.clear();
+                                      if (mounted) {
+                                        setState(() =>
+                                            _identityDriverConsent = true);
+                                      }
+                                    } catch (e) {
+                                      if (mounted) {
+                                        setState(
+                                            () => _message = errorMessageRu(e));
+                                      }
+                                    } finally {
+                                      if (mounted) {
+                                        setState(() => _loading = false);
+                                      }
+                                    }
+                                  },
+                            child:
+                                const Text('Разрешить сверку удостоверения')),
+                      ]))),
             _documentsChecklist(theme),
             const SizedBox(height: 12),
             _card(
@@ -797,7 +877,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
             ),
             const SizedBox(height: 10),
             _boardDocRow(
-              'Удостоверение личности / паспорт РК',
+              'Удостоверение личности / паспорт',
               _uploadedDocTypes.contains('passport')
                   ? 'Загружен'
                   : 'Нужно загрузить',
@@ -1616,7 +1696,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
           _docRow(
             theme,
             Icons.badge_rounded,
-            'Удостоверение личности / паспорт РК',
+            'Удостоверение личности / паспорт',
             'Загружен',
             true,
           ),

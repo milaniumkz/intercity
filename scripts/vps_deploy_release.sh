@@ -66,7 +66,7 @@ rollback_on_failure() {
     echo 'Release health check failed; restoring the previous application release' >&2
     docker tag "$PREVIOUS_IMAGE" intercity-backend:prod
     cd "$PREVIOUS_RELEASE/infra/vps"
-    compose up -d --no-build backend caddy
+    compose up -d --no-build identity backend caddy
     ln -sfn "$PREVIOUS_RELEASE" "$APP_ROOT/current"
   fi
   exit "$status"
@@ -112,11 +112,11 @@ printf '\nRELEASE_SHA=%s\n' "$COMMIT_SHA" >> "$RELEASE_DIR/infra/vps/.env"
 cd "$RELEASE_DIR/infra/vps"
 # Build while the previous backend continues running. Additive migrations run
 # before the new application starts; never fall back to an unrestricted db push.
-compose build backend
+compose build backend identity
 compose run --rm --no-deps backend npx prisma migrate deploy
 compose run --rm --no-deps backend node dist/src/geo/import-city-catalog.js
 switch_started=1
-compose up -d --no-build backend caddy
+compose up -d --no-build identity backend caddy
 
 # /health is a Caddy response. Verify an actual API/database request as well.
 response_file="$(mktemp)"
@@ -140,6 +140,15 @@ if [[ -f "$RELEASE_DIR/backend/scripts/technical-report.cjs" ]]; then
   printf '{"kind":"BACKUP","status":"SUCCESS","version":"%s","at":"%s","databaseVerified":true,"filesVerified":true,"note":"Pre-deployment backup verified"}' "$COMMIT_SHA" "$BACKUP_CREATED_AT" | docker exec -i intercity-backend node scripts/technical-report.cjs
   printf '{"kind":"DEPLOYMENT","status":"SUCCESS","version":"%s","note":"API and published web version checks passed"}' "$COMMIT_SHA" | docker exec -i intercity-backend node scripts/technical-report.cjs
 fi
+
+docker exec intercity-backend node -e 'fetch("http://identity:8080/health").then(r=>r.json()).then(r=>{if(!r.ready||!r.liveness||r.externalServices!==false)process.exit(1);console.log("Private identity engine verified: "+r.model)}).catch(()=>process.exit(1))'
+
+test -s "$SHARED_DIR/technical-data/identity/key.bin"
+test -s "$SHARED_DIR/technical-data/admin-webpush.json"
+tar -C "$SHARED_DIR" -czf "$BACKUP_DIR/identity-keys.tar.gz" technical-data/identity/key.bin technical-data/admin-webpush.json
+chmod 600 "$BACKUP_DIR/identity-keys.tar.gz"
+tar -tzf "$BACKUP_DIR/identity-keys.tar.gz" >/dev/null
+printf 'Verified private identity key backup: %s/identity-keys.tar.gz\n' "$BACKUP_DIR"
 
 ln -sfn "$RELEASE_DIR" "$APP_ROOT/current"
 printf '%s\n' "$COMMIT_SHA" > "$APP_ROOT/current_commit"

@@ -86,11 +86,12 @@ export class AccountDeletionService implements OnModuleInit, OnModuleDestroy {
             await tx.taxPeriodBasis.updateMany({where: {ownerKey: userId}, data: {ownerKey: archiveId}});
             await tx.taxAccountingIdentity.updateMany({where: {ownerKey: userId}, data: {ownerKey: archiveId}});
             await tx.techEvent.updateMany({where:{userId},data:{ip:null,client:Prisma.DbNull,details:Prisma.DbNull,message:'Персональные сведения удалены по запросу владельца аккаунта'}});
+            await tx.accountDeletionFileJob.create({data:{directory:userId}});
             await tx.user.delete({where: {id: userId}});
             return driverId;
         }, {maxWait: 10000, timeout: 30000});
         await this.cleanupFiles();
-        const filesPending = cleanupDirectory ? await this.prisma.accountDeletionFileJob.count({where: {directory: cleanupDirectory}}).catch(() => 1) > 0 : false;
+        const filesPending = await this.prisma.accountDeletionFileJob.count({where: {directory:{in:[userId,...(cleanupDirectory?[cleanupDirectory]:[])]}}}).catch(() => 1) > 0;
         return {deleted: true, filesPending};
     }
     async cleanupFiles() {
@@ -102,6 +103,7 @@ export class AccountDeletionService implements OnModuleInit, OnModuleDestroy {
                 try {
                     await rm(join(process.env.UPLOAD_DIR || join(process.cwd(), 'uploads'), job.directory), {recursive: true, force: true});
                     const privateRoot=process.env.TECH_STORAGE_DIR||join(process.cwd(),'technical-data');
+                    await rm(join(privateRoot,'identity',job.directory),{recursive:true,force:true});
                     for(const file of await this.prisma.techFile.findMany({where:{objectId:job.directory,deletedAt:null}})) {
                         if(!/^[a-f0-9]{32}\.bin$/.test(file.path))throw new Error('Invalid private file path');
                         await rm(join(privateRoot,file.path),{force:true});

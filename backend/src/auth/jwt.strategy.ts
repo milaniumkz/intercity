@@ -29,6 +29,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         if (!user || (payload.ver ?? 0) !== user.authVersion) {
             throw new UnauthorizedException();
         }
-        return {...payload, role:user.role, mustChangePassword:user.mustChangePassword};
+        return {...payload, role:user.role, mustChangePassword:user.mustChangePassword,identityRequired:user.identityRequired,driverDocumentsRequired:user.driverDocumentsRequired};
     }
 }

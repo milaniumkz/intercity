@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../core/api/admin_api_client.dart';
 
@@ -13,6 +14,24 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
   final _passwordCtrl = TextEditingController();
   bool _loading = false;
   String _message = '';
+  bool get _reviewLink =>
+      Uri.base.fragment.split('?').first == '/identity-reviews';
+  @override
+  void initState() {
+    super.initState();
+    if (_reviewLink) unawaited(_resumeReview());
+  }
+
+  Future<void> _resumeReview() async {
+    final client = AdminApiClient.instance;
+    if (client is! AdminApiClient || !await client.hasSavedSession()) return;
+    try {
+      final user = await client.get('/auth/me');
+      if (mounted && user.data is Map && user.data['role'] == 'ADMIN') {
+        Navigator.pushReplacementNamed(context, '/identity-reviews');
+      }
+    } catch (_) {/* Keep login available when the saved session expired. */}
+  }
 
   @override
   void dispose() {
@@ -35,7 +54,8 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
         return;
       }
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/dashboard');
+      Navigator.pushReplacementNamed(
+          context, _reviewLink ? '/identity-reviews' : '/dashboard');
     } catch (e) {
       if (!mounted) return;
       setState(() => _message = _loginErrorMessage(e));

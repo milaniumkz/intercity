@@ -87,6 +87,8 @@ rsync -a --delete \
   --exclude='**/.env*' \
   --exclude='.github' \
   --exclude='.DS_Store' \
+  --exclude='**/__pycache__' \
+  --exclude='**/*.pyc' \
   --exclude='**/node_modules' \
   --exclude='**/.dart_tool' \
   --exclude='**/build' \

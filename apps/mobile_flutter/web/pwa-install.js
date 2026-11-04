@@ -10,6 +10,7 @@
   const element = (tag, text, parent) => { const e = document.createElement(tag); if (text) e.textContent = text; parent?.append(e); return e; };
   const button = (label, action, parent, secondary = false) => { const e = element('button', label, parent); e.type = 'button'; e.className = secondary ? 'pwa-secondary' : 'pwa-primary'; e.onclick = action; return e; };
   function render(status = {}) {
+    if (/^#\/(identity|forgot-password)(?:[/?]|$)/.test(location.hash)) { panel?.remove(); panel = null; return; }
     lastStatus = status;
     const standalone = installed(), kind = standalone ? 'push' : 'install';
     if (!forced && read(storageKey(kind)) > Date.now()) return;
@@ -61,6 +62,7 @@
   window.intercityShowPwaHelp = () => { message = ''; refresh(true); };
   window.addEventListener('intercity-pwa-refresh', () => refresh());
   window.addEventListener('intercity-push-ready', () => refresh());
+  window.addEventListener('hashchange', () => refresh());
   window.addEventListener('focus', () => refresh());
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   matchMedia('(display-mode: standalone)').addEventListener?.('change', () => refresh());

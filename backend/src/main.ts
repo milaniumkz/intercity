@@ -38,6 +38,8 @@ async function bootstrap() {
         originalConsoleError(sanitized);
     };
 
+    app.use('/api/auth/identity', (_req: any, res: any, next: () => void) => { res.setHeader('Cache-Control','no-store'); next(); });
+
     app.use((req: any, res: any, next: () => void) => {
         const started = Date.now();
         res.on('finish', () => {

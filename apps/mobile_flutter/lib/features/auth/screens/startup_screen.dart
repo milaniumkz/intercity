@@ -48,6 +48,13 @@ class _StartupScreenState extends State<StartupScreen> {
       final user =
           res.data is Map ? Map<String, dynamic>.from(res.data as Map) : null;
       final role = (user?['role'] ?? '').toString();
+      if (user?['identityRequired'] == true) {
+        _go(Uri(
+                path: '/identity',
+                queryParameters: {'driver': role == 'DRIVER' ? '1' : '0'})
+            .toString());
+        return;
+      }
       startupTraceMark('bootstrap.role', data: <String, Object?>{'role': role});
       final route = await AppModeManager.resolveHomeRoute(_api,
           role: role, userId: user?['id']?.toString());

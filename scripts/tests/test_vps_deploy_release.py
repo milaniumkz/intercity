@@ -27,6 +27,9 @@ class DeployTest(unittest.TestCase):
         (self.app / 'shared/uploads').mkdir(parents=True)
         (self.app / 'shared/uploads/test.txt').write_text('upload backup fixture')
         (self.app / 'shared/.env').write_text('TEST_ONLY=1\n')
+        (self.app / 'shared/technical-data/identity').mkdir(parents=True)
+        (self.app / 'shared/technical-data/identity/key.bin').write_bytes(bytes(32))
+        (self.app / 'shared/technical-data/admin-webpush.json').write_text('test-fixture')
         staged = self.path / 'bundle/intercity'
         (staged / 'scripts').mkdir(parents=True)
         (staged / 'infra/vps').mkdir(parents=True)
@@ -78,6 +81,7 @@ if [[ "$*" == *geo/cities* ]]; then echo '[]'; else printf '{"commit":"%s"}\n' "
         backup = next((self.app / 'backups').iterdir())
         self.assertTrue((backup / 'postgres.sql').is_file())
         self.assertTrue((backup / 'uploads.tar.gz').is_file())
+        self.assertTrue((backup / 'identity-keys.tar.gz').is_file())
         self.assertLess(calls.index('pg_dump'), calls.index(' build backend'))
         self.assertLess(calls.index('migrate deploy'), calls.index(' up -d'))
 

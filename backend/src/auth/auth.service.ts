@@ -1,3 +1,4 @@
+import { IdentityService } from '../identity/identity.service';
 import {
     BadRequestException,
     ConflictException,
@@ -21,6 +22,7 @@ export class AuthService {
         private jwtService: JwtService,
         private geoService: GeoService,
         private configService: ConfigService,
+        private identity: IdentityService,
     ) { }
 
     async register(dto: RegisterDto) {
@@ -91,6 +93,7 @@ export class AuthService {
                 name: user.name,
                 role: user.role,
                 mustChangePassword: user.mustChangePassword,
+                identityRequired: await this.identity?.needsVerification(user.id,user.role) ?? false,
                 refCode: user.refCode,
                 refLink: this.buildReferralLink(user.refCode),
             },
@@ -124,6 +127,7 @@ export class AuthService {
                 name: user.name,
                 role: user.role,
                 mustChangePassword: user.mustChangePassword,
+                identityRequired: await this.identity?.needsVerification(user.id,user.role) ?? false,
                 refCode: user.refCode,
             },
             ...tokens,
@@ -164,34 +168,7 @@ export class AuthService {
     }
 
     async resetPassword(dto: ResetPasswordDto) {
-        if (!this.isUnsafePasswordResetAllowed()) {
-            throw new ForbiddenException(
-                'Password reset is disabled until a verified recovery flow is configured',
-            );
-        }
-
-        const user = await this.prisma.user.findUnique({
-            where: { phone: dto.phone },
-            select: { id: true },
-        });
-
-        if (!user) {
-            throw new UnauthorizedException('User with this phone was not found');
-        }
-
-        const hashedPassword = await bcrypt.hash(dto.password, 10);
-
-        await this.prisma.$transaction([
-            this.prisma.user.update({
-                where: { id: user.id },
-                data: { password: hashedPassword },
-            }),
-            this.prisma.refreshToken.deleteMany({
-                where: { userId: user.id },
-            }),
-        ]);
-
-        return { success: true };
+        throw new ForbiddenException('Для восстановления пароля пройдите видеопроверку личности');
     }
 
     async changePassword(userId: string, current: string, next: string) {
@@ -205,10 +182,6 @@ export class AuthService {
         return this.generateTokens(user.id,user.phone,user.role);
     }
 
-    private isUnsafePasswordResetAllowed(): boolean {
-        return process.env.ALLOW_UNVERIFIED_PASSWORD_RESET === 'true';
-    }
-
     async validateUser(userId: string) {
         const user = await this.prisma.user.findUnique({
             where: { id: userId },
@@ -216,7 +189,7 @@ export class AuthService {
         });
         if (!user || user.blockedAt || user.phone.startsWith('erased:')) return null;
         const { password, ...safeUser } = user;
-        return { ...safeUser, refLink: this.buildReferralLink(user.refCode) };
+        return { ...safeUser, driverDocumentsRequired: !!user.driverProfile && (await this.identity?.driverDocumentsRequired(user.id) ?? false), identityRequired: await this.identity?.needsVerification(user.id,user.role) ?? false, refLink: this.buildReferralLink(user.refCode) };
     }
 
     async getReferralSummary(userId: string) {

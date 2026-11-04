@@ -1,3 +1,4 @@
+import { IdentityModule } from '../identity/identity.module';
 import { AccountDeletionService } from './account-deletion.service';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
@@ -12,6 +13,7 @@ import { GeoModule } from '../geo/geo.module';
 
 @Module({
     imports: [
+        IdentityModule,
         PassportModule.register({ defaultStrategy: 'jwt' }),
         JwtModule.registerAsync({
             imports: [ConfigModule],

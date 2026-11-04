@@ -150,9 +150,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
         await AppPreferences.clearPendingReferralCode();
         if (mounted) {
           final code = _normalizeReferralInput(_referralController.text);
-          context.go(widget.downloadAfterRegistration && code != null
+          final next = widget.downloadAfterRegistration && code != null
               ? '/ref/$code/download'
-              : (_isDriver ? '/driver/verification' : '/order'));
+              : (_isDriver ? '/driver/verification' : '/order');
+          final required =
+              loginResponse.data['user']?['identityRequired'] == true ||
+                  response.data['user']?['identityRequired'] == true;
+          context.go(required
+              ? Uri(path: '/identity', queryParameters: {
+                  'next': next,
+                  'driver': _isDriver ? '1' : '0'
+                }).toString()
+              : next);
         }
       }
     } catch (e) {

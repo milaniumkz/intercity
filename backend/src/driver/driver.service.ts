@@ -1,3 +1,4 @@
+import { DriverDocumentService } from '../identity/driver-document.service';
 import { driverTaxChecksEnabled } from '../tax/driver-tax-mode';
 import {routeRequestTimeRange, routeMatchesRequestSchedule} from '../common/driver-route-schedule';
 import { Optional } from '@nestjs/common';
@@ -33,6 +34,7 @@ export class DriverService {
         private autoDispatchService: AutoDispatchService,
         private taxService: TaxService,
         @Optional() private technicalService?: TechnicalService,
+        @Optional() private identityDocuments?: DriverDocumentService,
     ) { }
 
     async createProfile(userId: string, dto: CreateDriverProfileDto) {
@@ -282,6 +284,7 @@ export class DriverService {
             throw new BadRequestException('Driver profile not approved');
         }
         if (dto.isOnline) {
+            await this.identityDocuments?.assertVerified(driverUserId);
             const city = await this.prisma.city.findUnique({ where: { id: dto.cityId ?? profile.online?.cityId ?? profile.user?.cityId ?? '' } });
             const rollout = await driverTaxChecksEnabled(this.prisma);
             if (rollout && city?.countryCode === 'KZ') {
@@ -951,7 +954,7 @@ export class DriverService {
             if(!stored||stored.userId!==driverUserId||stored.verdict==='REJECT'||stored.deletedAt) throw new BadRequestException('Документ должен быть загружен владельцем и пройти проверку');
         }
 
-        return this.prisma.driverProfile.update({
+        const updated = await this.prisma.driverProfile.update({
             where: { userId: driverUserId },
             data: {
                 selfieUrl: dto.selfieUrl ?? profile.selfieUrl,
@@ -963,6 +966,8 @@ export class DriverService {
                 rejectionReason: null,
             },
         });
+        const checks = await this.identityDocuments?.check(driverUserId);
+        return {...updated,documentChecks:checks};
     }
 
     private haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {

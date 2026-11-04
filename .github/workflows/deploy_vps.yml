@@ -77,6 +77,24 @@ jobs:
           npm run build
           node --test test/technical-*.test.js
 
+      - name: Verify identity workflows against isolated PostgreSQL
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://technical_test:technical_test_only@127.0.0.1:5432/technical_panel_test
+        run: |
+          node <<'JS'
+          const {PrismaClient}=require('@prisma/client');
+          const p=new PrismaClient();
+          p.$executeRawUnsafe('CREATE DATABASE dispatch_test').finally(()=>p.$disconnect());
+          JS
+          DATABASE_URL=postgresql://technical_test:technical_test_only@127.0.0.1:5432/dispatch_test npx prisma db push --skip-generate
+          DISPATCH_TEST_DATABASE_URL=postgresql://technical_test:technical_test_only@127.0.0.1:5432/dispatch_test node --test --test-concurrency=1 test/identity-recovery.test.js test/identity-driver-documents.test.js test/vehicle-document.test.js
+
+      - name: Verify private identity engine
+        run: |
+          docker build -t intercity-identity:ci services/identity
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,noexec,nosuid,size=256m --memory=768m --cpus=1.5 --pids-limit=128 --cap-drop=ALL --security-opt no-new-privileges:true intercity-identity:ci python -m unittest test_engine
+
       - name: Install SQLite for address index verification
         run: |
           if ! command -v sqlite3 >/dev/null; then

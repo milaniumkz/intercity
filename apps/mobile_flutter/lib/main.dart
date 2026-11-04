@@ -1,3 +1,5 @@
+import 'core/services/identity_session.dart';
+import 'features/auth/screens/face_verification_page.dart';
 import 'core/services/chat_message_notices.dart';
 import 'core/services/sse_service.dart';
 import 'features/referral/screens/referral_account_page.dart';
@@ -48,17 +50,31 @@ GoRouter createRouter({
 }) =>
     GoRouter(
       initialLocation: initialLocation,
+      refreshListenable: IdentitySession.required,
       redirect: (context, state) async {
         if (disableAuthRedirect) return null;
         final tokenStore = SecureApiTokenStore();
         final token = await tokenStore.read(AppConstants.accessTokenKey);
         final hasToken = (token ?? '').isNotEmpty;
+        if (hasToken &&
+            IdentitySession.required.value &&
+            state.uri.path != '/identity' &&
+            !isPublicRoute(state.uri.path)) {
+          return Uri(
+              path: '/identity',
+              queryParameters: {'next': state.uri.toString()}).toString();
+        }
         return resolveAuthRedirect(
           path: state.uri.path,
           hasToken: hasToken,
         );
       },
       routes: [
+        GoRoute(
+            path: '/identity',
+            builder: (context, state) => FaceVerificationPage(
+                driver: state.uri.queryParameters['driver'] == '1',
+                next: state.uri.queryParameters['next'] ?? '/startup')),
         GoRoute(
             path: '/startup',
             builder: (context, state) => const StartupScreen()),

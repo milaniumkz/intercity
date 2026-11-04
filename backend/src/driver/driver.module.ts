@@ -1,3 +1,4 @@
+import { IdentityModule } from '../identity/identity.module';
 import { OrdersModule } from '../orders/orders.module';
 import { Module } from '@nestjs/common';
 import { DriverService } from './driver.service';
@@ -7,7 +8,7 @@ import { GeoModule } from '../geo/geo.module';
 import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
-    imports: [GeoModule, RealtimeModule, OrdersModule],
+    imports: [IdentityModule, GeoModule, RealtimeModule, OrdersModule],
     controllers: [DriverController],
     providers: [DriverService, DriverEarningsService],
     exports: [DriverService],

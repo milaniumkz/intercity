@@ -104,3 +104,7 @@ tmp-order-mobile.png
 # Private technical evidence and locally provisioned credentials
 /technical-data/
 /backend/technical-data/
+
+# Python identity engine/test build artifacts
+__pycache__/
+*.pyc
