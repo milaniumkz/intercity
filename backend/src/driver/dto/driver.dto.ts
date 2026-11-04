@@ -1,5 +1,5 @@
 import { IsString, IsNumber, IsOptional, IsBoolean, IsInt, Min, Max, IsISO8601, IsIn, IsUUID } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, PickType } from '@nestjs/swagger';
 
 export class CreateDriverProfileDto {
     @IsOptional()
@@ -38,6 +38,8 @@ export class CreateDriverProfileDto {
     @IsBoolean()
     acceptCargo?: boolean;
 }
+
+export class UpdateDriverServiceModesDto extends PickType(CreateDriverProfileDto, ['acceptCityFixed', 'acceptCityAuction', 'acceptIntercity', 'acceptDelivery', 'acceptCargo'] as const) {}
 
 export class UpdateLocationDto {
     @ApiProperty()
@@ -125,6 +127,16 @@ export class CompleteDriverDocsDto {
 }
 
 export class DriverIntercityRouteDto {
+    @ApiProperty()
+    @IsISO8601({}, {message:'Укажите дату и время отправления'})
+    departureAt: string;
+
+    @ApiProperty({example:300})
+    @IsInt({message:'Не удалось определить часовой пояс отправления'})
+    @Min(-720)
+    @Max(840)
+    departureOffsetMinutes: number;
+
     @ApiProperty()
     @IsString()
     fromCity: string;

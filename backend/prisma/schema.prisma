@@ -91,6 +91,7 @@ model User {
   adminAuditLogs     AdminAuditLog[] @relation("AdminActorLogs")
   promoUsages        PromoUsage[]
   complaints         Complaint[]    @relation("ComplaintUser")
+  sentIntercityMessages IntercityChatMessage[]
   sentChatMessages   OrderChatMessage[]
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
@@ -300,6 +301,8 @@ model DriverProfile {
 }
 
 model DriverIntercityRoute {
+  departureAt DateTime?
+  departureOffsetMinutes Int @default(300)
   topUntil DateTime?
   id             String        @id @default(uuid())
   driverId       String
@@ -312,6 +315,7 @@ model DriverIntercityRoute {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
+  @@index([driverId, isActive, departureAt])
   @@unique([driverId, fromCity, toCity])
   @@index([driverId, isActive])
   @@index([fromCity, toCity, isActive])
@@ -581,6 +585,8 @@ model PromoUsage {
 }
 
 model Complaint {
+  intercityRequestId String?
+  intercityRequest IntercityRequest? @relation(fields:[intercityRequestId],references:[id],onDelete:SetNull)
   id             String          @id @default(uuid())
   type           String
   status         ComplaintStatus @default(NEW)
@@ -637,6 +643,7 @@ model NotificationDispatchJob {
 }
 
 model TariffCity {
+  vehicleClass String @default("ECONOMY")
   id          String   @id @default(uuid())
   cityId      String
   city        City     @relation(fields: [cityId], references: [id])
@@ -651,6 +658,7 @@ model TariffCity {
 }
 
 model TariffCargo {
+  countryCode String @default("KZ")
   id         String   @id @default(uuid())
   name       String
   basePrice  Float
@@ -663,6 +671,7 @@ model TariffCargo {
 }
 
 model TariffDelivery {
+  countryCode String @default("KZ")
   id            String   @id @default(uuid())
   name          String
   basePrice     Float
@@ -676,6 +685,13 @@ model TariffDelivery {
 }
 
 model IntercityRequest {
+  driverRating Int?
+  driverRatingStatus String @default("COUNTED")
+  driverRatingReason String?
+  ratingComplaints Complaint[]
+  chatMessages IntercityChatMessage[]
+  reservedRouteId String?
+  reservedSeats Int @default(0)
   priorityWindow IntercityRoutePriorityWindow?
   id          String           @id @default(uuid())
   passengerLeavingAt DateTime?
@@ -1136,4 +1152,15 @@ model TechRule {
   key String @id
   value Json
   updatedAt DateTime @updatedAt
+}
+
+model IntercityChatMessage {
+  id String @id @default(uuid())
+  requestId String
+  request IntercityRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  senderId String
+  sender User @relation(fields: [senderId], references: [id])
+  text String
+  createdAt DateTime @default(now())
+  @@index([requestId, createdAt])
 }

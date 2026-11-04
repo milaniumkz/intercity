@@ -1,3 +1,4 @@
+import '../../../core/utils/route_query.dart';
 import '../widgets/passenger_offers_panel.dart';
 import 'package:flutter/foundation.dart';
 import '../../../core/services/payment_fallback_notifier.dart';
@@ -295,6 +296,18 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     );
   }
 
+  bool _linkedChatOpened = false;
+  void _openLinkedChatIfNeeded() {
+    if (_linkedChatOpened ||
+        Uri.tryParse(currentRouteText(context))?.queryParameters['chat'] != '1') {
+      return;
+    }
+    _linkedChatOpened = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_openOrderChat('Чат с водителем'));
+    });
+  }
+
   Future<void> _loadOrder() async {
     if (_refreshing || !mounted) return;
     _refreshing = true;
@@ -328,6 +341,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
         _driverPoint = points.$3;
       });
 
+      _openLinkedChatIfNeeded();
       _notifyPassengerStatusIfNeeded(order, status, previousStatus);
 
       if (_statusStep(status) < 1 || _statusStep(status) > 4) _fitMap();
@@ -2532,6 +2546,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
       orderStatus: _effectiveStatus(order, (order['status'] ?? '').toString()),
       title: title,
       currentRole: 'PASSENGER',
+      apiClient: _api,
     );
   }
 

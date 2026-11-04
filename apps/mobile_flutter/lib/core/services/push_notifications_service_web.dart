@@ -1,3 +1,4 @@
+import 'chat_message_notices.dart';
 import 'dart:async';
 import 'dart:js_interop';
 
@@ -60,7 +61,7 @@ class PushNotificationsService {
       FirebaseMessaging.onMessage.listen(_onForegroundMessage);
       if (shouldSyncPushTokenOnStartup(
         firebaseReady: _firebaseReady,
-        notificationPermission: web.Notification.permission,
+        notificationPermission: _notificationPermission,
       )) {
         await syncTokenIfAuthorized();
       }
@@ -212,6 +213,7 @@ class PushNotificationsService {
               title,
               web.NotificationOptions(
                 body: body,
+                silent: payload['type'] == 'chat_message',
                 icon: '/icons/Icon-192.png',
                 tag: tag,
                 renotify: true,
@@ -225,6 +227,7 @@ class PushNotificationsService {
           title,
           web.NotificationOptions(
               body: body,
+              silent: payload['type'] == 'chat_message',
               icon: '/icons/Icon-192.png',
               tag: tag,
               data: payload.jsify()));
@@ -243,6 +246,11 @@ class PushNotificationsService {
   }
 
   Future<void> _onForegroundMessage(RemoteMessage message) async {
+    if (message.data['type'] == 'chat_message') {
+      await ChatMessageNotices.shared
+          .notify(Map<String, dynamic>.from(message.data));
+      return;
+    }
     _payloadStreamController.add(Map<String, dynamic>.from(message.data));
     final tripId = message.data['orderId']?.toString();
     final status = message.data['type'] == 'passenger_leaving'
@@ -300,7 +308,12 @@ class PushNotificationsService {
   }
 
   Future<void> _requestPermissionIfNeeded() async {
-    if (_isPermissionGranted || web.Notification.permission == 'denied') return;
+    final permission = _notificationPermission;
+    if (permission == 'granted' ||
+        permission == 'denied' ||
+        permission == 'unsupported') {
+      return;
+    }
     try {
       await web.Notification.requestPermission()
           .toDart
@@ -311,7 +324,17 @@ class PushNotificationsService {
     }
   }
 
-  bool get _isPermissionGranted => web.Notification.permission == 'granted';
+  // iPhone browser tabs may not expose Notification at all. Optional push
+  // support must never break login after valid tokens have been saved.
+  String get _notificationPermission {
+    try {
+      return web.Notification.permission;
+    } catch (_) {
+      return 'unsupported';
+    }
+  }
+
+  bool get _isPermissionGranted => _notificationPermission == 'granted';
 
   void _focusCurrentWindow() {
     try {

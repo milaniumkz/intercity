@@ -1,4 +1,5 @@
 import {
+    BadRequestException,
     ConflictException,
     ForbiddenException,
     Injectable,
@@ -50,31 +51,34 @@ export class AuthService {
             const referrer = await this.prisma.user.findUnique({
                 where: { refCode: normalizedReferralCode },
             });
-            if (referrer) {
-                referredBy = referrer.refCode;
-                cityId = referrer.cityId;
-            }
+            if (!referrer) throw new BadRequestException('Реферальный код не найден. Проверьте код или удалите его для регистрации без приглашения');
+            referredBy = referrer.refCode;
+            cityId = referrer.cityId;
         }
 
-        const user = await this.prisma.user.create({
-            data: {
-                phone: dto.phone,
-                publicId,
-                password: hashedPassword,
-                name: dto.name,
-                refCode,
-                refLink,
-                referredBy,
-                cityId,
-                role: 'PASSENGER',
-            },
-        });
+        const user = await this.prisma.$transaction(async tx => {
+            const created = await tx.user.create({
+                data: {
+                    phone: dto.phone,
+                    publicId,
+                    password: hashedPassword,
+                    name: dto.name,
+                    refCode,
+                    refLink,
+                    referredBy,
+                    cityId,
+                    role: 'PASSENGER',
+                },
+            });
 
-        // Create wallet
-        await this.prisma.wallet.create({
-            data: {
-                userId: user.id,
-            },
+            // Create wallet
+            await tx.wallet.create({
+                data: {
+                    userId: created.id,
+                },
+            });
+
+            return created;
         });
 
         const tokens = await this.generateTokens(user.id, user.phone, user.role);
@@ -220,7 +224,7 @@ export class AuthService {
         if (!user) throw new UnauthorizedException('User not found');
         const invitedCount = await this.prisma.user.count({ where: { referredBy: user.refCode } });
         const amounts = await this.prisma.walletTransaction.groupBy({
-            by: ['currency'], where: { wallet: { userId }, type: 'REFERRAL_ORDER_BONUS', direction: 'CREDIT' },
+            by: ['currency'], where: { wallet: { userId }, type: { in: ['REFERRAL_ORDER_BONUS','REFERRAL_INCOME'] }, direction: 'CREDIT' },
             _sum: { amount: true },
         });
         return { refCode: user.refCode, refLink: this.buildReferralLink(user.refCode), invitedCount,

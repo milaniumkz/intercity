@@ -1,19 +1,48 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intercity_admin/core/api/admin_api_client.dart';
 import 'package:intercity_admin/main.dart';
 
 void main() {
   late _FakeAdminApi api;
+  String? copiedCsv;
 
   setUp(() {
+    copiedCsv = null;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copiedCsv = (call.arguments as Map)['text'] as String?;
+      }
+      return null;
+    });
     api = _FakeAdminApi();
     AdminApiClient.debugOverride(api);
   });
 
   tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null);
     AdminApiClient.debugOverride(null);
+  });
+
+  testWidgets('login can be scrolled to the submit button on a small screen',
+      (tester) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(const IntercityAdminApp());
+    await tester.pumpAndSettle();
+    final submit = _buttonFinder('Войти');
+    await tester.scrollUntilVisible(submit, 200,
+        scrollable: find.byType(Scrollable).first);
+    expect(tester.getRect(submit).bottom, lessThanOrEqualTo(640));
+    expect(tester.takeException(), isNull);
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    expect(find.text('Панель'), findsWidgets);
   });
 
   testWidgets('expired session returns to login and removes protected routes',
@@ -113,46 +142,47 @@ void main() {
     await tester.tap(find.textContaining('Almaty,').last);
     await tester.pumpAndSettle();
     await tester.enterText(
-        find.widgetWithText(TextField, 'City tariff ID to deactivate'), 'ct-1');
+        find.widgetWithText(TextField, 'ID городского тарифа для отключения'),
+        'ct-1');
     await tester.enterText(
-        find.widgetWithText(TextField, 'Cargo tariff ID to deactivate'),
+        find.widgetWithText(TextField, 'ID грузового тарифа для отключения'),
         'cg-1');
     await tester.enterText(
-        find.widgetWithText(TextField, 'Delivery tariff ID to deactivate'),
+        find.widgetWithText(TextField, 'ID тарифа доставки для отключения'),
         'dl-1');
     await tester.tap(_buttonFinder('Создать городской тариф'));
     await tester.pumpAndSettle();
-    await tester.tap(_buttonFinder('Create cargo tariff'));
+    await tester.tap(_buttonFinder('Создать грузовой тариф'));
     await tester.pumpAndSettle();
-    await tester.tap(_buttonFinder('Create delivery tariff'));
+    await tester.tap(_buttonFinder('Создать тариф доставки'));
     await tester.pumpAndSettle();
-    await tester.tap(_buttonFinder('Deactivate city'));
+    await tester.tap(_buttonFinder('Отключить городской тариф'));
     await tester.pumpAndSettle();
-    await tester.tap(_buttonFinder('Deactivate cargo'));
+    await tester.tap(_buttonFinder('Отключить грузовой тариф'));
     await tester.pumpAndSettle();
-    await tester.tap(_buttonFinder('Deactivate delivery'));
+    await tester.tap(_buttonFinder('Отключить тариф доставки'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Настройки').last);
     await tester.pumpAndSettle();
     await tester.enterText(
-        find.widgetWithText(TextField, 'Key'), 'featureFlag');
-    await tester.enterText(find.widgetWithText(TextField, 'Value'), 'on');
-    await tester.tap(_buttonFinder('Save setting'));
+        find.widgetWithText(TextField, 'Ключ настройки'), 'featureFlag');
+    await tester.enterText(find.widgetWithText(TextField, 'Значение'), 'on');
+    await tester.tap(_buttonFinder('Сохранить настройку'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Пополнения').last);
     await tester.pumpAndSettle();
-    await tester.tap(_buttonFinder('Approve').first);
+    await tester.tap(_buttonFinder('Одобрить').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Reject').first);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Отклонить').first);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Выплаты').last);
     await tester.pumpAndSettle();
-    await tester.tap(_buttonFinder('Approve').first);
+    await tester.tap(_buttonFinder('Одобрить').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Reject').first);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Отклонить').first);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Уведомления').last);
@@ -174,6 +204,7 @@ void main() {
     await tester.tap(find.widgetWithText(OutlinedButton, 'Экспорт CSV'));
     await tester.pumpAndSettle();
     expect(find.textContaining('CSV готов'), findsOneWidget);
+    expect(copiedCsv, 'a,b\n1,2');
 
     await tester.tap(find.text('Заказы').last);
     await tester.pumpAndSettle();

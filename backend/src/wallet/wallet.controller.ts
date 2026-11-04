@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Request, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Request, Query, Param } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { WalletService } from './wallet.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -28,6 +28,13 @@ export class WalletController {
     @ApiOperation({ summary: 'Create topup request' })
     async createTopup(@Request() req, @Body() dto: TopupRequestDto) {
         return this.walletService.createTopupRequest(req.user.sub, dto, req.user.role);
+    }
+
+    @Post('topups/:id/check')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth()
+    async checkTopup(@Request() req, @Param('id') id: string) {
+        return this.walletService.checkTopupPayment(req.user.sub, id);
     }
 
     @Post('topup/callback')

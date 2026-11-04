@@ -3,7 +3,7 @@ import { Observable, Subject } from 'rxjs';
 
 export type RealtimeEvent = {
     type: string;
-    entity: 'order' | 'driver' | 'system';
+    entity: 'order' | 'driver' | 'system' | 'user';
     entityId?: string;
     at: string;
     payload?: Record<string, unknown>;

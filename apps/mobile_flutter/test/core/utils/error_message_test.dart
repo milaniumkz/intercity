@@ -5,6 +5,22 @@ import 'package:intercity_mobile/core/utils/localization_service.dart';
 
 void main() {
   group('errorMessage localization', () {
+    test('intercity balance errors from an older server are shown in Russian',
+        () async {
+      await LocalizationService.setLanguage(AppLanguage.russian);
+      final error = DioException(
+          type: DioExceptionType.badResponse,
+          requestOptions: RequestOptions(path: '/intercity/requests'),
+          response: Response(
+              requestOptions: RequestOptions(path: '/intercity/requests'),
+              statusCode: 400,
+              data: {
+                'message':
+                    'Insufficient balance to respond to intercity request. Please top up wallet.'
+              }));
+      expect(errorMessageRu(error),
+          'Недостаточно средств на балансе для межгорода. Пополните кошелёк.');
+    });
     test('returns Russian text when Russian is active', () async {
       await LocalizationService.setLanguage(AppLanguage.russian);
 

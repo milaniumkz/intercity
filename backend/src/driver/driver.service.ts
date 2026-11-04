@@ -1,3 +1,4 @@
+import {routeRequestTimeRange, routeMatchesRequestSchedule} from '../common/driver-route-schedule';
 import { Optional } from '@nestjs/common';
 import { TechnicalService } from '../technical/technical.service';
 import { ROUTE_TOP_POLICY_KEY, DEFAULT_ROUTE_TOP_POLICY, parseRouteTopPolicy, routeTopPrice, ensureRouteTopWindow, canSeePriorityRequest } from '../common/driver-route-top';
@@ -93,7 +94,13 @@ export class DriverService {
         return profile;
     }
 
-    private driverAcceptModesData(dto: CreateDriverProfileDto) {
+    async updateServiceModes(userId: string, dto: Partial<CreateDriverProfileDto>) {
+        const profile = await this.prisma.driverProfile.findUnique({where: {userId}, select: {id: true}});
+        if (!profile) throw new NotFoundException('Профиль водителя не найден');
+        return this.prisma.driverProfile.update({where: {id: profile.id}, data: this.driverAcceptModesData(dto)});
+    }
+
+    private driverAcceptModesData(dto: Partial<CreateDriverProfileDto>) {
         const data: Record<string, boolean> = {};
         for (const key of [
             'acceptCityFixed',
@@ -129,6 +136,7 @@ export class DriverService {
     async promoteIntercityRoute(driverUserId: string,routeId: string,dto: PromoteDriverRouteDto) {
         const route=await this.prisma.driverIntercityRoute.findFirst({where:{id:routeId,driver:{userId:driverUserId},isActive:true}});
         if(!route) throw new NotFoundException('Маршрут не найден');
+        if (!routeRequestTimeRange(route)) throw new BadRequestException('Укажите будущую дату и время отправления перед поднятием маршрута в топ');
         const currency=await this.geoService.departureCurrency(null,null,route.fromCity);
         const result=await this.prisma.$transaction(async tx=>{
             await lockIncomeAccounting(tx);
@@ -177,19 +185,19 @@ export class DriverService {
         if (this.routeKey(fromCity) === this.routeKey(toCity)) {
             throw new BadRequestException('Города маршрута должны отличаться');
         }
+        const departureAt = new Date(dto.departureAt ?? NaN);
+        if (!Number.isFinite(departureAt.getTime()) || departureAt <= new Date()) throw new BadRequestException('Укажите будущую дату и время отправления');
+        if (!Number.isInteger(dto.departureOffsetMinutes) || dto.departureOffsetMinutes < -720 || dto.departureOffsetMinutes > 840) throw new BadRequestException('Не удалось определить часовой пояс отправления');
         const seatsAvailable = Number.isFinite(Number(dto.seatsAvailable))
             ? Math.max(1, Math.min(8, Math.trunc(Number(dto.seatsAvailable))))
             : 4;
-        return this.prisma.driverIntercityRoute.upsert({
-            where: {
-                driverId_fromCity_toCity: {
-                    driverId: profile.id,
-                    fromCity,
-                    toCity,
-                },
-            },
-            create: { driverId: profile.id, fromCity, toCity, seatsTotal: seatsAvailable, seatsAvailable, isActive: true },
-            update: { seatsTotal: seatsAvailable, seatsAvailable, isActive: true },
+        return this.prisma.$transaction(async tx => {
+            await lockIncomeAccounting(tx);
+            const where = {driverId_fromCity_toCity:{driverId:profile.id,fromCity,toCity}};
+            const previous = await tx.driverIntercityRoute.findUnique({where});
+            if (previous && await tx.intercityRequest.count({where:{reservedRouteId:previous.id,reservedSeats:{gt:0},status:{notIn:['COMPLETED','CANCELLED']}}})) throw new BadRequestException('На маршруте уже есть принятые заказы. Завершите или отмените их перед изменением отправления');
+            const data = {seatsTotal:seatsAvailable,seatsAvailable,isActive:true,departureAt,departureOffsetMinutes:dto.departureOffsetMinutes};
+            return tx.driverIntercityRoute.upsert({where,create:{driverId:profile.id,fromCity,toCity,...data},update:data});
         });
     }
 
@@ -394,6 +402,12 @@ export class DriverService {
         };
     }
 
+    async getActiveOrder(driverUserId: string) {
+        const profile = await this.prisma.driverProfile.findUnique({where:{userId:driverUserId},select:{id:true}});
+        if (!profile) return null;
+        return this.prisma.order.findFirst({where:{driverId:profile.id,status:{in:['DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS']}},include:{passenger:{select:clientUserSelect}},orderBy:{createdAt:'desc'}});
+    }
+
     async getNearbyOrders(driverUserId: string) {
         const profile = await this.prisma.driverProfile.findUnique({
             where: { userId: driverUserId },
@@ -526,21 +540,28 @@ export class DriverService {
     }
 
     async getMatchingIntercityRequests(driverUserId: string) {
-        const profile = await this.prisma.driverProfile.findUnique({ where: { userId: driverUserId },include:{serviceStats:true} });
-        if (!profile || !['ACTIVE','APPROVED'].includes(profile.status) || !profile.acceptIntercity || driverPerformance(profile).activity.blocked) return [];
+        const profile = await this.prisma.driverProfile.findUnique({ where: { userId: driverUserId },include:{serviceStats:true,online:{include:{city:true}}} });
+        if (!profile || !['ACTIVE','APPROVED'].includes(profile.status) || driverPerformance(profile).activity.blocked) return [];
         const routes = await this.prisma.driverIntercityRoute.findMany({
             where: { driverId: profile.id, isActive: true, seatsAvailable: { gt: 0 } },
         });
-        if (!routes.length) return [];
-        // Registered routes are explicit driver intent. Match before limiting;
-        // proximity to pickup must not hide a planned intercity departure.
+        const routeTypes = [...(profile.acceptIntercity ? ['INTERCITY'] : []), ...(profile.acceptDelivery ? ['DELIVERY_INTERCITY','DELIVERY_RF'] : [])];
+        const filters: any[] = routeTypes.length ? routes.filter(route => routeRequestTimeRange(route)).map(route => ({requestType:{in:routeTypes},
+            date:routeRequestTimeRange(route)!,
+            AND:[{OR:[{fromCity:{equals:route.fromCity,mode:'insensitive'}},{fromCity:{startsWith:route.fromCity+',',mode:'insensitive'}}]}, {OR:[{toCity:{equals:route.toCity,mode:'insensitive'}},{toCity:{startsWith:route.toCity+',',mode:'insensitive'}}]}],
+            seats: { lte: route.seatsAvailable },
+        })) : [];
+        const localTypes = [...(profile.acceptDelivery ? ['DELIVERY_CITY'] : []), ...(profile.acceptCityAuction ? ['CITY_AUCTION'] : [])];
+        const online = profile.online;
+        if (localTypes.length && online?.isOnline && online.city) {
+            const lat = online.lastLat ?? online.city.lat, lng = online.lastLng ?? online.city.lng;
+            const origins: any[] = [{fromLat:{gte:lat-0.1,lte:lat+0.1},fromLng:{gte:lng-0.15,lte:lng+0.15}}];
+            if (online.city.name) origins.push({fromLat:null,fromCity:{contains:online.city.name,mode:'insensitive'}});
+            filters.push({requestType:{in:localTypes},OR:origins});
+        }
+        if (!filters.length) return [];
         const requests = await this.prisma.intercityRequest.findMany({
-            where: { status: 'OPEN', requestType: { in: ['INTERCITY','DELIVERY_INTERCITY','DELIVERY_RF'] },
-                OR: routes.map(route => ({
-                    fromCity: { equals: route.fromCity, mode: 'insensitive' },
-                    toCity: { equals: route.toCity, mode: 'insensitive' },
-                    seats: { lte: route.seatsAvailable },
-                })) },
+            where: { status: 'OPEN', OR:filters },
             include: { offers: { where: { driverId: driverUserId, status: 'PENDING', updatedAt: {gt: new Date(Date.now()-30000)} },
                 select: { id: true, price: true, seats: true, status: true } } },
             orderBy: [{ date: 'asc' }, { createdAt: 'desc' }], take: 100,
@@ -601,6 +622,11 @@ export class DriverService {
                 toLat: request.toLat,
                 toLng: request.toLng,
                 paymentMethod: request.paymentMethod,
+                itemDescription: request.itemDescription,
+                itemWeightKg: request.itemWeightKg,
+                itemDimensions: request.itemDimensions,
+                recipientContact: request.recipientContact,
+                comment: request.comment,
                 cardPayment: paymentsById.get(request.id) ?? null,
                 date: request.date,
                 seats,
@@ -623,11 +649,12 @@ export class DriverService {
     ) {
         const routeApplications = await this.prisma.driverIntercityRoute.findMany({
             where: { driverId, isActive: true },
-            select: { fromCity: true, toCity: true, seatsAvailable: true },
+            select: { fromCity: true, toCity: true, seatsAvailable: true, departureAt:true, departureOffsetMinutes:true },
         });
-        if (routeApplications.length === 0) return [];
+        const scheduledRoutes = routeApplications.filter(route => routeRequestTimeRange(route));
+        if (scheduledRoutes.length === 0) return [];
         const allowedRoutes = new Map(
-            routeApplications.map((route) => [
+            scheduledRoutes.map((route) => [
                 `${this.routeKey(route.fromCity)}→${this.routeKey(route.toCity)}`,
                 route,
             ]),
@@ -637,6 +664,7 @@ export class DriverService {
             where: {
                 status: 'OPEN',
                 requestType: { in: ['INTERCITY', 'DELIVERY_INTERCITY', 'DELIVERY_RF'] },
+                OR:scheduledRoutes.map(route=>({fromCity:{equals:route.fromCity,mode:'insensitive'},toCity:{equals:route.toCity,mode:'insensitive'},date:routeRequestTimeRange(route)!})),
                 offers: { none: { driverId: driverUserId, status: { in: ['PENDING', 'ACCEPTED'] } } },
             },
             take: 50,
@@ -645,7 +673,7 @@ export class DriverService {
         const requests=[];
         for(const request of allRequests) {
             const route=allowedRoutes.get(`${this.routeKey(request.fromCity)}→${this.routeKey(request.toCity)}`);
-            if(!route || route.seatsAvailable<request.seats) continue;
+            if(!route || route.seatsAvailable<request.seats || !routeMatchesRequestSchedule(route,request)) continue;
             const window=await this.prisma.$transaction(tx=>ensureRouteTopWindow(tx,request));
             if(canSeePriorityRequest(window,driverId)) requests.push(request);
         }
@@ -718,6 +746,7 @@ export class DriverService {
         if (!order || order.status !== 'SEARCHING_DRIVER') {
             throw new BadRequestException('Order not available');
         }
+        if (!['ACTIVE','APPROVED'].includes(profile.status) || (order.mode === 'CARGO' && !profile.acceptCargo) || (order.mode === 'DELIVERY' && !profile.acceptDelivery) || (order.mode === 'CITY' && order.requestType !== 'CITY_AUCTION' && !profile.acceptCityFixed)) throw new BadRequestException('Включите нужный режим приёма заказов в профиле');
         if ((order.requestType || '').toUpperCase() === 'CITY_AUCTION') {
             throw new BadRequestException('Для аукциона отправьте своё предложение цены');
         }

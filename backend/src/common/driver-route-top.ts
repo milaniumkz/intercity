@@ -1,3 +1,4 @@
+import {routeMatchesRequestSchedule} from './driver-route-schedule';
 import { BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { driverPerformance } from './driver-performance';
@@ -21,7 +22,7 @@ async function activeTopDrivers(tx: any,request: any,routeIds?: string[],now=new
     const routes=await tx.driverIntercityRoute.findMany({where:{...(routeIds?{id:{in:routeIds}}:{}),isActive:true,topUntil:{gt:now},seatsAvailable:{gte:request.seats ?? 1},
         fromCity:{equals:request.fromCity,mode:'insensitive'},toCity:{equals:request.toCity,mode:'insensitive'},driver:{status:{in:['ACTIVE','APPROVED']},acceptIntercity:true}},
         include:{driver:{include:{serviceStats:true}}}});
-    return routes.filter((r:any)=>!driverPerformance(r.driver,now).activity.blocked);
+    return routes.filter((r:any)=>routeMatchesRequestSchedule(r,request,now) && !driverPerformance(r.driver,now).activity.blocked);
 }
 // One durable group invitation: all eligible promoted drivers receive the same
 // first-access window. A price proposal doesn't close it or claim the trip.

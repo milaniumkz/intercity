@@ -56,7 +56,7 @@ export class PushService {
     async sendIntercityStatusToPassenger(requestId: string, status: string): Promise<boolean> {
         const request = await this.prisma.intercityRequest.findUnique({where:{id:requestId}});
         if (!request) return false;
-        const message = this.orderStatusMessage(status);
+        const message = request.requestType === 'INTERCITY' && status === 'DRIVER_ASSIGNED' ? {title:'Водитель собирает пассажиров',body:'Предложение принято. О выезде к вам сообщим отдельно.'} : status === 'DRIVER_EN_ROUTE' ? {title:'Водитель выехал к вам',body:'Водитель направляется к вашей точке подачи.'} : this.orderStatusMessage(status);
         if (!message) return false;
         return this.sendToUser(request.passengerId, {...message, data:{type:'order_status',orderId:requestId,status:status.toUpperCase(),isIntercity:true,route:`/intercity/request/${requestId}`}});
     }

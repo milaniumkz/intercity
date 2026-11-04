@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:go_router/go_router.dart';
 
 import 'package:flutter/material.dart';
 import 'package:intercity_shared/intercity_shared.dart';
@@ -84,21 +85,24 @@ const _boardWalletOperationData = <_BoardWalletOperation>[
 ];
 
 class DriverWalletPage extends StatefulWidget {
-  const DriverWalletPage({super.key, this.routeStage, this.apiClient});
+  const DriverWalletPage(
+      {super.key, this.routeStage, this.apiClient, this.paymentOpener});
 
   final String? routeStage;
 
   final ApiClient? apiClient;
+  final Future<bool> Function(BuildContext, String)? paymentOpener;
 
   @override
   State<DriverWalletPage> createState() => _DriverWalletPageState();
 }
 
-class _DriverWalletPageState extends State<DriverWalletPage> {
+class _DriverWalletPageState extends State<DriverWalletPage>
+    with WidgetsBindingObserver {
   Map<String, dynamic>? _wallet;
   String _currency = 'KZT';
   String get _currencySymbol => _currency == 'RUB' ? '₽' : '₸';
-  final _topupCtrl = TextEditingController(text: '1000');
+  final _topupCtrl = TextEditingController();
   final _payoutCtrl = TextEditingController(text: '1000');
   final _cardCtrl = TextEditingController();
   String _message = '';
@@ -108,10 +112,18 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
   int _boardWalletTab = 0;
   String _boardWalletFilter = 'Все';
   num _bonusBalance = 0;
+  int _walletRequest = 0;
+  Timer? _topupPoll;
+  String? _pollTopupId;
+  String? _pendingTopupId;
+  String _topupStatusMessage = '';
+  bool _checkingTopup = false;
+  late final ApiClient _api = widget.apiClient ?? ApiClient();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
@@ -123,11 +135,13 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
       _wallet = {'money': 2860, 'bonuses': 2450};
       return;
     }
-    _load();
+    _load(reconcile: true);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _topupPoll?.cancel();
     _topupCtrl.dispose();
     _payoutCtrl.dispose();
     _cardCtrl.dispose();
@@ -145,12 +159,21 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
     return num.tryParse((value ?? '').toString()) ?? fallback;
   }
 
-  Future<void> _load() async {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !_routeStage('seed')) {
+      unawaited(_load(reconcile: true));
+    }
+  }
+
+  Future<void> _load({bool reconcile = false}) async {
+    if (!mounted) return;
+    final request = ++_walletRequest;
+    final currency = _currency;
     setState(() => _loading = true);
     try {
-      final res = await (widget.apiClient ?? ApiClient())
-          .get('/wallet?currency=$_currency');
-      if (!mounted) return;
+      final res = await _api.get('/wallet?currency=$currency');
+      if (!mounted || request != _walletRequest) return;
       setState(() {
         _wallet = Map<String, dynamic>.from(res.data as Map);
         _bonusBalance = _asAmount(
@@ -162,58 +185,188 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
         );
         _message = '';
       });
+      if (reconcile) {
+        final pending =
+            (_wallet?['topups'] as List? ?? []).whereType<Map>().firstOrNull;
+        if (pending != null && pending['status'] == 'PENDING') {
+          _beginTopupCheck('${pending['id']}',
+              manual: pending['provider'] == 'MANUAL');
+        }
+      }
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || request != _walletRequest) return;
       setState(() => _message = errorMessageRu(e));
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && request == _walletRequest) {
+        setState(() => _loading = false);
+      }
     }
+  }
+
+  Future<bool> _askTopupAmount() async {
+    _topupCtrl.clear();
+    final form = GlobalKey<FormState>();
+    return await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+                  title: const Text('Пополнить баланс'),
+                  content: SingleChildScrollView(
+                      child: Form(
+                          key: form,
+                          child: TextFormField(
+                            controller: _topupCtrl,
+                            autofocus: true,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            decoration: InputDecoration(
+                                labelText: 'Сумма пополнения',
+                                suffixText: _currencySymbol,
+                                helperText:
+                                    'Укажите сумму, которую хотите внести'),
+                            validator: (value) {
+                              final amount = double.tryParse(
+                                  (value ?? '').replaceAll(',', '.'));
+                              if (amount == null ||
+                                  !amount.isFinite ||
+                                  amount <= 0 ||
+                                  amount > 10000000) {
+                                return 'Введите сумму от 0,01 до 10 000 000';
+                              }
+                              if ((amount * 100 - (amount * 100).round())
+                                      .abs() >
+                                  0.00001) {
+                                return 'Не больше двух знаков после запятой';
+                              }
+                              return null;
+                            },
+                          ))),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Отмена')),
+                    FilledButton(
+                        onPressed: () {
+                          if (form.currentState!.validate()) {
+                            Navigator.pop(ctx, true);
+                          }
+                        },
+                        child: const Text('Продолжить')),
+                  ],
+                )) ??
+        false;
   }
 
   Future<void> _topup() async {
     if (_topupBusy) return;
+    setState(() => _topupBusy = true);
     try {
-      final amount = double.tryParse(_topupCtrl.text.replaceAll(',', '.')) ?? 0;
-      if (amount <= 0) {
-        setState(() => _message = 'Введите сумму пополнения больше нуля.');
-        return;
+      if (!await _askTopupAmount() || !mounted) return;
+      final amount = double.parse(_topupCtrl.text.replaceAll(',', '.'));
+      setState(() => _message = 'Создаём заявку на пополнение...');
+      final res = await _api.post('/wallet/topup-request',
+          data: {'amount': amount, 'currency': _currency});
+      if (!mounted) return;
+      final data = Map<String, dynamic>.from(res.data as Map);
+      final paymentUrl = (data['paymentUrl'] ?? '').toString();
+      final id = data['id']?.toString();
+      if (id == null || id.isEmpty) {
+        throw StateError('Не удалось получить номер пополнения');
       }
       setState(() {
-        _topupBusy = true;
-        _message = 'Создаём заявку на пополнение...';
+        _pendingTopupId = id;
+        _topupStatusMessage =
+            (data['message'] ?? 'Заявка создана. Ожидаем подтверждение оплаты.')
+                .toString();
       });
-      final res = await (widget.apiClient ?? ApiClient())
-          .post('/wallet/topup-request', data: {
-        'amount': amount,
-        'currency': _currency,
-      });
-      final data = res.data is Map
-          ? Map<String, dynamic>.from(res.data as Map)
-          : <String, dynamic>{};
-      final paymentUrl = (data['paymentUrl'] ?? '').toString();
-      final remoteMessage = (data['message'] ?? '').toString();
-      if (mounted) {
-        setState(() {
-          _message = remoteMessage.isNotEmpty
-              ? remoteMessage
-              : 'Заявка на пополнение создана';
-        });
-        if (paymentUrl.isNotEmpty) {
-          await showPaymentModal(context, paymentUrl);
-        } else {
-          await _showWalletInfoDialog(
-            title: 'Пополнение баланса',
-            message: _message,
-            copyValue: null,
-            copyLabel: 'Скопировать ссылку',
-          );
+      if (paymentUrl.isNotEmpty) {
+        final opened = await (widget.paymentOpener ?? showPaymentModal)(
+            context, paymentUrl);
+        if (!mounted) return;
+        if (!opened) {
+          setState(() => _topupStatusMessage =
+              'Не удалось открыть оплату. Баланс ещё не пополнен.');
         }
       }
+      if (!mounted) return;
       await _load();
+      if (mounted) _beginTopupCheck(id, manual: data['provider'] == 'MANUAL');
     } catch (e) {
-      setState(() => _message = errorMessageRu(e));
+      if (mounted) setState(() => _message = errorMessageRu(e));
     } finally {
       if (mounted) setState(() => _topupBusy = false);
+    }
+  }
+
+  void _beginTopupCheck(String id, {bool manual = false}) {
+    if (!mounted || (_pollTopupId == id && (_topupPoll?.isActive ?? false))) {
+      return;
+    }
+    _topupPoll?.cancel();
+    _pollTopupId = null;
+    final same = _pendingTopupId == id;
+    setState(() => _pendingTopupId = id);
+    if (manual) {
+      if (!same || _topupStatusMessage.isEmpty) {
+        setState(() => _topupStatusMessage =
+            'Заявка на пополнение ожидает ручной обработки. Деньги ещё не зачислены.');
+      }
+      return;
+    }
+    unawaited(_checkTopup(id));
+    var attempts = 0;
+    _pollTopupId = id;
+    _topupPoll = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (!mounted || _pendingTopupId != id || attempts >= 6) {
+        timer.cancel();
+        return;
+      }
+      if (_checkingTopup) return;
+      attempts++;
+      unawaited(_checkTopup(id));
+    });
+  }
+
+  Future<void> _checkTopup(String id) async {
+    if (_checkingTopup || !mounted) return;
+    setState(() => _checkingTopup = true);
+    try {
+      final res = await _api.post('/wallet/topups/$id/check');
+      if (!mounted || _pendingTopupId != id) return;
+      final topup = Map<String, dynamic>.from(res.data as Map);
+      final status = topup['status'];
+      setState(() {
+        if (status != 'APPROVED' &&
+            topup['paymentMode'] == 'TEST' &&
+            topup['demoCreditsEnabled'] != true) {
+          _topupStatusMessage =
+              'Платёжный сервис сообщил о тестовой оплате. Реальное пополнение не подтверждено, деньги не зачислены. Обратитесь в поддержку.';
+          _topupPoll?.cancel();
+        } else if (status == 'APPROVED') {
+          _topupStatusMessage =
+              '${topup['paymentMode'] == 'TEST' ? 'Тестовое пополнение' : 'Пополнение'} ${_moneyText(topup['amount'])} ${topup['currency'] == 'RUB' ? '₽' : '₸'} зачислено на баланс.';
+        } else if (status == 'PENDING') {
+          _topupStatusMessage = topup['provider'] == 'MANUAL'
+              ? 'Заявка на пополнение ожидает ручной обработки. Деньги ещё не зачислены.'
+              : topup['paymentMode'] == 'TEST'
+                  ? 'Ожидаем подтверждение тестовой оплаты.'
+                  : 'Ожидаем подтверждение платёжного сервиса. Деньги ещё не зачислены.';
+        } else {
+          _topupStatusMessage =
+              'Пополнение не выполнено. Проверьте заявку или обратитесь в поддержку.';
+        }
+        if (status != 'PENDING') {
+          _pendingTopupId = null;
+          _topupPoll?.cancel();
+        }
+      });
+      await _load();
+    } catch (_) {
+      if (mounted) {
+        setState(() => _topupStatusMessage =
+            'Не удалось проверить платёж. Повторите проверку. Повторно оплачивать не нужно.');
+      }
+    } finally {
+      if (mounted) setState(() => _checkingTopup = false);
     }
   }
 
@@ -642,28 +795,33 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
             ],
           ),
           const SizedBox(height: 14),
-          _bonusLine(
-            icon: Icons.trending_up_rounded,
-            title: 'Начисление бонусов',
-            subtitle: 'За завершённые поездки и активность',
-            value: '+120',
-            positive: true,
-          ),
-          _bonusLine(
-            icon: Icons.rocket_launch_rounded,
-            title: 'Списание бонусов',
-            subtitle: 'Поднятие заявки в топ',
-            value: '-80',
-            positive: false,
-          ),
+          if ((_wallet?['transactions'] as List? ?? [])
+              .whereType<Map>()
+              .where((row) => row['balanceSource'] == 'BONUS')
+              .isEmpty)
+            const Text('Бонусных операций пока нет')
+          else
+            for (final row in (_wallet?['transactions'] as List? ?? [])
+                .whereType<Map>()
+                .where((row) => row['balanceSource'] == 'BONUS')
+                .take(3))
+              _bonusLine(
+                icon: row['direction'] == 'DEBIT'
+                    ? Icons.trending_down_rounded
+                    : Icons.trending_up_rounded,
+                title: row['direction'] == 'DEBIT'
+                    ? 'Списание бонусов'
+                    : 'Начисление бонусов',
+                subtitle: (row['note'] ?? 'Бонусная операция').toString(),
+                value:
+                    '${row['direction'] == 'DEBIT' ? '-' : '+'}${_moneyText(row['amount'])}',
+                positive: row['direction'] != 'DEBIT',
+              ),
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => setState(
-                () =>
-                    _message = 'Бонусы можно использовать для поднятия в топ.',
-              ),
+              onPressed: () => context.go('/driver/trip-create'),
               icon: const Icon(Icons.rocket_launch_rounded),
               label: const Text('Поднять заявку в топ за бонусы'),
             ),
@@ -892,16 +1050,19 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
           ButtonSegment(value: 'RUB', label: Text('Рубли ₽')),
         ],
         selected: {_currency},
-        onSelectionChanged: _loading
+        onSelectionChanged: _loading || _topupBusy || _checkingTopup
             ? null
             : (values) {
                 setState(() {
+                  _topupPoll?.cancel();
+                  _pendingTopupId = null;
+                  _topupStatusMessage = '';
                   _currency = values.single;
                   _bonusBalance = 0;
                   _wallet = null;
                   _loading = true;
                 });
-                _load();
+                _load(reconcile: true);
               },
       );
 
@@ -1052,15 +1213,19 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
           (_routeStage('seed') && _currency == 'KZT' ? 540 : 0),
     );
     final payout = _moneyText(
-      _wallet?['payout'] ??
+      _wallet?['withdrawable'] ??
+          _wallet?['payout'] ??
           _wallet?['availablePayout'] ??
           (_routeStage('seed') && _currency == 'KZT' ? 5130 : 0),
     );
-    final earned = _moneyText(
-      _wallet?['earnedTotal'] ??
-          _wallet?['totalEarned'] ??
-          (_routeStage('seed') && _currency == 'KZT' ? 45680 : 0),
-    );
+    final earnedRaw = _wallet?['earnedTotal'] ?? _wallet?['totalEarned'];
+    final earned = earnedRaw == null && !_routeStage('seed')
+        ? '—'
+        : _moneyText(
+            _wallet?['earnedTotal'] ??
+                _wallet?['totalEarned'] ??
+                (_routeStage('seed') && _currency == 'KZT' ? 45680 : 0),
+          );
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       bottomNavigationBar: const DriverBottomNav(currentIndex: 2),
@@ -1086,10 +1251,27 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 48),
+                  IconButton(
+                    tooltip: 'Обновить баланс',
+                    onPressed: _loading ? null : () => _load(reconcile: true),
+                    icon: const Icon(Icons.refresh_rounded),
+                  ),
                 ],
               ),
               _currencySelector(),
+              if (_topupStatusMessage.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                ICPremiumInfoBanner(text: _topupStatusMessage),
+                if (_pendingTopupId != null)
+                  TextButton(
+                    onPressed: _checkingTopup
+                        ? null
+                        : () => _checkTopup(_pendingTopupId!),
+                    child: Text(_checkingTopup
+                        ? 'Проверяем платёж...'
+                        : 'Проверить платёж'),
+                  ),
+              ],
               const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.all(14),
@@ -1147,8 +1329,8 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
                           'К выплате', '$payout $_currencySymbol')),
                   const SizedBox(width: 8),
                   Expanded(
-                      child: _boardStatCard(
-                          'Всего заработано', '$earned $_currencySymbol')),
+                      child: _boardStatCard('Всего заработано',
+                          earned == '—' ? '—' : '$earned $_currencySymbol')),
                 ],
               ),
               const SizedBox(height: 10),
@@ -1423,8 +1605,10 @@ class _DriverWalletPageState extends State<DriverWalletPage> {
           icon: Icons.trending_up_rounded,
           iconColor: const Color(0xFF7C2DFF),
           title: 'Всего заработано',
-          subtitle: 'Сумма завершённых поездок',
-          amount: '$earned $_currencySymbol',
+          subtitle: earned == '—'
+              ? 'Подробности в разделе «Заработок» профиля'
+              : 'Сумма завершённых поездок',
+          amount: earned == '—' ? '—' : '$earned $_currencySymbol',
           amountColor: const Color(0xFF7C2DFF),
           time: 'всего',
         ),

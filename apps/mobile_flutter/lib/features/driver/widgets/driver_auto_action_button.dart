@@ -111,11 +111,12 @@ class _DriverAutoActionButtonState extends State<DriverAutoActionButton> {
                     left: 12,
                     right: 12,
                     bottom: 4,
-                    child: LinearProgressIndicator(
-                        value: _left / widget.seconds,
-                        color: Colors.white,
-                        backgroundColor: Colors.white24,
-                        borderRadius: BorderRadius.circular(3))),
+                    child: ExcludeSemantics(
+                        child: LinearProgressIndicator(
+                            value: _left / widget.seconds,
+                            color: Colors.white,
+                            backgroundColor: Colors.white24,
+                            borderRadius: BorderRadius.circular(3)))),
             ])),
       );
 }

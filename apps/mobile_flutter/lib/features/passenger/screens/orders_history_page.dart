@@ -11,15 +11,17 @@ import '../widgets/driver_rating_dialog.dart';
 import '../widgets/passenger_bottom_nav.dart';
 
 class OrdersHistoryPage extends StatefulWidget {
-  const OrdersHistoryPage({super.key, this.routeStage});
+  const OrdersHistoryPage({super.key, this.routeStage, this.apiClient});
 
   final String? routeStage;
+  final ApiClient? apiClient;
 
   @override
   State<OrdersHistoryPage> createState() => _OrdersHistoryPageState();
 }
 
 class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
+  late final _api = widget.apiClient ?? ApiClient();
   List<Map<String, dynamic>> _orders = [];
   String _message = '';
   bool _loading = false;
@@ -58,8 +60,8 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
     setState(() => _loading = true);
     try {
       final responses = await Future.wait([
-        ApiClient().get('/orders/my'),
-        ApiClient().get('/intercity/requests/my'),
+        _api.get('/orders/my'),
+        _api.get('/intercity/requests/my'),
       ]);
       final orders = List<dynamic>.from(responses[0].data as List)
           .map((item) => Map<String, dynamic>.from(item as Map))
@@ -89,10 +91,10 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
     try {
       final item = _orders.firstWhere((entry) => entry['id'] == id);
       if (_isIntercityRequest(item)) {
-        await ApiClient().post('/intercity/requests/$id/cancel');
+        await _api.post('/intercity/requests/$id/cancel');
         setState(() => _message = 'Межгородняя заявка $id отменена');
       } else {
-        await ApiClient().post('/orders/$id/cancel');
+        await _api.post('/orders/$id/cancel');
         setState(() => _message = 'Заказ $id отменен');
       }
       await _load();
@@ -101,10 +103,12 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
     }
   }
 
-  Future<void> _rate(String id, int rating, [String reason = '']) async {
+  Future<void> _rate(String id, int rating,
+      [String reason = '', bool intercity = false]) async {
     try {
-      await ApiClient()
-          .post('/orders/$id/rate', data: {'rating': rating, 'reason': reason});
+      await _api.post(
+          intercity ? '/intercity/requests/$id/rate' : '/orders/$id/rate',
+          data: {'rating': rating, 'reason': reason});
       setState(() => _message = 'Оценка для заказа $id отправлена');
       await _load();
     } catch (e) {
@@ -130,7 +134,7 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
       onSubmit: (_) async {},
       onSubmitWithReason: (rating, reason) async {
         try {
-          await _rate(id, rating, reason);
+          await _rate(id, rating, reason, _isIntercityRequest(item));
         } catch (error) {
           throw Exception(errorMessageRu(error));
         }
@@ -182,7 +186,11 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
   }
 
   bool _canRate(Map<String, dynamic> item) {
-    if (_isIntercityRequest(item)) return false;
+    if (_isIntercityRequest(item)) {
+      return item['status'] == 'COMPLETED' &&
+          item['driverRating'] == null &&
+          item['selectedDriverId'] != null;
+    }
     return (item['status'] ?? '').toString().toUpperCase() == 'COMPLETED' &&
         item['driverRating'] == null &&
         item['driverId'] != null;
@@ -191,7 +199,7 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
   bool _canOpenIntercityRequest(Map<String, dynamic> item) {
     if (!_isIntercityRequest(item)) return false;
     final status = (item['status'] ?? '').toString().toUpperCase();
-    return status == 'OPEN' || status == 'ACCEPTED';
+    return status != 'CANCELLED';
   }
 
   DateTime _createdAtOf(Map<String, dynamic> item) {
@@ -351,20 +359,27 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
                 const SizedBox(height: 10),
               ],
               Expanded(
-                child: ListView.separated(
-                  itemCount: items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    final item = items[index];
-                    return _boardHistoryCard(
-                      title: item.$1,
-                      date: item.$2,
-                      status: item.$3,
-                      intercity: item.$4,
-                      source: item.$5,
-                    );
-                  },
-                ),
+                child: !_loading && items.isEmpty
+                    ? Center(
+                        child: Text(_filter == 'active'
+                            ? 'Активных поездок пока нет'
+                            : _filter == 'completed'
+                                ? 'Завершённых поездок пока нет'
+                                : 'Отменённых поездок пока нет'))
+                    : ListView.separated(
+                        itemCount: items.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        itemBuilder: (context, index) {
+                          final item = items[index];
+                          return _boardHistoryCard(
+                            title: item.$1,
+                            date: item.$2,
+                            status: item.$3,
+                            intercity: item.$4,
+                            source: item.$5,
+                          );
+                        },
+                      ),
               ),
             ],
           ),
@@ -376,7 +391,7 @@ class _OrdersHistoryPageState extends State<OrdersHistoryPage> {
   List<(String, String, String, bool, Map<String, dynamic>?)>
       _boardHistoryItems() {
     final displayedOrders = _filteredOrders();
-    if (displayedOrders.isEmpty && _orders.isEmpty) {
+    if (_routeStage('seed') && displayedOrders.isEmpty && _orders.isEmpty) {
       return [
         ('Алматы  →  Астана', 'Сегодня, 09:00', 'В пути', true, null),
         ('Поездка по городу', 'Сегодня, 08:15', 'Завершена', false, null),

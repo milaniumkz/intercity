@@ -1,3 +1,6 @@
+import '../../../core/services/chat_message_notices.dart';
+import '../../../core/services/push_notifications_service.dart';
+import '../../../core/services/trip_status_sound.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -12,7 +15,13 @@ Future<void> showOrderChatSheet({
   required String orderStatus,
   required String title,
   required String currentRole,
+  bool intercity = false,
+  ApiClient? apiClient,
 }) {
+  unawaited(TripStatusSound.prepare());
+  unawaited(PushNotificationsService.instance
+      .enableDriverNotifications()
+      .catchError((_) {}));
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -23,6 +32,8 @@ Future<void> showOrderChatSheet({
       orderStatus: orderStatus,
       title: title,
       currentRole: currentRole,
+      intercity: intercity,
+      apiClient: apiClient,
     ),
   );
 }
@@ -35,6 +46,7 @@ class OrderChatSheet extends StatefulWidget {
     required this.title,
     required this.currentRole,
     this.apiClient,
+    this.intercity = false,
   });
 
   final String orderId;
@@ -42,6 +54,7 @@ class OrderChatSheet extends StatefulWidget {
   final String title;
   final String currentRole;
   final ApiClient? apiClient;
+  final bool intercity;
 
   @override
   State<OrderChatSheet> createState() => _OrderChatSheetState();
@@ -53,13 +66,21 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
   final _scrollCtrl = ScrollController();
   List<dynamic> _messages = const [];
   String _error = '';
+  final _knownMessages = <String>{};
+  bool _messagesInitialized = false;
+  String get _kind => widget.intercity ? 'INTERCITY' : 'CITY';
   bool _loading = true;
   bool _sending = false;
   bool _loadingMessages = false;
   bool _reloadAfterSend = false;
   Timer? _pollTimer;
 
-  bool get _canWrite => const {
+  String get _chatPath => widget.intercity
+      ? '/intercity/requests/${widget.orderId}/chat'
+      : '/orders/${widget.orderId}/chat';
+
+  bool get _canWrite => {
+        if (widget.intercity) 'ACCEPTED',
         'DRIVER_ASSIGNED',
         'DRIVER_EN_ROUTE',
         'DRIVER_ARRIVED',
@@ -69,12 +90,16 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
   @override
   void initState() {
     super.initState();
+    ChatMessageNotices.shared.openThreads
+        .add(ChatMessageNotices.threadKey(_kind, widget.orderId));
     _load();
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) => _load());
   }
 
   @override
   void dispose() {
+    ChatMessageNotices.shared.openThreads
+        .remove(ChatMessageNotices.threadKey(_kind, widget.orderId));
     _pollTimer?.cancel();
     _messageCtrl.dispose();
     _scrollCtrl.dispose();
@@ -94,7 +119,7 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
     final previousLast =
         _messages.isEmpty ? null : (_messages.last as Map)['id'];
     try {
-      final res = await _api.get('/orders/${widget.orderId}/chat');
+      final res = await _api.get(_chatPath);
       if (!mounted) return;
       setState(() {
         _messages =
@@ -102,6 +127,26 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
         _loading = false;
         _error = '';
       });
+      final incoming = newIncomingChatMessages(
+          known: _knownMessages,
+          initialized: _messagesInitialized,
+          messages: _messages,
+          role: widget.currentRole);
+      _messagesInitialized = true;
+      for (final message in incoming) {
+        final driver = message['participantRole'] == 'DRIVER';
+        unawaited(ChatMessageNotices.shared.notify({
+          'type': 'chat_message',
+          'kind': _kind,
+          'orderId': widget.orderId,
+          'messageId': message['id'],
+          'recipientRole': widget.currentRole,
+          'title': 'Новое сообщение',
+          'body': driver
+              ? 'Водитель написал вам в чате'
+              : 'Пассажир написал вам в чате'
+        }));
+      }
       final last = _messages.isEmpty ? null : (_messages.last as Map)['id'];
       if (follow && (forceScroll || previousLast != last)) _scrollToBottom();
     } catch (e) {
@@ -124,7 +169,7 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
     if (!_canWrite || text.isEmpty || _sending) return;
     setState(() => _sending = true);
     try {
-      await _api.post('/orders/${widget.orderId}/chat', data: {'text': text});
+      await _api.post(_chatPath, data: {'text': text});
       _messageCtrl.clear();
       await _load(forceScroll: true);
     } catch (e) {
@@ -324,6 +369,7 @@ class _OrderChatSheetState extends State<OrderChatSheet> {
                   ),
                   const SizedBox(width: 8),
                   IconButton.filled(
+                    tooltip: 'Отправить сообщение',
                     onPressed: _canWrite && !_sending ? _send : null,
                     icon: _sending
                         ? const SizedBox(

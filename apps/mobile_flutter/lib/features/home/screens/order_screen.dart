@@ -1,3 +1,4 @@
+import '../../driver/widgets/route_departure_field.dart';
 import '../../../core/services/trip_status_sound.dart';
 import '../../../core/services/push_notifications_service.dart';
 import '../widgets/city_order_composer.dart';
@@ -462,7 +463,7 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _fromAddressSearching = false;
   bool _toAddressSearching = false;
   bool _locating = false;
-  int _modeIndex = 0; // 0 city, 1 intercity, 2 delivery
+  int _modeIndex = 0; // 0 city, 1 intercity, 2 delivery, 3 cargo
   int _cityModeIndex = 0; // 0 fixed, 1 auction
   int _deliveryModeIndex = 0; // 0 city, 1 intercity, 2 rf
   int? _mapHomeSelectedIndex = 0;
@@ -479,6 +480,10 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _intercitySmokingAllowed = false;
   bool _manualAddressForFrom = true;
   DateTime _intercityTripDate = _defaultIntercityTripDate();
+  bool _intercityDateConfirmed = false;
+  DateTime? _cargoDepartureAt;
+  bool get _cargoDepartureReady =>
+      _cargoDepartureAt?.isAfter(DateTime.now()) ?? false;
   List<Map<String, dynamic>> _intercityReadyTrips = const [];
   bool _intercityReadyTripsLoading = false;
   bool _passengerMapHomeEnabled = true;
@@ -591,6 +596,9 @@ class _OrderScreenState extends State<OrderScreen> {
 
   bool _canContinueFromStep(bool canCreate) {
     if (_loading) return false;
+    if (_mode() == 'CARGO' && _orderStep > 0 && !_cargoDepartureReady) {
+      return false;
+    }
     switch (_orderStep) {
       case 0:
         return true;
@@ -615,12 +623,18 @@ class _OrderScreenState extends State<OrderScreen> {
 
   String _stepActionLabel() {
     if (_orderStep < 3) return 'Далее';
-    if (_requestType() == requestTypeCityFixed) return 'Создать заказ';
+    if (_requestType() == requestTypeCityFixed ||
+        _requestType() == requestTypeCargo) {
+      return 'Создать заказ';
+    }
     if (_mode() == 'DELIVERY') return 'Опубликовать доставку';
     return 'Опубликовать заявку';
   }
 
   String _stepHint() {
+    if (_mode() == 'CARGO' && !_cargoDepartureReady) {
+      return 'Выберите дату и время подачи грузового транспорта';
+    }
     switch (_orderStep) {
       case 0:
         return _mode() == 'CITY'
@@ -700,7 +714,7 @@ class _OrderScreenState extends State<OrderScreen> {
     return widget.routeStage == marker || routeHas(context, '$marker=1');
   }
 
-  bool get _useIntercityBoardUi => _modeIndex != 2;
+  bool get _useIntercityBoardUi => _modeIndex < 2;
 
   Future<void> _goOrderBoard(String marker) async {
     await _saveBoardDraft();
@@ -718,6 +732,10 @@ class _OrderScreenState extends State<OrderScreen> {
     final draft = <String, dynamic>{
       'vehicleClass': _vehicleClass,
       'auctionPrice': _auctionPriceController.text,
+      'itemDescription': _deliveryItemController.text,
+      'itemWeightKg': _deliveryWeightController.text,
+      'itemDimensions': _deliveryDimensionsController.text,
+      'recipientContact': _deliveryRecipientController.text,
       'paymentMethod': _paymentMethod,
       'mapHomeSelectedIndex': _mapHomeSelectedIndex,
       'modeIndex': _modeIndex,
@@ -731,6 +749,10 @@ class _OrderScreenState extends State<OrderScreen> {
       'fromLng': from?.longitude,
       'toLat': to?.latitude,
       'toLng': to?.longitude,
+      'cargoScheduledFor': _cargoDepartureAt?.toUtc().toIso8601String(),
+      'intercityDate': _intercityDateConfirmed
+          ? _intercityTripDate.toUtc().toIso8601String()
+          : null,
       'intercityFromCityId': _intercityFromCityId,
       'intercityToCityId': _intercityToCityId,
       'intercityFromCityName': _intercityFromCityName,
@@ -754,6 +776,10 @@ class _OrderScreenState extends State<OrderScreen> {
     try {
       final draft = Map<String, dynamic>.from(jsonDecode(raw) as Map);
       final fromLat = (draft['fromLat'] as num?)?.toDouble();
+      final chosenDate =
+          DateTime.tryParse('${draft['intercityDate']}')?.toLocal();
+      final cargoDate =
+          DateTime.tryParse('${draft['cargoScheduledFor']}')?.toLocal();
       final fromLng = (draft['fromLng'] as num?)?.toDouble();
       final toLat = (draft['toLat'] as num?)?.toDouble();
       final toLng = (draft['toLng'] as num?)?.toDouble();
@@ -767,6 +793,13 @@ class _OrderScreenState extends State<OrderScreen> {
           (draft['intercityToCityLng'] as num?)?.toDouble();
       if (!mounted) return;
       setState(() {
+        if (cargoDate != null && cargoDate.isAfter(DateTime.now())) {
+          _cargoDepartureAt = cargoDate;
+        }
+        if (chosenDate != null && chosenDate.isAfter(DateTime.now())) {
+          _intercityTripDate = chosenDate;
+          _intercityDateConfirmed = true;
+        }
         _modeIndex = (draft['modeIndex'] as num?)?.toInt() ?? _modeIndex;
         _cityModeIndex =
             (draft['cityModeIndex'] as num?)?.toInt() ?? _cityModeIndex;
@@ -783,6 +816,14 @@ class _OrderScreenState extends State<OrderScreen> {
                             : 0);
         _vehicleClass = (draft['vehicleClass'] ?? _vehicleClass).toString();
         _auctionPriceController.text = (draft['auctionPrice'] ?? '').toString();
+        _deliveryItemController.text =
+            (draft['itemDescription'] ?? '').toString();
+        _deliveryWeightController.text =
+            (draft['itemWeightKg'] ?? '').toString();
+        _deliveryDimensionsController.text =
+            (draft['itemDimensions'] ?? '').toString();
+        _deliveryRecipientController.text =
+            (draft['recipientContact'] ?? '').toString();
         _paymentMethod = (draft['paymentMethod'] ?? _paymentMethod).toString();
         if (_modeIndex == 0 && _paymentMethod == paymentMethodCardTransfer) {
           _paymentMethod = paymentMethodCash;
@@ -875,11 +916,13 @@ class _OrderScreenState extends State<OrderScreen> {
   void _selectMapHomeFare(int index) {
     setState(() {
       _mapHomeSelectedIndex = index;
-      _modeIndex = index == 2
-          ? 1
-          : index == 3
-              ? 2
-              : 0;
+      _modeIndex = index == 4
+          ? 3
+          : index == 2
+              ? 1
+              : index == 3
+                  ? 2
+                  : 0;
       _cityModeIndex = index == 1 ? 1 : 0;
       _deliveryModeIndex = 0;
       _orderStep = 1;
@@ -894,8 +937,8 @@ class _OrderScreenState extends State<OrderScreen> {
     _ensureBoardPickupPoint();
     unawaited(_saveBoardDraft());
     _scheduleAutoBoard();
-    if (index == 3) {
-      _selectBoardEntry(modeIndex: 2, route: 'order');
+    if (index == 3 || index == 4) {
+      _selectBoardEntry(modeIndex: index == 4 ? 3 : 2, route: 'order');
     } else {
       _continueMapHomeFare();
     }
@@ -1079,6 +1122,11 @@ class _OrderScreenState extends State<OrderScreen> {
 
   Future<void> _continueBoardIntercityStart() async {
     _modeIndex = 1;
+    if (!_intercityDateConfirmed ||
+        !_intercityTripDate.isAfter(DateTime.now())) {
+      setState(() => _statusText = 'Выберите будущую дату и время поездки');
+      return;
+    }
     if (!_hasIntercitySearchCity(isFrom: true) ||
         !_hasIntercitySearchCity(isFrom: false)) {
       setState(() {
@@ -1424,7 +1472,7 @@ class _OrderScreenState extends State<OrderScreen> {
       }
       return _boardAddressNotFoundScreen();
     }
-    if (_routeStage('mode')) {
+    if (_routeStage('mode') && _orderStep == 0) {
       return _boardCityModeChoiceScreen();
     }
     if (_routeStage('address')) {
@@ -2200,7 +2248,7 @@ class _OrderScreenState extends State<OrderScreen> {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 210,
+            height: 316,
             child: GridView.count(
               crossAxisCount: 2,
               mainAxisExtent: 96,
@@ -2231,6 +2279,11 @@ class _OrderScreenState extends State<OrderScreen> {
                   subtitle: 'Посылки и грузы',
                   icon: Icons.inventory_2_rounded,
                 ),
+                _mapHomeFareCard(
+                    index: 4,
+                    title: 'Грузовые',
+                    subtitle: 'По весу и расстоянию',
+                    icon: Icons.local_shipping_rounded),
               ],
             ),
           ),
@@ -2353,8 +2406,7 @@ class _OrderScreenState extends State<OrderScreen> {
         child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+            child: ListView(
               children: [
                 Row(
                   children: [
@@ -2438,18 +2490,22 @@ class _OrderScreenState extends State<OrderScreen> {
                       ),
                     ),
                     _boardEntryCard(
-                      title: 'Доставка',
-                      subtitle: 'Посылки и грузы',
-                      icon: Icons.inventory_2_rounded,
-                      onTap: () => _selectBoardEntry(
-                        modeIndex: 2,
-                        deliveryModeIndex: 0,
-                        route: 'order',
-                      ),
-                    ),
+                        title: 'Доставка',
+                        subtitle: 'Посылки и грузы',
+                        icon: Icons.inventory_2_rounded,
+                        onTap: () => _selectBoardEntry(
+                            modeIndex: 2,
+                            deliveryModeIndex: 0,
+                            route: 'order')),
+                    _boardEntryCard(
+                        title: 'Грузовые',
+                        subtitle: 'По весу и расстоянию',
+                        icon: Icons.local_shipping_rounded,
+                        onTap: () =>
+                            _selectBoardEntry(modeIndex: 3, route: 'order')),
                   ],
                 ),
-                const Spacer(),
+                const SizedBox(height: 18),
                 ICGradientButton(
                   label: 'Городское такси',
                   icon: Icons.arrow_forward_rounded,
@@ -5579,14 +5635,6 @@ class _OrderScreenState extends State<OrderScreen> {
                   ),
                 ),
                 const SizedBox(height: 14),
-                _intercityCitySelectorCard(),
-                const SizedBox(height: 12),
-                _routeAddressPanel(),
-                if (_statusText.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  ICPremiumInfoBanner(text: _statusText),
-                ],
-                const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
@@ -5601,20 +5649,31 @@ class _OrderScreenState extends State<OrderScreen> {
                       _boardIntercityInfoRow(
                         icon: Icons.calendar_month_rounded,
                         label: 'Дата',
-                        value: _formatIntercityDate(_intercityTripDate),
+                        value: _intercityDateConfirmed
+                            ? _formatIntercityDate(_intercityTripDate)
+                            : 'Выберите дату',
                         onTap: _pickIntercityDate,
                       ),
                       const Divider(height: 18),
                       _boardIntercityInfoRow(
                         icon: Icons.schedule_rounded,
                         label: 'Время',
-                        value:
-                            '${_intercityTripDate.hour.toString().padLeft(2, '0')}:${_intercityTripDate.minute.toString().padLeft(2, '0')}',
+                        value: _intercityDateConfirmed
+                            ? '${_intercityTripDate.hour.toString().padLeft(2, '0')}:${_intercityTripDate.minute.toString().padLeft(2, '0')}'
+                            : 'Выберите время',
                         onTap: _pickIntercityDate,
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(height: 12),
+                _intercityCitySelectorCard(),
+                const SizedBox(height: 12),
+                _routeAddressPanel(),
+                if (_statusText.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ICPremiumInfoBanner(text: _statusText),
+                ],
                 const SizedBox(height: 12),
                 Container(
                   height: 58,
@@ -7583,8 +7642,28 @@ class _OrderScreenState extends State<OrderScreen> {
 
   List<Widget> _routeStepContent() {
     return [
+      if (_mode() == 'CARGO') ...[
+        _cargoDepartureField(),
+        const SizedBox(height: 12)
+      ],
       if (_requestType() == requestTypeIntercity) ...[
         _intercityCitySelectorCard(),
+        const SizedBox(height: 8),
+        RouteDepartureField(
+            value: _intercityDateConfirmed ? _intercityTripDate : null,
+            title: 'Дата и время поездки',
+            helperText:
+                'Укажите, когда хотите поехать. Время по настройкам устройства.',
+            enabled: !_loading,
+            onChanged: (value) {
+              setState(() {
+                _intercityTripDate = value;
+                _intercityDateConfirmed = true;
+                _statusText = '';
+              });
+              unawaited(_saveBoardDraft());
+              _scheduleIntercityReadyTripsSearch();
+            }),
         const SizedBox(height: 8),
       ],
       if (_requestType() != requestTypeIntercity) ...[
@@ -8198,68 +8277,73 @@ class _OrderScreenState extends State<OrderScreen> {
   Future<void> _openIntercityCitySearch(
       {required bool isFrom, bool forCityRide = false}) async {
     var dialogOpen = true;
-    final selected = await showDialog<Map<String, dynamic>>(
+    final controller = TextEditingController(
+      text: forCityRide ? _currentCityName : _intercityCityName(isFrom: isFrom),
+    );
+    Timer? debounce;
+    var loading = false;
+    var results = <Map<String, dynamic>>[];
+    var message = controller.text.trim().isEmpty
+        ? 'Введите город, например Алматы, Астана, Усть-Каменогорск.'
+        : 'Начните вводить город.';
+
+    Future<void> runSearch(
+      String query,
+      void Function(void Function()) setSheetState,
+    ) async {
+      if (!dialogOpen) return;
+      final normalized = query.trim();
+      if (normalized.length < 2) {
+        setSheetState(() {
+          results = [];
+          message = 'Введите минимум 2 символа.';
+          loading = false;
+        });
+        return;
+      }
+      setSheetState(() {
+        loading = true;
+        message = '';
+      });
+      try {
+        final found = await _searchCitiesInDatabase(normalized);
+        if (!mounted || !dialogOpen || controller.text.trim() != normalized) {
+          return;
+        }
+        setSheetState(() {
+          results = found;
+          message = found.isEmpty ? 'Город не найден. Уточните запрос.' : '';
+          loading = false;
+        });
+      } catch (e) {
+        if (!mounted || !dialogOpen || controller.text.trim() != normalized) {
+          return;
+        }
+        setSheetState(() {
+          results = [];
+          message = 'Не удалось выполнить поиск. Попробуйте ещё раз.';
+          loading = false;
+        });
+      }
+    }
+
+    void closeSearch(BuildContext dialogContext,
+        [Map<String, dynamic>? result]) {
+      if (!dialogOpen ||
+          !dialogContext.mounted ||
+          ModalRoute.of(dialogContext)?.isCurrent != true) {
+        return;
+      }
+      dialogOpen = false;
+      debounce?.cancel();
+      Navigator.of(dialogContext).pop(result);
+    }
+
+    final cityRoute = DialogRoute<Map<String, dynamic>>(
       context: context,
       useSafeArea: false,
       builder: (dialogContext) {
         final theme = Theme.of(dialogContext);
-        final controller = TextEditingController(
-          text: forCityRide
-              ? _currentCityName
-              : _intercityCityName(isFrom: isFrom),
-        );
-        Timer? debounce;
-        var loading = false;
-        var results = <Map<String, dynamic>>[];
-        var message = controller.text.trim().isEmpty
-            ? 'Введите город, например Алматы, Астана, Усть-Каменогорск.'
-            : 'Начните вводить город.';
-
-        Future<void> runSearch(
-          String query,
-          void Function(void Function()) setSheetState,
-        ) async {
-          if (!dialogOpen) return;
-          final normalized = query.trim();
-          if (normalized.length < 2) {
-            setSheetState(() {
-              results = [];
-              message = 'Введите минимум 2 символа.';
-              loading = false;
-            });
-            return;
-          }
-          setSheetState(() {
-            loading = true;
-            message = '';
-          });
-          try {
-            final found = await _searchCitiesInDatabase(normalized);
-            if (!mounted ||
-                !dialogOpen ||
-                controller.text.trim() != normalized) {
-              return;
-            }
-            setSheetState(() {
-              results = found;
-              message =
-                  found.isEmpty ? 'Город не найден. Уточните запрос.' : '';
-              loading = false;
-            });
-          } catch (e) {
-            if (!mounted ||
-                !dialogOpen ||
-                controller.text.trim() != normalized) {
-              return;
-            }
-            setSheetState(() {
-              results = [];
-              message = 'Не удалось выполнить поиск. Попробуйте ещё раз.';
-              loading = false;
-            });
-          }
-        }
-
         return StatefulBuilder(
           builder: (context, setSheetState) {
             return Scaffold(
@@ -8273,7 +8357,7 @@ class _OrderScreenState extends State<OrderScreen> {
                       Row(
                         children: [
                           IconButton(
-                            onPressed: () => Navigator.of(context).pop(),
+                            onPressed: () => closeSearch(dialogContext),
                             icon: const Icon(Icons.arrow_back_rounded),
                           ),
                           Expanded(
@@ -8379,8 +8463,7 @@ class _OrderScreenState extends State<OrderScreen> {
                               ),
                               trailing: const Icon(Icons.chevron_right_rounded),
                               onTap: () {
-                                debounce?.cancel();
-                                Navigator.of(context).pop(item);
+                                closeSearch(dialogContext, item);
                               },
                             );
                           },
@@ -8394,7 +8477,12 @@ class _OrderScreenState extends State<OrderScreen> {
           },
         );
       },
-    ).whenComplete(() => dialogOpen = false);
+    );
+    final selected = await Navigator.of(context).push(cityRoute);
+    dialogOpen = false;
+    await cityRoute.completed;
+    debounce?.cancel();
+    controller.dispose();
 
     if (selected == null || !mounted) return;
     final point = _pointFromGeoItem(selected);
@@ -8448,6 +8536,10 @@ class _OrderScreenState extends State<OrderScreen> {
 
   List<Widget> _optionsStepContent() {
     return [
+      if (_mode() == 'CARGO') ...[
+        _cargoDepartureField(),
+        const SizedBox(height: 12)
+      ],
       if (_requestType() == requestTypeIntercity || _mode() == 'DELIVERY') ...[
         _scheduleCard(),
         const SizedBox(height: 12),
@@ -8465,6 +8557,12 @@ class _OrderScreenState extends State<OrderScreen> {
         const SizedBox(height: 12),
         _priceCard(),
         const SizedBox(height: 12),
+      ],
+      if (_mode() == 'CARGO') ...[
+        _deliveryFieldsCard(),
+        const SizedBox(height: 12),
+        _priceCard(),
+        const SizedBox(height: 12)
       ],
       if (_mode() == 'DELIVERY') ...[
         _deliveryFieldsCard(),
@@ -8514,7 +8612,7 @@ class _OrderScreenState extends State<OrderScreen> {
         ? 'Адрес назначения не указан'
         : _toController.text.trim();
     final price = _boardPrice == null
-        ? 'Цена рассчитается автоматически'
+        ? (_supportsSystemPrice ? 'После расчёта' : 'По предложению водителя')
         : '${_boardPrice!.toStringAsFixed(0)} $_currencySymbol';
     return _surfaceCard(
       padding: const EdgeInsets.all(14),
@@ -8575,11 +8673,25 @@ class _OrderScreenState extends State<OrderScreen> {
             ),
           ),
           const SizedBox(height: 14),
-          _confirmDetailRow(
-            'Класс',
-            vehicleClassLabel(_vehicleClass),
-            Icons.airline_seat_recline_extra_rounded,
-          ),
+          if (_mode() == 'CARGO')
+            _confirmDetailRow('Дата и время подачи',
+                formatRouteDeparture(_cargoDepartureAt), Icons.event_rounded),
+          if (_supportsVehicleClass)
+            _confirmDetailRow('Класс', vehicleClassLabel(_vehicleClass),
+                Icons.airline_seat_recline_extra_rounded),
+          if (_mode() == 'CARGO' || _mode() == 'DELIVERY') ...[
+            _confirmDetailRow('Груз', _deliveryItemController.text.trim(),
+                Icons.inventory_2_outlined),
+            if (_deliveryWeightController.text.trim().isNotEmpty)
+              _confirmDetailRow('Вес, кг', _deliveryWeightController.text,
+                  Icons.scale_rounded),
+            if (_deliveryDimensionsController.text.trim().isNotEmpty)
+              _confirmDetailRow('Размеры', _deliveryDimensionsController.text,
+                  Icons.straighten_rounded),
+            if (_deliveryRecipientController.text.trim().isNotEmpty)
+              _confirmDetailRow('Получатель', _deliveryRecipientController.text,
+                  Icons.person_outline),
+          ],
           _confirmDetailRow(
             'Способ оплаты',
             paymentMethodLabel(_paymentMethod),
@@ -8600,22 +8712,25 @@ class _OrderScreenState extends State<OrderScreen> {
           const Divider(height: 24),
           Row(
             children: [
-              Text(
+              Expanded(
+                  child: Text(
                 'Цена поездки',
                 style: TextStyle(
                   color: theme.colorScheme.onSurfaceVariant,
                   fontWeight: FontWeight.w700,
                 ),
-              ),
-              const Spacer(),
-              Text(
-                price,
-                style: const TextStyle(
-                  color: AppTheme.primaryColor,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 18,
-                ),
-              ),
+              )),
+              Flexible(
+                  flex: 2,
+                  child: Text(
+                    price,
+                    textAlign: TextAlign.end,
+                    style: const TextStyle(
+                      color: AppTheme.primaryColor,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 18,
+                    ),
+                  )),
             ],
           ),
           const SizedBox(height: 14),
@@ -8647,12 +8762,16 @@ class _OrderScreenState extends State<OrderScreen> {
               ),
             ),
           ),
-          Text(
-            value,
-            style: TextStyle(
-              color: theme.colorScheme.onSurface,
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
+          Flexible(
+            flex: 2,
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                color: theme.colorScheme.onSurface,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ),
         ],
@@ -8693,6 +8812,7 @@ class _OrderScreenState extends State<OrderScreen> {
     final modeTitle = switch (_mode()) {
       'CITY' => _cityModeIndex == 0 ? 'Город • Легковой' : 'Город • Аукцион',
       'INTERCITY' => 'Межгород',
+      'CARGO' => 'Грузовые',
       _ => 'Доставка',
     };
     return Row(
@@ -9211,6 +9331,12 @@ class _OrderScreenState extends State<OrderScreen> {
         'subtitle': 'По городу, межгород, РФ',
         'icon': 'delivery',
       },
+      {
+        'chip': 'ГРУЗОВЫЕ',
+        'title': 'Грузовые',
+        'subtitle': 'По весу и расстоянию',
+        'icon': 'cargo'
+      },
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -9270,6 +9396,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 final icon = switch (items[i]['icon']) {
                   'route' => Icons.route_rounded,
                   'delivery' => Icons.inventory_2_rounded,
+                  'cargo' => Icons.local_shipping_rounded,
                   _ => Icons.local_taxi_rounded,
                 };
                 return GestureDetector(
@@ -9847,7 +9974,7 @@ class _OrderScreenState extends State<OrderScreen> {
     final isDark = theme.brightness == Brightness.dark;
     const types = [
       ('По городу', requestTypeDeliveryCity),
-      ('Межгород', requestTypeDeliveryIntercity),
+      ('Междугородняя', requestTypeDeliveryIntercity),
       ('По РФ', requestTypeDeliveryRf),
     ];
     return _surfaceCard(
@@ -9989,15 +10116,16 @@ class _OrderScreenState extends State<OrderScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: selected ? Colors.white : theme.colorScheme.onSurface,
-                fontWeight: FontWeight.w900,
-                fontSize: 12,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: selected ? Colors.white : theme.colorScheme.onSurface,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 12,
+                ),
               ),
             ),
             const SizedBox(height: 4),
@@ -10130,13 +10258,9 @@ class _OrderScreenState extends State<OrderScreen> {
   }) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final price = switch (vehicleClass) {
-      vehicleClassEconomy => 1780,
-      vehicleClassOptimal => 2280,
-      vehicleClassComfort => 2980,
-      vehicleClassBusiness => 3980,
-      _ => 1780,
-    };
+    final price = selected && _boardPrice != null
+        ? '${_boardPrice!.toStringAsFixed(0)} $_currencySymbol'
+        : 'После расчёта';
     final subtitle = switch (vehicleClass) {
       vehicleClassEconomy => 'Для повседневных поездок',
       vehicleClassOptimal => 'Больше пространства и комфорта',
@@ -10216,7 +10340,7 @@ class _OrderScreenState extends State<OrderScreen> {
               ),
             ),
             Text(
-              '$price $_currencySymbol',
+              price,
               style: const TextStyle(
                 color: AppTheme.primaryColor,
                 fontWeight: FontWeight.w900,
@@ -10558,6 +10682,22 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
+  Widget _cargoDepartureField() => RouteDepartureField(
+        key: const ValueKey('cargo-departure'),
+        value: _cargoDepartureAt,
+        title: 'Дата и время подачи',
+        helperText:
+            'Обязательно выберите, когда нужен грузовой транспорт. Время по настройкам устройства.',
+        enabled: !_loading,
+        onChanged: (value) {
+          setState(() {
+            _cargoDepartureAt = value;
+            _statusText = '';
+          });
+          unawaited(_saveBoardDraft());
+        },
+      );
+
   Widget _scheduleCard() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -10725,6 +10865,12 @@ class _OrderScreenState extends State<OrderScreen> {
                     Expanded(
                       child: TextField(
                         controller: _deliveryWeightController,
+                        onChanged: (_) {
+                          if (_mode() == 'CARGO') {
+                            setState(() => _boardPrice = null);
+                            _scheduleAutoBoard();
+                          }
+                        },
                         style: TextStyle(color: theme.colorScheme.onSurface),
                         keyboardType: const TextInputType.numberWithOptions(
                           decimal: true,
@@ -10984,7 +11130,7 @@ class _OrderScreenState extends State<OrderScreen> {
                         ),
                         const SizedBox(height: 4),
                         const Text(
-                          'Стоимость уже учитывает выбранный класс авто.',
+                          'Стоимость рассчитана по тарифу и параметрам заказа.',
                           style: TextStyle(
                             color: Color(0xFF7C7590),
                             fontWeight: FontWeight.w600,
@@ -10999,9 +11145,25 @@ class _OrderScreenState extends State<OrderScreen> {
             )
           : Padding(
               padding: const EdgeInsets.all(16),
-              child: Text(
-                'Введите адреса "Откуда" и "Куда", чтобы увидеть стоимость поездки',
-                style: TextStyle(color: muted),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _mode() == 'CARGO' && _statusText.isNotEmpty
+                        ? _statusText
+                        : 'Введите адреса "Откуда" и "Куда", чтобы увидеть стоимость поездки',
+                    style: TextStyle(color: muted),
+                  ),
+                  if (_mode() == 'CARGO' &&
+                      _fromLocation != null &&
+                      _toLocation != null)
+                    TextButton(
+                      onPressed: _loading ? null : _board,
+                      child: Text(_loading
+                          ? 'Рассчитываем стоимость…'
+                          : 'Повторить расчёт'),
+                    ),
+                ],
               ),
             ),
     );
@@ -11578,14 +11740,25 @@ class _OrderScreenState extends State<OrderScreen> {
     final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(_intercityTripDate),
-      helpText: 'Ориентировочное время',
+      helpText: 'Время поездки',
+      builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+          child: child!),
       cancelText: 'Отмена',
       confirmText: 'Выбрать',
     );
-    if (!mounted) return;
-    final nextHour = time?.hour ?? _intercityTripDate.hour;
-    final nextMinute = time?.minute ?? _intercityTripDate.minute;
+    if (time == null || !mounted) return;
+    final selected =
+        DateTime(picked.year, picked.month, picked.day, time.hour, time.minute);
+    if (!selected.isAfter(DateTime.now())) {
+      setState(() => _statusText = 'Выберите будущую дату и время поездки');
+      return;
+    }
+    final nextHour = time.hour;
+    final nextMinute = time.minute;
     setState(() {
+      _statusText = '';
+      _intercityDateConfirmed = true;
       _intercityTripDate = DateTime(
         picked.year,
         picked.month,
@@ -11594,6 +11767,7 @@ class _OrderScreenState extends State<OrderScreen> {
         nextMinute,
       );
     });
+    unawaited(_saveBoardDraft());
     _scheduleIntercityReadyTripsSearch();
   }
 
@@ -11775,6 +11949,8 @@ class _OrderScreenState extends State<OrderScreen> {
         return 'CITY';
       case 1:
         return 'INTERCITY';
+      case 3:
+        return 'CARGO';
       default:
         return 'DELIVERY';
     }
@@ -11782,6 +11958,8 @@ class _OrderScreenState extends State<OrderScreen> {
 
   String _requestType() {
     switch (_mode()) {
+      case 'CARGO':
+        return requestTypeCargo;
       case 'CITY':
         return _cityModeIndex == 0
             ? requestTypeCityFixed
@@ -11857,6 +12035,8 @@ class _OrderScreenState extends State<OrderScreen> {
       _boardDistance = null;
       _boardDuration = null;
       _intercityTripDate = _defaultIntercityTripDate();
+      _intercityDateConfirmed = false;
+      _cargoDepartureAt = null;
       _intercityBaggage = 1;
       _intercityPets = 'Нет';
       _intercityChildSeats = 0;
@@ -12277,7 +12457,8 @@ class _OrderScreenState extends State<OrderScreen> {
                                 isFrom: isFrom,
                                 point: selected,
                               );
-                              if (context.mounted) {
+                              if (context.mounted &&
+                                  ModalRoute.of(context)?.isCurrent == true) {
                                 Navigator.of(context).pop();
                               }
                             },
@@ -12314,13 +12495,6 @@ class _OrderScreenState extends State<OrderScreen> {
     await _saveBoardDraft();
     _scheduleAutoBoard();
     _scheduleIntercityReadyTripsSearch();
-    if (!isFrom &&
-        _requestType() == requestTypeIntercity &&
-        _fromLocation != null &&
-        _toLocation != null) {
-      await _board();
-      if (mounted) _goOrderBoard('intercity_options');
-    }
   }
 
   Future<Map<String, dynamic>> _reversePoint(LatLng point) =>
@@ -13073,13 +13247,6 @@ class _OrderScreenState extends State<OrderScreen> {
           await _board();
           if (mounted) _goOrderBoard('routeprice');
         }
-        if (navigateAfterApply &&
-            _requestType() == requestTypeIntercity &&
-            _fromLocation != null &&
-            _toLocation != null) {
-          await _board();
-          if (mounted) _goOrderBoard('intercity_options');
-        }
       }
     } catch (e) {
       setState(
@@ -13179,13 +13346,6 @@ class _OrderScreenState extends State<OrderScreen> {
       await _board();
       if (mounted) _goOrderBoard('routeprice');
       return;
-    }
-
-    if (_requestType() == requestTypeIntercity &&
-        _fromLocation != null &&
-        _toLocation != null) {
-      await _board();
-      if (mounted) _goOrderBoard('intercity_options');
     }
   }
 
@@ -13310,6 +13470,9 @@ class _OrderScreenState extends State<OrderScreen> {
       'requestType': _requestType(),
       'paymentMethod': _paymentMethod,
       'vehicleClass': _supportsVehicleClass ? _vehicleClass : null,
+      if (_mode() == 'CARGO')
+        'itemWeightKg': double.tryParse(
+            _deliveryWeightController.text.replaceAll(',', '.')),
     };
   }
 
@@ -13392,7 +13555,8 @@ class _OrderScreenState extends State<OrderScreen> {
       },
       if (_mode() == 'DELIVERY') ...{
         'itemDescription': _deliveryItemController.text.trim(),
-        'itemWeightKg': double.tryParse(_deliveryWeightController.text.trim()),
+        'itemWeightKg': double.tryParse(
+            _deliveryWeightController.text.replaceAll(',', '.')),
         'itemDimensions': _deliveryDimensionsController.text.trim().isEmpty
             ? null
             : _deliveryDimensionsController.text.trim(),
@@ -13404,6 +13568,16 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   bool _validateBeforeCreate() {
+    if (_mode() == 'CARGO' && !_cargoDepartureReady) {
+      _statusText = 'Выберите будущую дату и время подачи грузового транспорта';
+      return false;
+    }
+    if (_requestType() == requestTypeIntercity &&
+        (!_intercityDateConfirmed ||
+            !_intercityTripDate.isAfter(DateTime.now()))) {
+      _statusText = 'Выберите будущую дату и время поездки';
+      return false;
+    }
     if (_requestType() == requestTypeCityAuction) {
       if (_fromLocation == null || _toLocation == null) {
         _statusText = 'Выберите адреса или обе точки на карте.';
@@ -13435,6 +13609,41 @@ class _OrderScreenState extends State<OrderScreen> {
       return true;
     }
 
+    if (_mode() == 'CARGO') {
+      final weight =
+          double.tryParse(_deliveryWeightController.text.replaceAll(',', '.'));
+      if (_fromLocation == null || _toLocation == null) {
+        _statusText = 'Для грузового заказа выберите обе точки на карте.';
+        return false;
+      }
+      if (_deliveryItemController.text.trim().isEmpty ||
+          weight == null ||
+          !weight.isFinite ||
+          weight <= 0 ||
+          weight > 100000) {
+        _statusText = 'Укажите описание груза и вес от 0,01 до 100 000 кг.';
+        return false;
+      }
+      if (_boardPrice == null) {
+        if (_statusText.isEmpty) {
+          _statusText =
+              'Не удалось рассчитать стоимость. Вернитесь к параметрам и повторите расчёт.';
+        }
+        return false;
+      }
+    }
+    if (_mode() == 'DELIVERY' &&
+        _deliveryWeightController.text.trim().isNotEmpty) {
+      final weight =
+          double.tryParse(_deliveryWeightController.text.replaceAll(',', '.'));
+      if (weight == null ||
+          !weight.isFinite ||
+          weight <= 0 ||
+          weight > 100000) {
+        _statusText = 'Укажите корректный вес груза.';
+        return false;
+      }
+    }
     if (_mode() == 'DELIVERY' && _deliveryItemController.text.trim().isEmpty) {
       _statusText = 'Для доставки нужно указать описание груза.';
       return false;
@@ -13465,6 +13674,7 @@ class _OrderScreenState extends State<OrderScreen> {
     final requestTypeSnapshot = _requestType();
     final paymentMethodSnapshot = _paymentMethod;
     final vehicleClassSnapshot = _vehicleClass;
+    final weightSnapshot = _deliveryWeightController.text;
     setState(() => _loading = true);
     try {
       if (!_supportsSystemPrice) {
@@ -13525,6 +13735,8 @@ class _OrderScreenState extends State<OrderScreen> {
           _mode() != modeSnapshot ||
           _paymentMethod != paymentMethodSnapshot ||
           _vehicleClass != vehicleClassSnapshot ||
+          (modeSnapshot == 'CARGO' &&
+              _deliveryWeightController.text != weightSnapshot) ||
           _requestType() != requestTypeSnapshot) {
         return;
       }
@@ -13612,7 +13824,15 @@ class _OrderScreenState extends State<OrderScreen> {
             if (_requestType() == requestTypeCityAuction)
               'desiredPrice': _passengerAuctionPrice,
             'paymentMethod': _paymentMethod,
-            'vehicleClass': _vehicleClass,
+            'vehicleClass': _mode() == 'CITY' ? _vehicleClass : null,
+            if (_mode() == 'CARGO') ...{
+              'scheduledFor': _cargoDepartureAt!.toUtc().toIso8601String(),
+              'itemWeightKg': double.tryParse(
+                  _deliveryWeightController.text.replaceAll(',', '.')),
+              'itemDescription': _deliveryItemController.text.trim(),
+              'itemDimensions': _deliveryDimensionsController.text.trim(),
+              'recipientContact': _deliveryRecipientController.text.trim(),
+            },
             'comment': _commentController.text.trim().isEmpty
                 ? null
                 : _commentController.text.trim(),

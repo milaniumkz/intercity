@@ -14,7 +14,7 @@ test('paid route priority charges once, expires after 12 hours and broadcasts to
   for(let i=0;i<5;i++) {
    const u=await p.user.create({data:{phone:`test:${key}:${i}`,password:'test',name:'Top fixture',refCode:randomUUID(),refLink:'test',role:'DRIVER',wallet:{create:{money:5000,moneyRub:5000}}},include:{wallet:true}});users.push(u);wallets.push(u.wallet.id);
    const d=await p.driverProfile.create({data:{userId:u.id,status:'ACTIVE',acceptIntercity:true,serviceStats:{create:{activityScore:80+i}},rating:{create:{ratingAvg:i===2?3:5,ratingCount:10}},priorityFlags:{create:{hasBranding:i===0}}}});drivers.push(d.id);
-   u.route=await p.driverIntercityRoute.create({data:{driverId:d.id,fromCity:i===3?'RU '+from:from,toCity:to,seatsTotal:2,seatsAvailable:2}});
+   u.route=await p.driverIntercityRoute.create({data:{driverId:d.id,fromCity:i===3?'RU '+from:from,toCity:to,seatsTotal:2,seatsAvailable:2,departureAt:new Date(new Date(Date.now()+86400000).setUTCHours(23,59,59,999)),departureOffsetMinutes:0}});
   }
   for(const status of ['PENDING','REJECTED']) {
     await p.driverProfile.update({where:{id:drivers[4]},data:{status}});

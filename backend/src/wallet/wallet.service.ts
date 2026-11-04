@@ -111,8 +111,8 @@ export class WalletService {
             throw new NotFoundException('Кошелёк не найден');
         }
 
-        if (!Number.isFinite(dto.amount) || dto.amount <= 0) {
-            throw new BadRequestException('Введите сумму больше нуля');
+        if (!Number.isFinite(dto.amount) || dto.amount <= 0 || dto.amount > 10000000 || Math.abs(dto.amount * 100 - Math.round(dto.amount * 100)) > 0.00001) {
+            throw new BadRequestException('Введите сумму от 0,01 до 10 000 000, не больше двух знаков после запятой');
         }
 
         let localTopup = await this.prisma.topupRequest.create({
@@ -127,37 +127,26 @@ export class WalletService {
 
         if (currency === 'RUB') return { ...localTopup, paymentUrl: null, provider: 'MANUAL', message: 'Заявка на пополнение рублёвого кошелька создана. Администратор обработает её вручную.' };
 
+        const allowDemo = await this.demoTopupCreditsAllowed();
+        const requestedDemo = this.kassa24Demo || allowDemo;
+        if ((this.kassa24Demo && !allowDemo) || !this.kassa24Login || !this.kassa24Password) {
+            localTopup = await this.prisma.topupRequest.update({where:{id:localTopup.id},data:{provider:'MANUAL'}});
+            return {...localTopup,paymentUrl:null,provider:'MANUAL',message:'Онлайн-пополнение пока недоступно. Заявка создана для ручной обработки. Деньги на баланс ещё не зачислены.'};
+        }
+
         let paymentUrl: string | null = null;
         let externalOrderId: string | null = null;
         let provider = 'ONLINE';
         let message = 'Заявка на пополнение создана';
         try {
-            const response = await fetch(this.kassa24Endpoint('payment/create'), {
-                method: 'POST',
-                headers: this.kassa24Headers(),
-                body: JSON.stringify({
-                    amount: Math.round(dto.amount * 100),
-                    orderId: localTopup.id,
-                    externalId: localTopup.id,
-                    merchantId: this.kassa24Login,
-                    description: `Пополнение InterCity ${localTopup.id}`,
-                    userId,
-                    phone: this.normalizePhone(wallet.user?.phone || ''),
-                    email: '',
-                    callbackUrl: this.backendCallbackUrl('/wallet/topup/callback'),
-                    backUrl: process.env.PUBLIC_WEB_URL || process.env.FRONTEND_URL || undefined,
-                    demo: this.kassa24Demo,
-                }),
+            const data: any = await this.topupGateway(requestedDemo).create({
+                amount: Math.round(dto.amount * 100), orderId: localTopup.id,
+                externalId: localTopup.id, description: `Пополнение InterCity ${localTopup.id}`,
+                userId, phone: this.normalizePhone(wallet.user?.phone || ''), email: '',
+                callbackUrl: this.backendCallbackUrl('/wallet/topup/callback'),
+                backUrl: `${(process.env.PUBLIC_WEB_URL || process.env.FRONTEND_URL || 'https://intercity.89-207-255-27.sslip.io').replace(/\/+$/, '')}/#/driver/wallet`,
             });
-            const data: any = await response.json().catch(() => ({}));
-            if (!response.ok) {
-                throw new Error(
-                    this.normalizeOnlinePaymentError(
-                        data?.error || data?.message || 'Не удалось создать ссылку на онлайн-оплату',
-                        'payment',
-                    ),
-                );
-            }
+            if (data?.requestRejected || data?.notFound) throw new Error('Онлайн-оплата отклонена платёжным сервисом');
             paymentUrl = data?.url || data?.payment_url || data?.paymentUrl || data?.link || null;
             externalOrderId = (
                 data?.id ||
@@ -176,18 +165,25 @@ export class WalletService {
                     ),
                 );
             }
+            const paymentAddress = new URL(paymentUrl);
+            if (paymentAddress.protocol !== 'https:') throw new Error('Ссылка оплаты должна использовать HTTPS');
+            const createdState = await this.gateway.status(localTopup.id);
+            if ((data?.demo === true || createdState?.demo === true) && !allowDemo) throw new Error('Платёжный сервис вернул тестовую оплату. Реальное онлайн-пополнение пока недоступно.');
+            if (!confirmedPayment(createdState, localTopup.id, dto.amount, this.kassa24Login, requestedDemo)) throw new Error('Не удалось подтвердить параметры онлайн-оплаты');
+            provider = requestedDemo ? 'KASSA24_DEMO' : 'KASSA24';
             if (externalOrderId) {
                 localTopup = await this.prisma.topupRequest.update({
                     where: { id: localTopup.id },
                     data: {
-                        provider: 'KASSA24',
+                        provider,
                         externalOrderId,
                     },
                 });
             }
-            message = 'Ссылка на онлайн-пополнение создана';
+            message = requestedDemo ? 'Создана тестовая оплата. С карты деньги не списываются.' : 'Ссылка на онлайн-пополнение создана';
         } catch (e: any) {
             provider = 'MANUAL';
+            paymentUrl = null;
             localTopup = await this.prisma.topupRequest.update({
                 where: { id: localTopup.id },
                 data: { provider: 'MANUAL' },
@@ -206,6 +202,28 @@ export class WalletService {
             provider,
             message,
         };
+    }
+
+    private async demoTopupCreditsAllowed() {
+        return (await this.prisma.appSettings.findUnique({where:{key:'allowDemoTopupCredits'}}))?.value === 'true';
+    }
+
+    private topupGateway(demo: boolean) {
+        return demo === this.kassa24Demo ? this.gateway : new Kassa24Gateway({baseUrl:this.kassa24BaseUrl,login:this.kassa24Login,password:this.kassa24Password,demo});
+    }
+
+    async checkTopupPayment(userId: string, id: string) {
+        const topup = await this.prisma.topupRequest.findFirst({where:{id,wallet:{userId}}});
+        if (!topup) throw new NotFoundException('Заявка на пополнение не найдена');
+        const allowDemo = await this.demoTopupCreditsAllowed();
+        let paymentMode: 'TEST' | undefined = topup.provider === 'KASSA24_DEMO' ? 'TEST' : undefined;
+        if (topup.status === 'PENDING' && topup.currency === 'KZT' && ['KASSA24','KASSA24_DEMO','ONLINE'].includes(topup.provider ?? '')) {
+            const result = await this.handleTopupPaymentCallback({topupRequestId:topup.id});
+            if ('reason' in result && result.reason === 'test_payment') paymentMode = 'TEST';
+        }
+        const current = await this.prisma.topupRequest.findUniqueOrThrow({where:{id:topup.id}});
+        if (current.provider === 'KASSA24_DEMO') paymentMode = 'TEST';
+        return {id:current.id,amount:current.amount,currency:current.currency,status:current.status,provider:current.provider,paymentMode,demoCreditsEnabled:allowDemo};
     }
 
     async handleTopupPaymentCallback(body: Record<string, any>) {
@@ -234,7 +252,10 @@ export class WalletService {
         // Callback fields are untrusted. Only an authenticated bank lookup of
         // our order, merchant and amount may create withdrawable wallet money.
         const payment = await this.gateway.status(topup.id);
-        if (this.kassa24Demo || !confirmedPayment(payment, topup.id, topup.amount, this.kassa24Login, false) || Number(payment.status) !== 1) {
+        const demo = payment?.demo === true;
+        const allowDemo = await this.demoTopupCreditsAllowed();
+        if ((demo && !allowDemo) || (this.kassa24Demo && !demo) || (topup.provider === 'KASSA24_DEMO' && !demo)) return {success:true,ignored:true,reason:'test_payment'};
+        if (!confirmedPayment(payment, topup.id, topup.amount, this.kassa24Login, demo) || Number(payment.status) !== 1) {
             return { success: true, ignored: true, reason: 'payment_not_confirmed' };
         }
 
@@ -245,7 +266,7 @@ export class WalletService {
                 where: { id: topup.id, status: 'PENDING' },
                 data: {
                     status: 'APPROVED',
-                    provider: topup.provider ?? 'KASSA24',
+                    provider: demo ? 'KASSA24_DEMO' : topup.provider ?? 'KASSA24',
                     externalOrderId: topup.externalOrderId,
                 },
             });
@@ -257,16 +278,16 @@ export class WalletService {
             await (tx as any).walletTransaction.create({
                 data: {
                     walletId: topup.walletId,
-                    type: 'TOPUP_PAID_ONLINE',
+                    type: demo ? 'TOPUP_DEMO_CREDIT' : 'TOPUP_PAID_ONLINE',
                     direction: 'CREDIT',
                     balanceSource: 'MONEY',
                     amount: topup.amount,
                     currency: topup.currency,
                     topupRequestId: topup.id,
                     idempotencyKey: `topup:${topup.id}:paid`,
-                    note: 'Online topup paid',
+                    note: demo ? 'Тестовое пополнение: подтверждено платёжным сервисом, без списания с карты' : 'Online topup paid',
                 },
-            }).catch(() => null);
+            });
         });
 
         return { success: true, topupId: topup.id };

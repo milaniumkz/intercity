@@ -46,7 +46,10 @@ class _AdminRatingReviewsPageState extends State<AdminRatingReviewsPage> {
     final note = TextEditingController();
     var saving = false;
     String? error;
-    var rating = (item['order']?['driverRating'] as num?)?.toInt() ?? 2;
+    var rating =
+        ((item['order'] ?? item['intercityRequest'])?['driverRating'] as num?)
+                ?.toInt() ??
+            2;
     final route = DialogRoute<bool>(
         context: context,
         builder: (ctx) => StatefulBuilder(
@@ -161,7 +164,11 @@ class _AdminRatingReviewsPageState extends State<AdminRatingReviewsPage> {
             detail =
                 Map<String, dynamic>.from(jsonDecode('${item['text']}') as Map);
           } catch (_) {}
-          final order = item['order'] is Map ? item['order'] as Map : const {};
+          final order = item['order'] is Map
+              ? item['order'] as Map
+              : item['intercityRequest'] is Map
+                  ? item['intercityRequest'] as Map
+                  : const {};
           final driver = item['driver']?['user']?['name'] ?? 'Водитель';
           final passenger = item['user']?['name'] ?? 'Пассажир';
           final resolved = item['status'] == 'RESOLVED';
@@ -174,7 +181,7 @@ class _AdminRatingReviewsPageState extends State<AdminRatingReviewsPage> {
                         Text('$passenger → $driver · ${detail['rating']} ★',
                             style: Theme.of(context).textTheme.titleMedium),
                         Text(
-                            'Статус: ${order['driverRatingStatus'] ?? 'PENDING'} · Заказ ${item['orderId']}'),
+                            'Статус: ${order['driverRatingStatus'] ?? 'PENDING'} · Заказ ${item['orderId'] ?? item['intercityRequestId']}'),
                         const SizedBox(height: 8),
                         Text('${detail['reason'] ?? item['text']}'),
                         const SizedBox(height: 8),

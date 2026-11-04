@@ -1,4 +1,5 @@
 import '../widgets/saved_payment_cards.dart';
+import '../../../core/utils/error_message_ru.dart';
 import 'package:flutter/material.dart';
 import 'package:intercity_shared/intercity_shared.dart';
 
@@ -26,6 +27,8 @@ class _WalletPageState extends State<WalletPage> {
   String _currency = 'KZT';
   String get _currencySymbol => _currency == 'RUB' ? '₽' : '₸';
   bool _loading = true;
+  String _loadError = '';
+  List<Map<String, dynamic>> _transactions = [];
 
   @override
   void initState() {
@@ -48,11 +51,19 @@ class _WalletPageState extends State<WalletPage> {
                 data['bonus'],
             fallback: _bonusBalance,
           );
+          _transactions = (data['transactions'] as List? ?? [])
+              .whereType<Map>()
+              .where((row) => row['balanceSource'] == 'BONUS')
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList();
+          _loadError = '';
           _loading = false;
         });
         return;
       }
-    } catch (_) {}
+    } catch (e) {
+      if (mounted) setState(() => _loadError = errorMessageRu(e));
+    }
     if (mounted) {
       setState(() => _loading = false);
     }
@@ -61,6 +72,12 @@ class _WalletPageState extends State<WalletPage> {
   num _asAmount(Object? value, {required num fallback}) {
     if (value is num) return value;
     return num.tryParse((value ?? '').toString()) ?? fallback;
+  }
+
+  String _operationDate(dynamic raw) {
+    final date = DateTime.tryParse('$raw')?.toLocal();
+    if (date == null) return '';
+    return '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}';
   }
 
   void _selectPayment(String value) {
@@ -82,7 +99,8 @@ class _WalletPageState extends State<WalletPage> {
                 setState(() {
                   _currency = values.single;
                   _bonusBalance = 0;
-
+                  _transactions = [];
+                  _loadError = '';
                   _loading = true;
                 });
                 _loadWallet();
@@ -233,27 +251,28 @@ class _WalletPageState extends State<WalletPage> {
                 ),
               ),
               const SizedBox(height: 10),
-              const _BonusOperation(
-                positive: true,
-                title: 'Начисление бонусов',
-                subtitle: 'За поездку по городу',
-                value: '+300',
-                date: '12.05.2024',
-              ),
-              const _BonusOperation(
-                positive: false,
-                title: 'Списание бонусов',
-                subtitle: 'Оплата поездки',
-                value: '-150',
-                date: '12.05.2024',
-              ),
-              const _BonusOperation(
-                positive: true,
-                title: 'Начисление бонусов',
-                subtitle: 'За межгород',
-                value: '+200',
-                date: '10.05.2024',
-              ),
+              if (_loadError.isNotEmpty) ...[
+                ICPremiumInfoBanner(text: _loadError),
+                TextButton(
+                    onPressed: () {
+                      setState(() => _loading = true);
+                      _loadWallet();
+                    },
+                    child: const Text('Повторить загрузку')),
+              ] else if (!_loading && _transactions.isEmpty)
+                const Text('Бонусных операций пока нет')
+              else
+                for (final row in _transactions)
+                  _BonusOperation(
+                    positive: row['direction'] != 'DEBIT',
+                    title: row['direction'] == 'DEBIT'
+                        ? 'Списание бонусов'
+                        : 'Начисление бонусов',
+                    subtitle: (row['note'] ?? 'Бонусная операция').toString(),
+                    value:
+                        '${row['direction'] == 'DEBIT' ? '-' : '+'}${formatWalletAmount(_asAmount(row['amount'], fallback: 0))}',
+                    date: _operationDate(row['createdAt']),
+                  ),
               const SizedBox(height: 12),
               ICGradientButton(
                 label: 'Использовать в поездке',

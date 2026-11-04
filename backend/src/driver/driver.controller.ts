@@ -8,6 +8,7 @@ import { DriverEarningsService } from './driver-earnings.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import {
     CreateDriverProfileDto,
+    UpdateDriverServiceModesDto,
     UpdateLocationDto,
     SetOnlineDto,
     DriverDocsUploadUrlDto,
@@ -35,6 +36,12 @@ export class DriverController {
         return this.driverService.createProfile(req.user.sub, dto);
     }
 
+    @Post('profile/service-modes')
+    @ApiOperation({ summary: 'Update accepted order types without changing driver verification' })
+    updateServiceModes(@Request() req, @Body() dto: UpdateDriverServiceModesDto) {
+        return this.driverService.updateServiceModes(req.user.sub, dto);
+    }
+
     @Post('location')
     @ApiOperation({ summary: 'Update driver location' })
     async updateLocation(@Request() req, @Body() dto: UpdateLocationDto) {
@@ -58,6 +65,11 @@ export class DriverController {
     async getRuntimeSettings(@Request() req) {
         await this.driverService.getMyProfile(req.user.sub);
         return this.driverService.getRuntimeSettings();
+    }
+
+    @Get('orders/active')
+    async getActiveOrder(@Request() req) {
+        return this.driverService.getActiveOrder(req.user.sub);
     }
 
     @Get('orders/nearby')

@@ -1,3 +1,7 @@
+import {notifyTripChat} from '../common/trip-chat-notification';
+import {reviseDriverRating,ratingReviewHint} from '../common/driver-rating-review';
+import {routeMatchesRequestSchedule} from '../common/driver-route-schedule';
+import { settleBonusRidePayment } from '../common/bonus-ride-payment';
 import { driverPerformance } from '../common/driver-performance';
 import { ensureRouteTopWindow, canSeePriorityRequest } from '../common/driver-route-top';
 import { lockIncomeAccounting, recordCashDriverIncome } from '../tax/tax-ledger';
@@ -16,6 +20,7 @@ import { requireNoActivePassengerOrder } from '../common/active-passenger-order'
 import { GeoService } from '../geo/geo.service';
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -26,6 +31,57 @@ import { clientUserSelect } from "../common/public-user-select";
 @Injectable()
 export class IntercityService {
   constructor(private prisma: PrismaService, private geoService: GeoService, private cardPayments: CardPaymentsService, private realtime: RealtimeService, private push: PushService) {}
+
+  private async chatParticipant(db: any, requestId: string, userId: string) {
+    const request = await db.intercityRequest.findUnique({where:{id:requestId}});
+    if (!request) throw new NotFoundException('Заявка не найдена');
+    if (request.passengerId !== userId && request.selectedDriverId !== userId) throw new ForbiddenException('Нет доступа к этому чату');
+    if (!request.selectedDriverId) throw new BadRequestException('Чат доступен после выбора водителя');
+    return request;
+  }
+
+  async getChat(requestId: string, userId: string) {
+    const request = await this.chatParticipant(this.prisma,requestId,userId);
+    const messages = await this.prisma.intercityChatMessage.findMany({where:{requestId},orderBy:{createdAt:'desc'},take:200,include:{sender:{select:{publicId:true,name:true}}}});
+    return messages.reverse().map(message=>({...message,isMine:message.senderId===userId,participantRole:message.senderId===request.passengerId?'PASSENGER':'DRIVER'}));
+  }
+
+  async sendChat(requestId: string, userId: string, text: unknown) {
+    if (typeof text !== 'string' || !text.trim()) throw new BadRequestException('Введите сообщение');
+    if (text.trim().length > 1000) throw new BadRequestException('Сообщение слишком длинное');
+    const result = await this.prisma.$transaction(async tx=>{
+      await tx.$executeRaw`SELECT id FROM "IntercityRequest" WHERE id=${requestId} FOR UPDATE`;
+      const request = await this.chatParticipant(tx,requestId,userId);
+      if (!['ACCEPTED','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'].includes(request.status)) throw new BadRequestException('Чат закрыт для этого заказа');
+      const message=await tx.intercityChatMessage.create({data:{requestId,senderId:userId,text:text.trim()},include:{sender:{select:{publicId:true,name:true}}}});
+      return {message:{...message,isMine:true,participantRole:request.passengerId===userId?'PASSENGER':'DRIVER'},request};
+    });
+    const passengerSender=result.request.passengerId===userId;
+    notifyTripChat(this.realtime,this.push,{kind:'INTERCITY',tripId:requestId,messageId:result.message.id,recipientUserId:passengerSender?result.request.selectedDriverId!:result.request.passengerId,recipientRole:passengerSender?'DRIVER':'PASSENGER'});
+    return result.message;
+  }
+
+  async rateDriver(requestId: string, userId: string, rating: unknown, reason: unknown) {
+    if (!Number.isInteger(rating) || Number(rating)<1 || Number(rating)>5) throw new BadRequestException('Выберите оценку от 1 до 5');
+    const value=Number(rating),explanation=typeof reason==='string'?reason.trim():'';
+    const low=value<=2;
+    if(low && (explanation.length<10 || explanation.length>2000)) throw new BadRequestException('Для низкой оценки опишите случившееся: от 10 до 2000 символов');
+    const driverId=await this.prisma.$transaction(async tx=>{
+      const request=await tx.intercityRequest.findUnique({where:{id:requestId}});
+      if(!request || request.passengerId!==userId) throw new ForbiddenException('Нет доступа к этой поездке');
+      if(request.status!=='COMPLETED' || !request.selectedDriverId) throw new BadRequestException('Оценить водителя можно после завершения поездки');
+      const profile=await tx.driverProfile.findUnique({where:{userId:request.selectedDriverId},select:{id:true}});
+      if(!profile) throw new BadRequestException('Профиль водителя не найден');
+      await tx.$executeRaw`SELECT id FROM "DriverProfile" WHERE id=${profile.id} FOR UPDATE`;
+      const changed=await tx.intercityRequest.updateMany({where:{id:requestId,passengerId:userId,status:'COMPLETED',driverRating:null},data:{driverRating:value,driverRatingStatus:low?'PENDING':'COUNTED',driverRatingReason:low?explanation:null}});
+      if(changed.count!==1) throw new BadRequestException('Оценка уже отправлена');
+      if(low) await tx.complaint.create({data:{type:'LOW_DRIVER_RATING',status:'NEW',text:JSON.stringify({rating:value,reason:explanation,automation:ratingReviewHint(explanation)}),userId,driverId:profile.id,intercityRequestId:requestId}});
+      else await reviseDriverRating(tx,profile.id,null,value);
+      return profile.id;
+    });
+    this.realtime?.publish?.({type:'driver.rating.updated',entity:'driver',entityId:driverId,at:new Date().toISOString(),payload:{driverId,intercityRequestId:requestId}});
+    return {success:true,pendingReview:low};
+  }
 
   async passengerLeaving(requestId: string, userId: string) {
     return passengerLeaving(this.prisma, 'INTERCITY', requestId, userId, this.realtime, this.push);
@@ -87,6 +143,7 @@ export class IntercityService {
     ) {
       return normalized;
     }
+    if (normalized) throw new BadRequestException("Invalid request type");
     return "INTERCITY";
   }
 
@@ -171,6 +228,12 @@ export class IntercityService {
     },
   ) {
     const requestType = this.normalizeRequestType(data.requestType);
+    if (![data.fromCity, data.fromAddressLabel, data.fromManualAddress].some(value => typeof value === 'string' && value.trim().length >= 2) || ![data.toCity, data.toAddressLabel, data.toManualAddress].some(value => typeof value === 'string' && value.trim().length >= 2)) throw new BadRequestException('From and to locations are required');
+    if (data.itemWeightKg != null && (typeof data.itemWeightKg !== 'number' || !Number.isFinite(data.itemWeightKg) || data.itemWeightKg <= 0 || data.itemWeightKg > 100000)) throw new BadRequestException('Укажите корректный вес груза');
+    for (const [key,limit] of [['fromLat',90],['toLat',90],['fromLng',180],['toLng',180]] as const) {
+      if (data[key] != null && (typeof data[key] !== 'number' || !Number.isFinite(data[key]) || Math.abs(data[key]!) > limit)) throw new BadRequestException('Invalid coordinates');
+    }
+
     const requestDate = normalizeClientDateTime(data.date, "date");
     const paymentMethod = this.normalizePaymentMethod(
       data.paymentMethod,
@@ -228,6 +291,11 @@ export class IntercityService {
         ? Number(data.price)
         : 0;
 
+    // Delivery address labels may omit the city. Keep route matching on canonical cities,
+    // while retaining the full pickup/drop-off labels for the trip itself.
+    const deliveryRouteCities = requestType.startsWith('DELIVERY') && this.geoService.cityNameAtPoint
+      ? await Promise.all([fromLat != null && fromLng != null ? this.geoService.cityNameAtPoint(fromLat, fromLng) : null, toLat != null && toLng != null ? this.geoService.cityNameAtPoint(toLat, toLng) : null])
+      : [null, null];
     const currency = await this.geoService.departureCurrency(fromLat, fromLng, data.fromCity);
     const paymentCardId = paymentMethod === 'CARD' ? await this.cardPayments.cardForOrder(userId, currency) : null;
     const createdRequest = await this.prisma.$transaction(async (tx) => {
@@ -237,8 +305,8 @@ export class IntercityService {
         passengerId: userId,
         currency,
         requestType,
-        fromCity: route.from,
-        toCity: route.to,
+        fromCity: requestType === 'INTERCITY' ? this.coerceNonEmptyString(data.fromCity) || route.from : deliveryRouteCities[0] || this.coerceNonEmptyString(data.fromCity) || route.from,
+        toCity: requestType === 'INTERCITY' ? this.coerceNonEmptyString(data.toCity) || route.to : deliveryRouteCities[1] || this.coerceNonEmptyString(data.toCity) || route.to,
         fromLat,
         fromLng,
         toLat,
@@ -300,8 +368,13 @@ export class IntercityService {
       orderBy: [{ price: "asc" }, { createdAt: "asc" }],
     });
 
+    const route = request.reservedRouteId ? await this.prisma.driverIntercityRoute.findUnique({where:{id:request.reservedRouteId},select:{departureAt:true,departureOffsetMinutes:true,seatsTotal:true,seatsAvailable:true}}) : null;
+    const online = request.selectedDriverId && ['DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'].includes(request.status)
+      ? await this.prisma.driverOnline.findFirst({where:{driver:{userId:request.selectedDriverId}},select:{lastLat:true,lastLng:true,lastLocationAt:true,lastAccuracy:true}}) : null;
+    const freshLocation = online?.lastAccuracy != null && online.lastAccuracy <= 100 && online.lastLocationAt && online.lastLocationAt.getTime() > Date.now()-120000 && online.lastLat != null && online.lastLng != null ? {lat:online.lastLat,lng:online.lastLng,at:online.lastLocationAt} : null;
     return {
       ...request,
+      pickupProgress: {route,driverLocation:freshLocation},
       cardPayment: this.cardPayments ? await this.cardPayments.state('INTERCITY',request.id) : null,
       offers: await this.enrichOffers(offers),
     };
@@ -346,7 +419,7 @@ export class IntercityService {
     }
 
     const profile = await this.prisma.driverProfile.findUnique({where:{userId:driverId},include:{serviceStats:true}});
-    if(!profile || !['ACTIVE','APPROVED'].includes(profile.status) || (requestType==='INTERCITY' && !profile.acceptIntercity) || driverPerformance(profile).activity.blocked) throw new BadRequestException('Нужен активный одобренный водитель с разрешённым межгородом');
+    if(!profile || !['ACTIVE','APPROVED'].includes(profile.status) || (requestType==='INTERCITY' && !profile.acceptIntercity) || (requestType.startsWith('DELIVERY') && !profile.acceptDelivery) || (requestType==='CITY_AUCTION' && !profile.acceptCityAuction) || driverPerformance(profile).activity.blocked) throw new BadRequestException('Водителю нужен активный одобренный профиль и включённый режим этого заказа');
     const window = await this.prisma.$transaction(tx=>ensureRouteTopWindow(tx,request));
     if(!profile || !canSeePriorityRequest(window,profile.id)) throw new BadRequestException('Заказ сначала предложен водителю в топе. Повторите после окончания первого доступа');
     const result=await this.prisma.$transaction(async tx=>{
@@ -354,6 +427,7 @@ export class IntercityService {
       await tx.$executeRaw`SELECT id FROM "IntercityRequest" WHERE id=${requestId} FOR UPDATE`;
       const fresh=await tx.intercityRequest.findUnique({where:{id:requestId}});
       if(!fresh || fresh.status!=='OPEN') throw new BadRequestException('Этот заказ уже принят другим водителем или закрыт');
+      if (requestType === 'INTERCITY') await this.ensureDriverRouteHasSeats(driverId, fresh, normalizedSeats, tx);
       const existing=await tx.intercityOffer.findFirst({where:{requestId,driverId,status:'PENDING'}});
       const payload={price,seats:normalizedSeats,comment,status:'PENDING'};
       return existing ? tx.intercityOffer.update({where:{id:existing.id},data:payload}) : tx.intercityOffer.create({data:{requestId,driverId,...payload}});
@@ -447,6 +521,9 @@ export class IntercityService {
       if(freshOffer.request.requestType==='INTERCITY' && new Date(freshOffer.updatedAt).getTime()+30000<=Date.now()) throw new BadRequestException('Время предложения истекло. Выберите актуальное предложение');
       if(freshOffer.status!=='PENDING') throw new BadRequestException('Предложение уже отклонено или недоступно');
 
+      const selectedProfile = await tx.driverProfile.findUnique({where:{userId:freshOffer.driverId}});
+      const selectedType = freshOffer.request.requestType;
+      if (!selectedProfile || !['ACTIVE','APPROVED'].includes(selectedProfile.status) || (selectedType === 'INTERCITY' && !selectedProfile.acceptIntercity) || (selectedType.startsWith('DELIVERY') && !selectedProfile.acceptDelivery) || (selectedType === 'CITY_AUCTION' && !selectedProfile.acceptCityAuction)) throw new BadRequestException('Водитель больше не принимает этот тип заказа');
       await this.chargeDriverForAcceptedIntercityRequest(
         tx,
         freshOffer.request,
@@ -506,6 +583,7 @@ export class IntercityService {
       const current = await tx.intercityRequest.findUniqueOrThrow({where:{id:requestId}});
       if (current.status === 'CANCELLED') return current;
       if (['IN_PROGRESS', 'COMPLETED'].includes(current.status)) throw new BadRequestException('Завершённую поездку нельзя отменить');
+      await this.restoreCancelledRouteSeats(tx, current);
       await tx.tripVerification.updateMany({where:{id:`INTERCITY:${requestId}`,status:'PENDING'},data:{status:'CANCELLED'}});
       await this.refundPassengerBonusForCancelledRequest(
         tx,
@@ -536,6 +614,7 @@ export class IntercityService {
   ) {
     const target = (status || "").toString().toUpperCase();
     const allowedTargets = new Set([
+      "DRIVER_EN_ROUTE",
       "DRIVER_ARRIVED",
       "IN_PROGRESS",
       "COMPLETED",
@@ -558,8 +637,8 @@ export class IntercityService {
     }
 
     const transitions: Record<string, Set<string>> = {
-      ACCEPTED: new Set(["DRIVER_ARRIVED", "CANCELLED"]),
-      DRIVER_ASSIGNED: new Set(["DRIVER_ARRIVED", "CANCELLED"]),
+      ACCEPTED: new Set(["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "CANCELLED"]),
+      DRIVER_ASSIGNED: new Set(["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "CANCELLED"]),
       DRIVER_EN_ROUTE: new Set(["DRIVER_ARRIVED", "CANCELLED"]),
       DRIVER_ARRIVED: new Set(["IN_PROGRESS", "CANCELLED"]),
       IN_PROGRESS: new Set(["COMPLETED"]),
@@ -585,10 +664,11 @@ export class IntercityService {
         const verification = profile ? await finishTripVerification(tx, 'INTERCITY', request, profile.id, driverUserId, completedAt) : 'REVIEW';
         if (verification === 'VERIFIED') await creditRideReferrals(tx, {
           id: requestId, currency: request.currency,
-          commissionAmount: await this.getIntercityAcceptedRequestFee(request, driverUserId),
+          commissionAmount: await this.completionCommission(tx, request, driverUserId),
           passengerId: request.passengerId, driverUserId, intercity: true,
         });
         const acceptedOffer = request.selectedOfferId ? await tx.intercityOffer.findUnique({ where: { id: request.selectedOfferId } }) : null;
+        await settleBonusRidePayment(tx, 'INTERCITY', request, driverUserId, acceptedOffer?.price ?? request.price);
         await recordCashDriverIncome(tx, 'INTERCITY', request, driverUserId, acceptedOffer?.price ?? request.price, completedAt);
         if (profile) await creditDriverDailyBonus(tx, profile.id, driverUserId, request.currency, completedAt);
         return tx.intercityRequest.update({
@@ -610,11 +690,35 @@ export class IntercityService {
           await this.cardPayments.schedule(tx,'INTERCITY',{...request,price:offer.price},driverUserId);
         }
       }
-      if (target === 'CANCELLED') await tx.tripVerification.updateMany({where:{id:`INTERCITY:${requestId}`,status:'PENDING'},data:{status:'CANCELLED'}});
+      if (target === 'CANCELLED') {
+        await this.refundPassengerBonusForCancelledRequest(tx, request.passengerId, requestId);
+        await this.restoreCancelledRouteSeats(tx, request);
+        await tx.tripVerification.updateMany({where:{id:`INTERCITY:${requestId}`,status:'PENDING'},data:{status:'CANCELLED'}});
+      }
       return tx.intercityRequest.findUniqueOrThrow({where:{id:requestId}});
     });
     void this.push?.sendIntercityStatusToPassenger(requestId, target).catch(() => false);
     return updated;
+  }
+
+  private async restoreCancelledRouteSeats(tx: any, request: Record<string, any>) {
+    if (request.requestType !== 'INTERCITY' || !request.reservedRouteId || request.reservedSeats <= 0) return;
+    await tx.$executeRaw`SELECT id FROM "DriverIntercityRoute" WHERE id=${request.reservedRouteId} FOR UPDATE`;
+    const route = await tx.driverIntercityRoute.findUnique({where:{id:request.reservedRouteId}});
+    if (!route) return;
+    const seats = Math.min(route.seatsTotal, route.seatsAvailable + request.reservedSeats);
+    await tx.driverIntercityRoute.update({where:{id:route.id},data:{seatsAvailable:seats,isActive:route.isActive || (route.seatsAvailable === 0 && seats > 0)}});
+    await tx.intercityRequest.update({where:{id:request.id},data:{reservedSeats:0}});
+  }
+
+  private async completionCommission(tx: any, request: Record<string, any>, driverUserId: string) {
+    if (request.requestType === 'INTERCITY') return this.getIntercityAcceptedRequestFee(request, driverUserId);
+    const offer = request.selectedOfferId ? await tx.intercityOffer.findUnique({where:{id:request.selectedOfferId}}) : null;
+    const price = Number(offer?.price ?? request.price);
+    const setting = await tx.appSettings.findUnique({where:{key:'orderCommissionPercent'}});
+    const percent = Number(setting?.value ?? '10');
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new BadRequestException('Некорректная настройка комиссии. Обратитесь в поддержку');
+    return Math.round(price * percent) / 100;
   }
 
   private async chargeDriverForCompletedIntercityRequest(
@@ -624,10 +728,7 @@ export class IntercityService {
   ) {
     const requestId = (request["id"] ?? "").toString();
     if (!requestId) return;
-    const fee = await this.getIntercityAcceptedRequestFee(
-      request,
-      driverUserId,
-    );
+    const fee = await this.completionCommission(tx, request, driverUserId);
     if (fee <= 0) return;
 
     const txAny = tx as any;
@@ -664,7 +765,7 @@ export class IntercityService {
           currency: request["currency"] ?? "KZT",
           actorUserId: driverUserId,
           intercityRequestId: requestId,
-          note: `Комиссия сервиса за выполненную межгородскую заявку (${requestId})`,
+          note: `Комиссия сервиса за выполненную заявку (${requestId})`,
           idempotencyKey: `intercity-complete:${requestId}:driver:${driverUserId}`,
         },
       })
@@ -712,7 +813,7 @@ export class IntercityService {
     });
     if (!wallet || wallet[moneyField(request["currency"])] < fee) {
       throw new BadRequestException(
-        "Insufficient balance to respond to intercity request. Please top up wallet.",
+        "Недостаточно средств на балансе для отклика на межгород. Пополните кошелёк.",
       );
     }
   }
@@ -720,6 +821,7 @@ export class IntercityService {
   private routeKey(value: unknown) {
     return (value ?? "")
       .toString()
+      .split(',')[0]
       .trim()
       .replace(/\s+/g, " ")
       .toLocaleLowerCase("ru-RU");
@@ -729,25 +831,27 @@ export class IntercityService {
     driverUserId: string,
     request: Record<string, any>,
     seats: number,
+    db: any = this.prisma,
   ) {
-    const profile = await this.prisma.driverProfile.findUnique({
+    const profile = await db.driverProfile.findUnique({
       where: { userId: driverUserId },
       select: { id: true },
     });
     if (!profile) throw new NotFoundException("Driver profile not found");
-    const routes = await this.prisma.driverIntercityRoute.findMany({
+    const routes = await db.driverIntercityRoute.findMany({
       where: {
         driverId: profile.id,
         isActive: true,
       },
-      select: { fromCity: true, toCity: true, seatsAvailable: true },
+      select: { fromCity: true, toCity: true, seatsAvailable: true, departureAt:true, departureOffsetMinutes:true },
     });
     const route = routes.find(
       (item: any) =>
         this.routeKey(item.fromCity) === this.routeKey(request["fromCity"]) &&
-        this.routeKey(item.toCity) === this.routeKey(request["toCity"]),
+        this.routeKey(item.toCity) === this.routeKey(request["toCity"]) && routeMatchesRequestSchedule(item,request),
     );
-    if (!route || route.seatsAvailable < seats) {
+    if (!route) throw new BadRequestException("Нет подходящего маршрута на выбранную дату и время отправления");
+    if (route.seatsAvailable < seats) {
       throw new BadRequestException("Недостаточно свободных мест на этом маршруте");
     }
   }
@@ -758,6 +862,7 @@ export class IntercityService {
     request: Record<string, any>,
     seats: number,
   ) {
+    if (request.requestType !== 'INTERCITY') return;
     const profile = await tx.driverProfile.findUnique({
       where: { userId: driverUserId },
       select: { id: true },
@@ -774,16 +879,19 @@ export class IntercityService {
     const route = routes.find(
       (item: any) =>
         this.routeKey(item.fromCity) === this.routeKey(request["fromCity"]) &&
-        this.routeKey(item.toCity) === this.routeKey(request["toCity"]),
+        this.routeKey(item.toCity) === this.routeKey(request["toCity"]) && routeMatchesRequestSchedule(item,request),
     );
+    if (!route) throw new BadRequestException('Нет подходящего маршрута на выбранную дату и время отправления');
+    await tx.$executeRaw`SELECT id FROM "DriverIntercityRoute" WHERE id=${route.id} FOR UPDATE`;
+    const freshRoute = await tx.driverIntercityRoute.findUnique({where:{id:route.id}});
     const seatsToReserve = Math.max(
       1,
       Math.trunc(Number(request["seats"] || seats || 1)),
     );
-    if (!route || route.seatsAvailable < seatsToReserve) {
+    if (!freshRoute || !freshRoute.isActive || !routeMatchesRequestSchedule(freshRoute,request) || freshRoute.seatsAvailable < seatsToReserve) {
       throw new BadRequestException("Недостаточно свободных мест на этом маршруте");
     }
-    const nextSeats = route.seatsAvailable - seatsToReserve;
+    const nextSeats = freshRoute.seatsAvailable - seatsToReserve;
     await tx.driverIntercityRoute.update({
       where: { id: route.id },
       data: {
@@ -791,6 +899,7 @@ export class IntercityService {
         isActive: nextSeats > 0,
       },
     });
+    await tx.intercityRequest.update({where:{id:request.id},data:{reservedRouteId:route.id,reservedSeats:seatsToReserve}});
   }
 
   private async getIntercityAcceptedRequestFee(
@@ -877,7 +986,7 @@ export class IntercityService {
     });
     if (!wallet || wallet[moneyField(request["currency"])] < fee) {
       throw new BadRequestException(
-        "Selected driver has insufficient balance for intercity request.",
+        "У выбранного водителя недостаточно средств на балансе для принятия межгородской заявки.",
       );
     }
 
@@ -897,7 +1006,7 @@ export class IntercityService {
       where: { id: wallet.id, [moneyField(request["currency"])]: { gte: fee } },
       data: { [moneyField(request["currency"])]: { decrement: fee } },
     });
-    if (charged.count !== 1) throw new BadRequestException("Selected driver has insufficient balance for intercity request.");
+    if (charged.count !== 1) throw new BadRequestException("У выбранного водителя недостаточно средств на балансе для принятия межгородской заявки.");
     await consumeLockedBonus(tx, wallet.id, request["currency"], fee);
     await txAny.walletTransaction
       .create({

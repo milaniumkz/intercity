@@ -24,7 +24,7 @@ export class DriverEarningsService {
                 { completedAt: null, updatedAt: { gte: start, lt: end } }] };
             const [orders, requests, wallet, profile, enabled] = await Promise.all([
                 tx.order.findMany({ where: { driverId: driver.id, status: 'COMPLETED', currency, ...dateFilter },
-                    select: { id: true, price: true, paymentMethod: true, completedAt: true } }),
+                    select: { id: true, price: true, paymentMethod: true, paidWithBonus: true, completedAt: true } }),
                 tx.intercityRequest.findMany({ where: { selectedDriverId: userId, status: 'COMPLETED', currency, ...dateFilter },
                     select: { id: true, price: true, selectedOfferId: true, paymentMethod: true, completedAt: true } }),
                 tx.wallet.findUnique({ where: { userId }, select: { id: true } }),
@@ -35,7 +35,7 @@ export class DriverEarningsService {
             const offerIds = requests.map(row => row.selectedOfferId).filter(Boolean);
             const incomeSelect = { sourceKind: true, sourceId: true, profileKind: true, status: true,
                 gross: true, opv: true, opvr: true, so: true, osms: true, withheld: true } as const;
-            const [offers, cardPayments, commissionRows, monthIncome, rideIncome, remittances] = await Promise.all([
+            const [offers, cardPayments, commissionRows, monthIncome, rideIncome, remittances, bonusPayments] = await Promise.all([
                 tx.intercityOffer.findMany({ where: { id: { in: offerIds }, driverId: userId }, select: { id: true, price: true } }),
                 tx.tripCardPayment.findMany({ where: { driverUserId: userId, currency, OR: [
                     { kind: 'CITY', tripId: { in: cityIds } }, { kind: 'INTERCITY', tripId: { in: intercityIds } },
@@ -51,15 +51,19 @@ export class DriverEarningsService {
                 ] }, select: incomeSelect }),
                 currency === 'KZT' ? tx.taxRemittance.aggregate({ where: { ownerKey: userId, period }, _sum: { amount: true } })
                     : Promise.resolve({ _sum: { amount: null } }),
+                tx.walletTransaction.findMany({where:{walletId:wallet?.id ?? '',currency,type:'RIDE_BONUS_PAYMENT_CREDIT',direction:'CREDIT',OR:[{orderId:{in:cityIds}},{intercityRequestId:{in:intercityIds}}]},select:{orderId:true,intercityRequestId:true,amount:true}}),
             ]);
             const acceptedPrices = new Map(offers.map(row => [row.id, row.price]));
+            const bonusByTrip = new Map(bonusPayments.map(row => [row.orderId ? `CITY:${row.orderId}` : `INTERCITY:${row.intercityRequestId}`, money(row.amount)]));
             const paymentByTrip = new Map(cardPayments.map(row => [`${row.kind}:${row.tripId}`, row]));
-            const trips = [...orders.map(row => ({ ...row, kind: 'CITY' })), ...requests.map(row => ({ ...row,
+            const trips = [...orders.map(row => ({ ...row, paymentMethod:row.paidWithBonus ? 'BONUSES' : row.paymentMethod, kind: 'CITY' })), ...requests.map(row => ({ ...row,
                 kind: 'INTERCITY', price: acceptedPrices.get(row.selectedOfferId) ?? row.price }))];
+            let bonus = money(0), pendingBonus = money(0);
             let gross = money(0), cash = money(0), card = money(0), pendingCard = money(0), refundedCard = money(0);
             for (const trip of trips) {
                 const fare = money(trip.price);
                 gross = gross.add(fare);
+                if (['BONUS','BONUSES'].includes(trip.paymentMethod)) {const paid = bonusByTrip.get(`${trip.kind}:${trip.id}`) ?? money(0);bonus = bonus.add(paid);pendingBonus = pendingBonus.add(Prisma.Decimal.max(0, fare.sub(paid)));continue;}
                 if (trip.paymentMethod !== 'CARD') { cash = cash.add(fare); continue; }
                 const payment = paymentByTrip.get(`${trip.kind}:${trip.id}`);
                 if (payment?.refundedAt || payment?.status === 'REFUNDED') refundedCard = refundedCard.add(fare);
@@ -73,12 +77,12 @@ export class DriverEarningsService {
             const rideAccrued = liability(rideIncome.filter(row => row.status === 'ACCOUNTED'));
             const commission = commissionRows.reduce((total, row) => total.add(money(row._sum.amount ?? 0)), money(0));
             const remitted = money(remittances._sum.amount ?? 0);
-            const received = cash.add(card);
+            const received = cash.add(card).add(bonus);
             const incomeByTrip = new Map(rideIncome.map(row => [`${row.sourceKind}:${row.sourceId}`, row]));
             return { period, currency, timeZone: 'Asia/Almaty', profile,
                 trips: { total: trips.length, city: orders.length, intercity: requests.length,
                     legacyDates: trips.filter(row => !row.completedAt).length },
-                gross, received, cash, card, pendingCard, refundedCard, commission,
+                gross, received, cash, card, bonus, pendingBonus, pendingCard, refundedCard, commission,
                 afterCommission: received.sub(commission), net: received.sub(commission).sub(rideAccrued),
                 commissionBreakdown: commissionRows.map(row => ({ type: row.type, amount: money(row._sum.amount ?? 0) })),
                 tax: { enabled: enabled?.value === 'true',
