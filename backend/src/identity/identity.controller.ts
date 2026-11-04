@@ -17,11 +17,11 @@ export class IdentityController {
  constructor(private readonly identity:IdentityService,private readonly documents:DriverDocumentService){}
  @Get('status') @UseGuards(JwtAuthGuard) status(@Request() req){return this.identity.status(req.user.sub);}
  @Post('driver-consent') @UseGuards(JwtAuthGuard) @Throttle({default:{limit:5,ttl:60000}}) driverConsent(@Request() req,@Body() b:EnrollDto){if(b.consentVersion!=='intercity-face-2026-11-v1'||b.driverConsent!==true)throw new BadRequestException('Подтвердите согласие');return this.documents.consent(req.user.sub,b.password);}
- @Post('enroll') @UseGuards(JwtAuthGuard) @Throttle({default:{limit:5,ttl:60000}})
+ @Post('enroll') @UseGuards(JwtAuthGuard) @Throttle({default:{limit:20,ttl:60000}})
  enroll(@Request() req,@Body() b:EnrollDto){return this.identity.challenge({...b,userId:req.user.sub,ip:req.ip});}
  @Post('recovery') @Throttle({default:{limit:5,ttl:60000}})
  recovery(@Request() req,@Body() b:RecoveryDto){return this.identity.challenge({...b,ip:req.ip});}
- @Post('enroll/:id/video') @UseGuards(JwtAuthGuard) @Throttle({default:{limit:3,ttl:60000}})
+ @Post('enroll/:id/video') @UseGuards(JwtAuthGuard) @Throttle({default:{limit:10,ttl:60000}})
  @UseInterceptors(FileInterceptor('video',{limits:{fileSize:16*1024*1024,files:1,fields:1}}))
  enrollVideo(@Request() req,@Param('id') id:string,@Body() b:VideoProofDto,@UploadedFile() file:any){return this.identity.submit(id,b.challengeToken,file?.buffer,req.user.sub);}
  @Post('recovery/:id/video') @Throttle({default:{limit:3,ttl:60000}})

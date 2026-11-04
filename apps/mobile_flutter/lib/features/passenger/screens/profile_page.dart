@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import '../../../core/services/pwa_support.dart';
 import '../../../core/widgets/account_deletion_dialog.dart';
 import '../../../core/widgets/password_change_dialog.dart';
@@ -692,7 +693,14 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = errorMessageRu(e));
+      if (e is DioException && e.response?.statusCode == 404) {
+        await _openAndRefresh('/driver/verification/personal');
+      } else {
+        final message = errorMessageRu(e);
+        setState(() => _message = message);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+      }
     } finally {
       if (mounted) setState(() => _driverSwitchLoading = false);
     }
@@ -720,8 +728,9 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
       context.go('/order');
       return;
     }
-    await _openAndRefresh(
-        _driverProfile == null ? '/driver/profile' : '/driver/verification');
+    await _openAndRefresh(_driverProfile == null
+        ? '/driver/verification/personal'
+        : '/driver/verification/docs');
   }
 
   Widget _card({required Widget child, EdgeInsets? padding}) {

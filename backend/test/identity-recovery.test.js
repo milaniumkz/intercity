@@ -40,11 +40,19 @@ test('private video enrollment, matching, rejection, manual review and one-use r
    await assert.rejects(service.review(c.challengeId,admin.id,true,'Do not bypass a rejected mismatch'),/недоступна/);
    result={...result,embedding:a,verdict:'REJECT',reason:'photo rejected'};c=await recover(alice);assert.equal((await service.submit(c.challengeId,c.challengeToken,video())).status,'REJECTED');result.verdict='PASS';
   });
-  await t.test('uncertain enrollment remains locked until an administrator reviews it',async()=>{
-   result.verdict='REVIEW';result.reason='uncertain PAD';const c=await enroll(bob);
-   assert.equal((await service.submit(c.challengeId,c.challengeToken,video(),bob.id)).status,'REVIEW');assert.equal(await service.needsVerification(bob.id,bob.role),true);assert(notifications>0);
-   await assert.rejects(service.review(c.challengeId,admin.id,true,'short'),/основание/);
-   await service.review(c.challengeId,admin.id,true,'Reviewed live actions and matched the face');assert.equal((await service.challengeStatus(c.challengeId,c.challengeToken)).status,'VERIFIED');assert.equal(await service.needsVerification(bob.id,bob.role),false);result.verdict='PASS';
+  await t.test('uncertain enrollment is retryable without manual review, storage or a total attempt limit',async()=>{
+   result.verdict='REVIEW';result.reason='uncertain PAD';const before=notifications,c=await enroll(bob);
+   assert.equal((await service.submit(c.challengeId,c.challengeToken,video(),bob.id)).status,'REJECTED');assert.equal(await service.needsVerification(bob.id,bob.role),true);assert.equal(notifications,before);
+   const stored=await db.biometricChallenge.findUnique({where:{id:c.challengeId}});assert.equal(stored.candidate,null);assert.equal(stored.referencePath,null);assert.equal(stored.videoPath,null);
+   await assert.rejects(service.review(c.challengeId,admin.id,true,'No manual initial enrollment approval'),/автоматически/);
+   for(let i=0;i<20;i++)await enroll(bob);
+   result.verdict='PASS';const next=await enroll(bob);assert.equal((await service.submit(next.challengeId,next.challengeToken,video(),bob.id)).status,'VERIFIED');
+   assert.equal(await service.needsVerification(bob.id,bob.role),false);
+  });
+  await t.test('uncertain recovery still requires a manual decision and keeps its rate limits',async()=>{
+   await db.biometricChallenge.updateMany({where:{userId:alice.id},data:{createdAt:new Date(Date.now()-2*3600000)}});
+   result.verdict='REVIEW';const c=await recover(alice,'127.0.0.9');assert.equal((await service.submit(c.challengeId,c.challengeToken,video())).status,'REVIEW');
+   await service.review(c.challengeId,admin.id,true,'Reviewed live video and compared with reference');assert.equal((await service.challengeStatus(c.challengeId,c.challengeToken)).status,'VERIFIED');result.verdict='PASS';
   });
   await t.test('expired challenge and foreign session secret are rejected before engine work',async()=>{
    const c=await recover(alice,'127.0.0.3'),before=calls;await db.biometricChallenge.update({where:{id:c.challengeId},data:{expiresAt:new Date(Date.now()-1)}});

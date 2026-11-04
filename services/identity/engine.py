@@ -114,7 +114,10 @@ def verify(path,actions):
     if seen%3==0:
      v=vector(frame,face);vectors.append(v)
      if len(vectors)>1 and float(v@vectors[0])<.45:return reject('Лицо изменилось во время записи. Повторите проверку')
-    if seen%8==0:
+    # PAD models are trained on frontal faces; head-turn frames must not
+    # be mistaken for a photo attack. All active tasks are still mandatory.
+    neutral_phase=t<2 or (t>=2 and (t-2)%6>=4)
+    if seen%4==0 and neutral_phase and abs(p['yaw'])<.18:
      scores.append(pad(frame,face))
      x,y,w,h=map(int,face[:4]);crop=frame[max(0,y):max(0,y)+h,max(0,x):max(0,x)+w]
      if crop.size:sharpness.append(float(cv2.Laplacian(cv2.cvtColor(crop,cv2.COLOR_BGR2GRAY),cv2.CV_64F).var()))
@@ -135,8 +138,14 @@ def verify(path,actions):
  if min(medians)<.50 or min(lower)<.15:return reject('Проверка подлинности видео не пройдена. Снимите себя вживую без экранов и фотографий')
  averaged=np.mean(vectors,axis=0);averaged/=np.linalg.norm(averaged)
  continuity=min(float(v@averaged) for v in vectors)
- uncertain=not all(actions_ok) or min(medians)<.97 or min(lower)<.85 or np.median(sharpness)<35 or continuity<.60
- return {'verdict':'REVIEW' if uncertain else 'PASS','reason':'Недостаточная уверенность проверки подлинности или качества записи' if uncertain else '', 'model':MODEL,
+ problems=[]
+ names={'TURN_LEFT':'поворот головы налево','TURN_RIGHT':'поворот головы направо','LOOK_UP':'поднять подбородок','OPEN_MOUTH':'открыть рот','BLINK':'два моргания'}
+ if not all(actions_ok):problems.append('Не распознаны задания: '+', '.join(names[a] for a,ok in zip(actions,actions_ok) if not ok))
+ if min(medians)<.97 or min(lower)<.85:problems.append('Не удалось уверенно подтвердить живое лицо: уберите блики, направьте свет на лицо')
+ if np.median(sharpness)<35:problems.append('Изображение размыто: протрите камеру и держите телефон неподвижно')
+ if continuity<.60:problems.append('Лицо теряется при движении: поворачивайте голову плавно')
+ uncertain=bool(problems)
+ return {'verdict':'REVIEW' if uncertain else 'PASS','reason':'. '.join(problems), 'model':MODEL,
   'videoSignature':fingerprints,'embedding':averaged.tolist(),'reference':base64.b64encode(reference).decode(),
   'checks':{'activeChallenge':all(actions_ok),'oneFace':True,'continuity':round(continuity,3),'padMedian':[round(float(x),3) for x in medians]}}
 

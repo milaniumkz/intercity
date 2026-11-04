@@ -71,6 +71,7 @@ flutter:
   assets:
     - assets/branding/
     - assets/sounds/
+    - assets/sounds/identity/
 
 flutter_launcher_icons:
   android: true

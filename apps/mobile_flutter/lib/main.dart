@@ -1,3 +1,4 @@
+import 'core/utils/driver_entry.dart';
 import 'core/services/identity_session.dart';
 import 'features/auth/screens/face_verification_page.dart';
 import 'core/services/chat_message_notices.dart';
@@ -63,6 +64,16 @@ GoRouter createRouter({
           return Uri(
               path: '/identity',
               queryParameters: {'next': state.uri.toString()}).toString();
+        }
+        if (hasToken &&
+            (state.uri.path == '/driver/home' ||
+                state.uri.path.startsWith('/driver/home/'))) {
+          try {
+            final destination = await driverEntryRedirect(ApiClient());
+            if (destination != null) return destination;
+          } catch (_) {
+            // The driver screen keeps network failures visible and retryable.
+          }
         }
         return resolveAuthRedirect(
           path: state.uri.path,

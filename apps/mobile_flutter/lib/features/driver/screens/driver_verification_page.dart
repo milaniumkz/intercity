@@ -19,7 +19,8 @@ import 'driver_doc_web_file_picker_stub.dart'
     if (dart.library.html) 'driver_doc_web_file_picker_html.dart';
 
 class DriverVerificationPage extends StatefulWidget {
-  const DriverVerificationPage({super.key, this.routeStage});
+  const DriverVerificationPage({super.key, this.routeStage, this.apiClient});
+  final ApiClient? apiClient;
 
   final String? routeStage;
 
@@ -28,6 +29,7 @@ class DriverVerificationPage extends StatefulWidget {
 }
 
 class _DriverVerificationPageState extends State<DriverVerificationPage> {
+  late final _api = widget.apiClient ?? ApiClient();
   final _docTypeCtrl = TextEditingController(text: 'selfie');
   final _firstNameCtrl = TextEditingController();
   final _lastNameCtrl = TextEditingController();
@@ -63,7 +65,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
   static const _docTypes = [
     ('selfie', Icons.person_pin_rounded, 'Селфи'),
     ('passport', Icons.badge_rounded, 'Удостоверение личности / паспорт'),
-    ('driverLicense', Icons.drive_eta_rounded, 'Водительское удостоверение РК'),
+    ('driverLicense', Icons.drive_eta_rounded, 'Водительское удостоверение'),
     (
       'techPassportFront',
       Icons.directions_car_rounded,
@@ -96,7 +98,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
 
   Future<void> _loadTaxStatus() async {
     try {
-      final response = await ApiClient().get('/tax/me');
+      final response = await _api.get('/tax/me');
       if (mounted) {
         setState(() => _taxIntegrationPaused =
             response.data['driverTaxIntegrationPaused'] == true);
@@ -114,7 +116,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
 
   Future<void> _loadAccountProfile() async {
     try {
-      final res = await ApiClient().get('/me');
+      final res = await _api.get('/me');
       final data = res.data;
       if (!mounted || data is! Map) return;
       final name = (data['name'] ?? '').toString().trim();
@@ -136,7 +138,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
 
   Future<void> _loadDriverDocs() async {
     try {
-      final identity = await ApiClient().get('/auth/identity/status');
+      final identity = await _api.get('/auth/identity/status');
       if (mounted && identity.data is Map) {
         setState(() {
           _identityEnabled = identity.data['enabled'] == true;
@@ -145,7 +147,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
       }
     } catch (_) {}
     try {
-      final res = await ApiClient().get('/driver/profile');
+      final res = await _api.get('/driver/profile');
       final data = res.data;
       if (!mounted || data is! Map) return;
       setState(() {
@@ -273,7 +275,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
         _message = '';
       });
 
-      await ApiClient().post(
+      await _api.post(
         '/driver/docs/upload',
         data: FormData.fromMap({
           'docType': docType,
@@ -314,7 +316,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
     }
     setState(() => _loading = true);
     try {
-      final result = await ApiClient().post('/driver/docs/complete',
+      final result = await _api.post('/driver/docs/complete',
           data: {},
           options: Options(receiveTimeout: const Duration(seconds: 120)));
       final checks = result.data is Map ? result.data['documentChecks'] : null;
@@ -360,7 +362,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
     }
     setState(() => _loading = true);
     try {
-      await ApiClient().post('/driver/profile', data: {
+      await _api.post('/driver/profile', data: {
         'taxCountry': _taxCountry,
         'carModel': carModel,
         'carNumber': carNumber,
@@ -461,56 +463,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
             _verificationHero(theme),
             const SizedBox(height: 12),
             if (_identityEnabled && !_identityDriverConsent)
-              Card(
-                  child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(children: [
-                        const Text(
-                            'Для водителя видеоэталон дополнительно сверяется с фотографией в удостоверении личности. Данные машины читаются из техпаспорта, владелец машины не проверяется.'),
-                        CheckboxListTile(
-                            value: _driverConsentChecked,
-                            onChanged: (v) => setState(
-                                () => _driverConsentChecked = v == true),
-                            title: const Text(
-                                'Согласен на использование видеоэталона для сверки с удостоверением личности')),
-                        TextField(
-                            controller: _identityPassword,
-                            obscureText: true,
-                            decoration: const InputDecoration(
-                                labelText: 'Пароль аккаунта')),
-                        FilledButton(
-                            onPressed: _loading || !_driverConsentChecked
-                                ? null
-                                : () async {
-                                    setState(() => _loading = true);
-                                    try {
-                                      await ApiClient().post(
-                                          '/auth/identity/driver-consent',
-                                          data: {
-                                            'password': _identityPassword.text,
-                                            'driverConsent': true,
-                                            'consentVersion':
-                                                identityConsentVersion
-                                          });
-                                      _identityPassword.clear();
-                                      if (mounted) {
-                                        setState(() =>
-                                            _identityDriverConsent = true);
-                                      }
-                                    } catch (e) {
-                                      if (mounted) {
-                                        setState(
-                                            () => _message = errorMessageRu(e));
-                                      }
-                                    } finally {
-                                      if (mounted) {
-                                        setState(() => _loading = false);
-                                      }
-                                    }
-                                  },
-                            child:
-                                const Text('Разрешить сверку удостоверения')),
-                      ]))),
+              _identityConsentCard(),
             _documentsChecklist(theme),
             const SizedBox(height: 12),
             _card(
@@ -773,6 +726,52 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
     );
   }
 
+  Widget _identityConsentCard() => Card(
+      child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(children: [
+            const Text(
+                'Для водителя видеоэталон дополнительно сверяется с фотографией в удостоверении личности. Данные машины читаются из техпаспорта, владелец машины не проверяется.'),
+            CheckboxListTile(
+                value: _driverConsentChecked,
+                onChanged: (v) =>
+                    setState(() => _driverConsentChecked = v == true),
+                title: const Text(
+                    'Согласен на использование видеоэталона для сверки с удостоверением личности')),
+            TextField(
+                controller: _identityPassword,
+                obscureText: true,
+                decoration:
+                    const InputDecoration(labelText: 'Пароль аккаунта')),
+            FilledButton(
+                onPressed: _loading || !_driverConsentChecked
+                    ? null
+                    : () async {
+                        setState(() => _loading = true);
+                        try {
+                          await _api
+                              .post('/auth/identity/driver-consent', data: {
+                            'password': _identityPassword.text,
+                            'driverConsent': true,
+                            'consentVersion': identityConsentVersion
+                          });
+                          _identityPassword.clear();
+                          if (mounted) {
+                            setState(() => _identityDriverConsent = true);
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            setState(() => _message = errorMessageRu(e));
+                          }
+                        } finally {
+                          if (mounted) {
+                            setState(() => _loading = false);
+                          }
+                        }
+                      },
+                child: const Text('Разрешить сверку удостоверения')),
+          ])));
+
   Widget _boardDriverDocsScreen() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -802,6 +801,10 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
             const SizedBox(height: 18),
             _boardProgress(2),
             const SizedBox(height: 18),
+            if (_identityEnabled && !_identityDriverConsent) ...[
+              _identityConsentCard(),
+              const SizedBox(height: 16),
+            ],
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(

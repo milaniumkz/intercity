@@ -268,7 +268,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   children: [
                                     Text(
                                       _isDriver
-                                          ? 'Личные данные'
+                                          ? 'Регистрация водителя'
                                           : 'Регистрация пассажира',
                                       style: const TextStyle(
                                         color: Colors.white,

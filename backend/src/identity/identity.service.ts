@@ -57,8 +57,8 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
  async status(userId:string) {
   const [user,profile]=await Promise.all([this.prisma.user.findUnique({where:{id:userId},select:{role:true,driverProfile:{select:{id:true}}}}),this.prisma.biometricProfile.findUnique({where:{userId},select:{status:true,enrolledAt:true,driverConsent:true}})]);
   if(!user)throw new UnauthorizedException();
-  const pending=await this.prisma.biometricChallenge.findFirst({where:{userId,purpose:'ENROLL',status:'REVIEW',createdAt:{gte:new Date(Date.now()-86400000)}},select:{id:true}});
-  return {driver:!!user.driverProfile||user.role==='DRIVER',pendingEnrollment:!!pending,enabled:await this.enabled(),required:await this.needsVerification(userId,user.role),enrolled:profile?.status==='VERIFIED',driverConsent:profile?.driverConsent??false,engineReady:await this.engine.ready(),consentVersion:IDENTITY_CONSENT};
+
+  return {driver:!!user.driverProfile||user.role==='DRIVER',pendingEnrollment:false,enabled:await this.enabled(),required:await this.needsVerification(userId,user.role),enrolled:profile?.status==='VERIFIED',driverConsent:profile?.driverConsent??false,engineReady:await this.engine.ready(),consentVersion:IDENTITY_CONSENT};
  }
  async challenge(input:{userId?:string;phone?:string;password?:string;consentVersion:string;driverConsent?:boolean;ip:string}) {
   if(input.consentVersion!==IDENTITY_CONSENT)throw new BadRequestException('Подтвердите согласие на обработку биометрических данных');
@@ -67,8 +67,10 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   let user=await this.prisma.user.findUnique({where:enrollment?{id:input.userId}:{phone:input.phone},include:{biometricProfile:true}});
   const subjectHash=this.vault.digest('phone:'+(input.phone||user?.phone||'')),ipHash=this.vault.digest('ip:'+input.ip);
   const since=new Date(Date.now()-3600000);
-  const [perUser,perIp]=await Promise.all([this.prisma.biometricChallenge.count({where:{subjectHash,createdAt:{gte:since}}}),this.prisma.biometricChallenge.count({where:{ipHash,createdAt:{gte:since}}})]);
+  if(!enrollment){
+  const [perUser,perIp]=await Promise.all([this.prisma.biometricChallenge.count({where:{purpose:'RECOVERY',subjectHash,createdAt:{gte:since}}}),this.prisma.biometricChallenge.count({where:{purpose:'RECOVERY',ipHash,createdAt:{gte:since}}})]);
   if(perUser>=5||perIp>=15)throw new ForbiddenException('Слишком много проверок. Повторите через час.');
+  }
   if(enrollment){
    if(!user||user.blockedAt||user.role==='ADMIN'||!await bcrypt.compare(input.password||'',user.password))throw new UnauthorizedException('Неверный пароль аккаунта');
    if(user.role==='DRIVER' && input.driverConsent!==true)throw new BadRequestException('Подтвердите согласие на сверку с удостоверением личности');
@@ -118,6 +120,11 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
     if(score<0.60)verdict='REVIEW';
    }
   }
+  if(c.purpose==='ENROLL'&&verdict==='REVIEW'){
+   const reason=(result.reason||'Не удалось уверенно выполнить проверку')+'. Повторите запись: лицо в овале, ровный свет, выполняйте голосовые подсказки.';
+   await this.prisma.biometricChallenge.update({where:{id},data:{status:'REJECTED',reason}});
+   return {status:'REJECTED',message:reason,retryAllowed:true};
+  }
   const referencePath=await this.vault.write(user.id,Buffer.from(result.reference!,'base64'));
   const candidate=this.vault.seal(Buffer.from(JSON.stringify(result.embedding)),user.id).toString('base64');
   const videoPath=verdict==='REVIEW'?await this.vault.write(user.id,video):null;
@@ -163,7 +170,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   return {success:true};
  }
  async auditRead(id:string,adminId:string,kind:string){await this.prisma.adminAuditLog.create({data:{adminId,action:'identity.media.read',targetType:'BiometricChallenge',targetId:id,details:{kind}}});}
- async reviews(){return this.prisma.biometricChallenge.findMany({where:{status:'REVIEW'},select:{id:true,purpose:true,reason:true,createdAt:true,actions:true,documentInfo:true,driverConsent:true,user:{select:{id:true,name:true,phone:true}}},orderBy:{createdAt:'asc'},take:100});}
+ async reviews(){return this.prisma.biometricChallenge.findMany({where:{status:'REVIEW',purpose:{not:'ENROLL'}},select:{id:true,purpose:true,reason:true,createdAt:true,actions:true,documentInfo:true,driverConsent:true,user:{select:{id:true,name:true,phone:true}}},orderBy:{createdAt:'asc'},take:100});}
  async reviewPurpose(id:string){return (await this.prisma.biometricChallenge.findUnique({where:{id},select:{purpose:true}}))?.purpose;}
  async reviewMedia(id:string,kind:string){
   const c=await this.prisma.biometricChallenge.findUnique({where:{id}});if(!c?.userId||c.status!=='REVIEW')throw new BadRequestException('Проверка не найдена');
@@ -175,17 +182,13 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   if(!reason||reason.trim().length<10||reason.length>1000)throw new BadRequestException('Опишите основание решения, от 10 символов');
   await this.prisma.$transaction(async tx=>{
    const c=await tx.biometricChallenge.findUnique({where:{id}});
+   if(c?.purpose==='ENROLL')throw new ConflictException('Первичная проверка проходит автоматически. Запишите новое видео.');
    if(!c?.userId||c.status!=='REVIEW'||!c.candidate||!c.referencePath||!c.model||c.createdAt.getTime()<Date.now()-86400000)throw new ConflictException('Проверка недоступна или уже рассмотрена');
    await tx.$executeRaw`SELECT id FROM "User" WHERE id=${c.userId} FOR UPDATE`;
    const user=await tx.user.findUnique({where:{id:c.userId}});
    if(!user||user.blockedAt||user.authVersion!==c.authVersion)throw new ConflictException('Учётные данные изменились. Нужна новая запись');
    const changed=await tx.biometricChallenge.updateMany({where:{id,status:'REVIEW'},data:{status:approve?'VERIFIED':'REJECTED',reviewedBy:adminId,reviewedAt:new Date(),reason:reason.trim()}});
    if(changed.count!==1)throw new ConflictException('Проверка уже рассмотрена');
-   if(approve&&c.purpose==='ENROLL'){
-    if(await tx.biometricProfile.findUnique({where:{userId:user.id}}))throw new ConflictException('Эталон уже создан. Повторная привязка не разрешена');
-    await tx.biometricProfile.create({data:{userId:user.id,template:c.candidate,referencePath:c.referencePath,model:c.model,consentVersion:c.consentVersion,driverConsent:c.driverConsent}});
-    await tx.biometricChallenge.update({where:{id},data:{referencePath:null,candidate:null}});
-   }
    await tx.adminAuditLog.create({data:{adminId,action:approve?'identity.review.approve':'identity.review.reject',targetType:'BiometricChallenge',targetId:id,details:{reason:reason.trim()}}});
   });
   return {success:true};

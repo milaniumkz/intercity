@@ -162,7 +162,6 @@ class _DriverHomePageState extends State<DriverHomePage>
   @override
   void initState() {
     super.initState();
-    AppModeManager.rememberDriverMode();
     WidgetsBinding.instance.addObserver(this);
     _boardOfferPriceCtrl.addListener(_refreshBoardOfferPriceSelection);
     _dashboardMetricsTimer = Timer.periodic(const Duration(seconds: 10), (_) {
@@ -318,6 +317,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         if (mounted) setState(() => _driverProfile = profile);
         return;
       }
+      if (isApprovedDriverStatus(profile['status']?.toString())) {
+        unawaited(AppModeManager.rememberDriverMode());
+      }
       final online = profile['online'] is Map
           ? Map<String, dynamic>.from(profile['online'] as Map)
           : null;
@@ -404,7 +406,27 @@ class _DriverHomePageState extends State<DriverHomePage>
       unawaited(PushNotificationsService.instance.enableDriverNotifications());
     }
     if (value && !_isDriverApproved) {
-      setState(() => _message = driverAccessMessageRu(_driverStatus));
+      final message = driverAccessMessageRu(_driverStatus);
+      setState(() => _message = message);
+      await showDialog<void>(
+          context: context,
+          builder: (dialog) => AlertDialog(
+                title: const Text('Оформите профиль водителя'),
+                content: Text(message),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(dialog),
+                      child: const Text('Закрыть')),
+                  FilledButton(
+                      onPressed: () {
+                        Navigator.pop(dialog);
+                        context.go(_driverStatus == null
+                            ? '/driver/verification/personal'
+                            : '/driver/verification/docs');
+                      },
+                      child: const Text('Перейти к оформлению'))
+                ],
+              ));
       return;
     }
     if (_switchBusy) return;

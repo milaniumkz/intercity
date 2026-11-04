@@ -12,6 +12,7 @@ type PushPayload = {
 @Injectable()
 export class PushService {
     private readonly logger = new Logger(PushService.name);
+    private readonly invalidTokens = new Set<string>();
     private accessToken: { value: string; expires: number } | null = null;
     constructor(private readonly prisma: PrismaService) { }
 
@@ -96,6 +97,7 @@ export class PushService {
     }
 
     async sendToToken(token: string, payload: PushPayload): Promise<boolean> {
+        if (this.invalidTokens.has(token)) return false;
         try {
             const inline = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
             const path = process.env.GOOGLE_APPLICATION_CREDENTIALS;
@@ -148,7 +150,20 @@ export class PushService {
             });
             if (!response.ok) {
                 if (response.status === 401) this.accessToken = null;
-                this.logger.warn(`Firebase push failed: HTTP ${response.status}`);
+                let code = 'UNKNOWN';
+                try {
+                    const error = (await response.json() as any)?.error;
+                    const detail = error?.details?.find((d: any) => d['@type'] === 'type.googleapis.com/google.firebase.fcm.v1.FcmError');
+                    const candidate = detail?.errorCode;
+                    if (typeof candidate === 'string' && /^[A-Z_]{1,60}$/.test(candidate)) code = candidate;
+                } catch (_) { /* A provider may return a non-JSON error. */ }
+                if (code === 'UNREGISTERED' || code === 'SENDER_ID_MISMATCH') {
+                    if (this.invalidTokens.size >= 2000) this.invalidTokens.clear();
+                    this.invalidTokens.add(token);
+                    const cleared = await this.prisma.user.updateMany({where: {pushToken: token}, data: {pushToken: null}});
+                    this.logger.warn(`Invalid Firebase token removed from ${cleared.count} account(s): ${code}`);
+                }
+                this.logger.warn(`Firebase push failed: HTTP ${response.status} (${code})`);
             }
             return response.ok;
         } catch (_) {

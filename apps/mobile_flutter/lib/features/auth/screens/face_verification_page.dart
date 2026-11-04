@@ -1,3 +1,5 @@
+import '../../../core/services/identity_voice.dart';
+import 'identity_camera_frame.dart';
 import '../../../core/services/push_notifications_service.dart';
 import '../../../core/services/capture_cleanup.dart';
 import 'dart:async';
@@ -11,8 +13,8 @@ import '../../../core/utils/error_message_ru.dart';
 
 const identityConsentVersion = 'intercity-face-2026-11-v1';
 const identityActions = {
-  'TURN_LEFT': 'Поверните голову влево',
-  'TURN_RIGHT': 'Поверните голову вправо',
+  'TURN_LEFT': 'Слегка поверните голову налево',
+  'TURN_RIGHT': 'Слегка поверните голову направо',
   'LOOK_UP': 'Посмотрите вверх, слегка подняв голову',
   'OPEN_MOUTH': 'Откройте рот',
   'BLINK': 'Медленно моргните два раза',
@@ -40,6 +42,9 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       _newPassword = TextEditingController(),
       _confirm = TextEditingController();
   CameraController? _camera;
+  final _voice = IdentityVoice();
+  String _lastCue = '';
+  int _countdown = 0;
   Timer? _timer, _poll;
   Map<String, dynamic>? _challenge;
   bool _consent = false, _busy = false, _recording = false, _cancelled = false;
@@ -86,6 +91,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _poll?.cancel();
+    _voice.dispose();
     unawaited(_camera?.dispose());
     _password.dispose();
     _newPassword.dispose();
@@ -118,6 +124,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
 
   Future<void> _start() async {
     if (!_consent || _busy) return;
+    _voice.play('prepare');
     FocusScope.of(context).unfocus();
     if (!_recovery && _password.text.isEmpty) {
       setState(() => _message = 'Введите пароль аккаунта для привязки эталона');
@@ -148,8 +155,8 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       final previous = _camera;
       _camera = null;
       await previous?.dispose();
-      final camera =
-          CameraController(device, ResolutionPreset.medium, enableAudio: false);
+      final camera = CameraController(device, ResolutionPreset.high,
+          enableAudio: false, fps: 30, videoBitrate: 1500000);
       _camera = camera;
       await camera.initialize();
       if (!mounted) {
@@ -174,6 +181,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
   Future<void> _record() async {
     final camera = _camera;
     if (_busy || camera == null) return;
+    _voice.play('ready');
     FocusScope.of(context).unfocus();
     setState(() => _busy = true);
     try {
@@ -189,6 +197,13 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
         });
         _challenge = Map<String, dynamic>.from(response.data as Map);
       }
+      for (var n = 3; n > 0; n--) {
+        if (!mounted || _camera != camera) return;
+        setState(() => _countdown = n);
+        await Future<void>.delayed(const Duration(seconds: 1));
+      }
+      if (!mounted || _camera != camera) return;
+      setState(() => _countdown = 0);
       await camera.startVideoRecording();
       if (!mounted) {
         await camera.dispose();
@@ -199,10 +214,22 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
         _recording = true;
         _seconds = 0;
       });
+      _lastCue = 'front';
+      _voice.play('front');
       final clock = Stopwatch()..start();
       _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
         if (!mounted || !_recording) return;
         setState(() => _seconds = clock.elapsedMilliseconds / 1000);
+        final actions = _challenge?['actions'] as List? ?? [];
+        final phase = ((_seconds - 2) / 6).floor();
+        final cue =
+            _seconds < 2 || (_seconds - 2) % 6 >= 4 || phase >= actions.length
+                ? 'front'
+                : '${actions[phase]}';
+        if (cue != _lastCue && _seconds < 20) {
+          _lastCue = cue;
+          _voice.play(cue);
+        }
         if (_seconds >= 20) {
           _timer?.cancel();
           unawaited(_stop());
@@ -221,6 +248,8 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
   Future<void> _stop({bool discard = false}) async {
     if (!_recording) return;
     _timer?.cancel();
+    _voice.stop();
+    if (!discard) _voice.play('done');
     setState(() {
       _recording = false;
       _busy = true;
@@ -283,6 +312,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       _message = '${result['message'] ?? ''}';
       _resetToken = result['resetToken']?.toString();
     });
+    if (_state == 'REJECTED' || _state == 'FAILED') _voice.play('retry');
     if (_state == 'VERIFIED' && !_recovery) {
       IdentitySession.required.value = false;
       unawaited(PushNotificationsService.instance.syncTokenIfAuthorized());
@@ -353,7 +383,23 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
               title: Text(_recovery
                   ? 'Восстановление по лицу'
                   : 'Первичная видеопроверка'),
-              automaticallyImplyLeading: _recovery),
+              automaticallyImplyLeading: _recovery,
+              actions: [
+                IconButton(
+                  tooltip: _voice.muted
+                      ? 'Включить голосовые подсказки'
+                      : 'Выключить голосовые подсказки',
+                  icon: Icon(_voice.muted ? Icons.volume_off : Icons.volume_up),
+                  onPressed: () {
+                    setState(() => _voice.muted = !_voice.muted);
+                    if (_voice.muted) {
+                      _voice.stop();
+                    } else {
+                      _voice.play(_recording ? _lastCue : 'prepare');
+                    }
+                  },
+                )
+              ]),
           body: SafeArea(
               child: Center(
                   child: ConstrainedBox(
@@ -366,12 +412,27 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                   padding: const EdgeInsets.only(bottom: 16),
                                   child: Text(_message,
                                       style: theme.textTheme.bodyMedium)),
+                            if ((_state == 'REJECTED' || _state == 'FAILED') &&
+                                _camera == null)
+                              FilledButton.icon(
+                                  onPressed: _busy ? null : _start,
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('Повторить видеопроверку')),
+                            if (!_recovery &&
+                                _camera == null &&
+                                (_state == 'REJECTED' || _state == 'FAILED'))
+                              const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 12),
+                                  child: Text(
+                                      'Количество первичных попыток не ограничено. Проверка проходит автоматически.')),
+                            if (_voice.failed)
+                              const Text(
+                                  'Звук не запустился. Нажмите значок динамика и проверьте громкость устройства.'),
                             if (_recording && _camera != null) ...[
-                              SizedBox(
-                                  height: 320,
-                                  child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(24),
-                                      child: CameraPreview(_camera!))),
+                              IdentityCameraFrame(
+                                  camera: _camera!,
+                                  recording: true,
+                                  instruction: _instruction),
                               const SizedBox(height: 16),
                               Text(_instruction,
                                   style: theme.textTheme.titleLarge,
@@ -389,14 +450,15 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                   child: const Text('Прервать запись')),
                             ] else if (_camera != null &&
                                 _camera!.value.isInitialized) ...[
-                              SizedBox(
-                                  height: 320,
-                                  child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(24),
-                                      child: CameraPreview(_camera!))),
+                              IdentityCameraFrame(
+                                  camera: _camera!,
+                                  recording: false,
+                                  instruction: _countdown > 0
+                                      ? 'Смотрите прямо • $_countdown'
+                                      : 'Расположите лицо в овале'),
                               const SizedBox(height: 16),
                               const Text(
-                                  'Расположите лицо целиком в кадре. Обеспечьте хорошее освещение. После нажатия начнётся запись на 20 секунд со случайными заданиями.'),
+                                  'Расположите лицо в овале. Свет должен падать на лицо, а не в камеру. Выполняйте голосовые подсказки. После нажатия начнётся запись на 20 секунд со случайными заданиями.'),
                               const SizedBox(height: 16),
                               FilledButton.icon(
                                   onPressed: _busy ? null : _record,
@@ -452,8 +514,8 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                   ? 'У водителя эталон также используется для сверки с фотографией в удостоверении личности. Данные автомобиля проверяются отдельно.'
                                   : 'У пассажира эталон используется только для восстановления пароля.'),
                               const SizedBox(height: 12),
-                              const Text(
-                                  'Эталон лица и контрольный снимок хранятся зашифрованными в закрытом хранилище InterCity. Видео обрабатывается на нашем сервере. Если нужна ручная проверка, зашифрованная запись хранится в рабочем хранилище до 7 дней. При удалении аккаунта эталон удаляется из действующего хранилища. Резервные копии используются только для восстановления сервиса. При автоматическом результате полная запись не сохраняется.'),
+                              Text(
+                                  'Эталон лица и контрольный снимок хранятся зашифрованными в закрытом хранилище InterCity. Видео обрабатывается на нашем сервере. ${_recovery ? 'Если нужна ручная проверка восстановления, зашифрованная запись хранится до 7 дней.' : 'Первичная проверка проходит автоматически. При неудаче можно повторять запись без ограничения количества попыток.'} При удалении аккаунта эталон удаляется из действующего хранилища. Резервные копии используются только для восстановления сервиса. При автоматическом результате полная запись не сохраняется.'),
                               const SizedBox(height: 12),
                               const Text(
                                   'Записывайте себя вживую: один человек, хорошее освещение, лицо без маски и тёмных очков. Выполняйте случайные задания по подсказкам. Фотографии и готовые ролики загружать нельзя.'),

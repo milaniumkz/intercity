@@ -2108,7 +2108,7 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
                           tileColor: const Color(0xFFF7FAFC),
                           title: Text('${c['title'] ?? ''}'),
                           subtitle: Text(
-                              '${c['body'] ?? ''}\n${sent ? 'Передано push-сервису' : 'Не отправлено'}${jobStatus.isNotEmpty ? ' • $jobLabel' : ''}\nПринято сервисом: ${job?['successCount'] ?? 0}, ошибок: ${job?['failCount'] ?? 0}${(job?['lastError'] ?? '').toString().isNotEmpty ? '\n${job?['lastError']}' : ''}'),
+                              '${c['body'] ?? ''}\n${sent ? 'Передано push-сервису' : (job?['successCount'] ?? 0) > 0 ? 'Отправлено частично' : 'Не отправлено'}${jobStatus.isNotEmpty ? ' • $jobLabel' : ''}\nПринято сервисом: ${job?['successCount'] ?? 0}, ошибок: ${job?['failCount'] ?? 0}${(job?['lastError'] ?? '').toString().isNotEmpty ? '\n${job?['lastError']}' : ''}'),
                           isThreeLine: true,
                           trailing: sent
                               ? const Text('Отправлено')

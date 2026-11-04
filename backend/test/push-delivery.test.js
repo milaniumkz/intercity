@@ -33,3 +33,18 @@ test('Firebase HTTP v1 authenticates, caches tokens and sends audible driver off
     else process.env.FIREBASE_SERVICE_ACCOUNT_JSON = previous;
   }
 });
+
+test('permanently invalid FCM registrations are removed; transient errors retain registrations', async () => {
+  const previous=process.env.FIREBASE_SERVICE_ACCOUNT_JSON,originalFetch=global.fetch;
+  process.env.FIREBASE_SERVICE_ACCOUNT_JSON=JSON.stringify({project_id:'test-project',client_email:'test@example.invalid',private_key:'unused-cached-auth'});
+  const cleared=[];let requests=0;
+  const service=new PushService({user:{updateMany:async query=>{cleared.push(query);return {count:1}}}});
+  service.accessToken={value:'cached-local-test',expires:Date.now()+60000};
+  global.fetch=async (_url,options)=>{requests++;const token=JSON.parse(options.body).message.token;return {ok:false,status:token==='stale-device'?404:503,json:async()=>({error:{details:[{'@type':'type.googleapis.com/google.firebase.fcm.v1.FcmError',errorCode:token==='stale-device'?'UNREGISTERED':'UNAVAILABLE'}]}})}};
+  try {
+    assert.equal(await service.sendToToken('stale-device',{title:'Local mock',body:'No network'}),false);
+    assert.deepEqual(cleared,[{where:{pushToken:'stale-device'},data:{pushToken:null}}]);
+    assert.equal(await service.sendToToken('stale-device',{title:'Local mock',body:'No network'}),false);assert.equal(requests,1);
+    assert.equal(await service.sendToToken('temporary-failure',{title:'Local mock',body:'No network'}),false);assert.equal(cleared.length,1);
+  } finally {global.fetch=originalFetch;if(previous===undefined)delete process.env.FIREBASE_SERVICE_ACCOUNT_JSON;else process.env.FIREBASE_SERVICE_ACCOUNT_JSON=previous;}
+});
