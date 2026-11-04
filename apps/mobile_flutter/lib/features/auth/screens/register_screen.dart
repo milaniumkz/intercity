@@ -1,5 +1,6 @@
 import '../../../core/utils/referral_code.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/api/api_client.dart';
@@ -46,6 +47,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void initState() {
     super.initState();
     _referralReady = _loadReferralCode();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) FocusManager.instance.primaryFocus?.unfocus();
+    });
   }
 
   Future<void> _loadReferralCode() async {
@@ -178,6 +182,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // Chrome may retain a keyboard inset after its visual viewport changes.
+      // Keep the web background full-height and reserve scroll space instead.
+      resizeToAvoidBottomInset: !kIsWeb,
       body: ICPremiumBackground(
         child: Center(
           child: ConstrainedBox(
@@ -185,6 +192,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
             child: Form(
               key: _formKey,
               child: ListView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: EdgeInsets.only(
+                    bottom:
+                        kIsWeb ? MediaQuery.viewInsetsOf(context).bottom : 0),
                 children: [
                   Row(
                     children: [
@@ -201,11 +213,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     compact: true,
                     subtitle: _isDriver ? 'Водитель' : 'Пассажир',
                   ),
-                  const SizedBox(height: 22),
-                  _RegisterHero(isDriver: _isDriver),
-                  const SizedBox(height: 12),
-                  _RegisterProgressStrip(isDriver: _isDriver),
-                  const SizedBox(height: 22),
+                  const SizedBox(height: 16),
                   ICCard(
                     padding: EdgeInsets.zero,
                     child: Column(
@@ -292,7 +300,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               _formSectionTitle(
                                 icon: Icons.person_rounded,
                                 title: 'Личные данные',
-                                subtitle: 'Контакты для связи с пассажирами',
+                                subtitle: _isDriver
+                                    ? 'Контакты для связи с пассажирами'
+                                    : 'Имя и номер вашего аккаунта',
                               ),
                               const SizedBox(height: 14),
                               TextFormField(
@@ -528,243 +538,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       focusedErrorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: const BorderSide(color: Colors.redAccent),
-      ),
-    );
-  }
-}
-
-class _RegisterHero extends StatelessWidget {
-  const _RegisterHero({required this.isDriver});
-
-  final bool isDriver;
-
-  @override
-  Widget build(BuildContext context) {
-    final title = isDriver ? 'Регистрация водителя' : 'Аккаунт пассажира';
-    final subtitle = isDriver
-        ? 'Заполните профиль и автомобиль. Документы добавим следующим шагом.'
-        : 'Заказывайте город, межгород и доставку.';
-    final icon =
-        isDriver ? Icons.directions_car_filled_rounded : Icons.person_rounded;
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF21113E), AppTheme.primaryColor],
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x407C2DFF),
-            blurRadius: 24,
-            offset: Offset(0, 12),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 58,
-                  height: 58,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.20),
-                    ),
-                  ),
-                  child: Icon(icon, color: Colors.white, size: 30),
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 25,
-                    height: 1.08,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.78),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _HeroChip(
-                      icon: Icons.verified_user_outlined,
-                      text: isDriver ? 'Проверка' : 'Безопасно',
-                    ),
-                    _HeroChip(
-                      icon: Icons.shield_outlined,
-                      text: isDriver ? 'Надёжно' : 'Комфорт',
-                    ),
-                    _HeroChip(
-                      icon: Icons.route_rounded,
-                      text: isDriver ? 'Заказы' : 'Поездки',
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HeroChip extends StatelessWidget {
-  const _HeroChip({required this.icon, required this.text});
-
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: Colors.white, size: 14),
-          const SizedBox(width: 6),
-          Text(
-            text,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RegisterProgressStrip extends StatelessWidget {
-  const _RegisterProgressStrip({required this.isDriver});
-
-  final bool isDriver;
-
-  @override
-  Widget build(BuildContext context) {
-    final steps = isDriver
-        ? const [
-            ('1', 'Личные данные'),
-            ('2', 'Автомобиль'),
-            ('3', 'Проверка'),
-          ]
-        : const [
-            ('1', 'Аккаунт'),
-            ('2', 'Поездки'),
-            ('3', 'Готово'),
-          ];
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF11101D) : Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: AppTheme.primaryColor.withValues(alpha: 0.12),
-        ),
-        boxShadow: [
-          if (!isDark)
-            const BoxShadow(
-              color: Color(0x142C174C),
-              blurRadius: 24,
-              offset: Offset(0, 12),
-            ),
-        ],
-      ),
-      child: Row(
-        children: steps.map((step) {
-          final index = steps.indexOf(step);
-          final selected = index == 0;
-          return Expanded(
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    children: [
-                      Container(
-                        width: 34,
-                        height: 34,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: selected
-                              ? const LinearGradient(
-                                  colors: [
-                                    AppTheme.secondaryColor,
-                                    AppTheme.primaryColor,
-                                  ],
-                                )
-                              : null,
-                          color: selected
-                              ? null
-                              : AppTheme.primaryColor.withValues(alpha: 0.08),
-                        ),
-                        child: Text(
-                          step.$1,
-                          style: TextStyle(
-                            color: selected
-                                ? Colors.white
-                                : theme.colorScheme.primary,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        step.$2,
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: selected
-                              ? theme.colorScheme.onSurface
-                              : theme.colorScheme.onSurfaceVariant,
-                          fontSize: 11,
-                          fontWeight:
-                              selected ? FontWeight.w800 : FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (index != steps.length - 1)
-                  Container(
-                    width: 22,
-                    height: 2,
-                    margin: const EdgeInsets.only(bottom: 20),
-                    color: AppTheme.primaryColor.withValues(alpha: 0.22),
-                  ),
-              ],
-            ),
-          );
-        }).toList(),
       ),
     );
   }
