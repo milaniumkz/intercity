@@ -88,6 +88,20 @@ const p=new PrismaClient();
 JSENABLEDEMO
     ;;
   status)
+    if [[ "$TARGET" == "dashboard-rollout" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSROLLOUT'
+const {PrismaClient}=require('@prisma/client');
+(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{
+ await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+ const keys=['driverTaxIntegrationPaused','kzTaxEnabled','referralCommissionPercent','iosDistributionMode','googlePlayUrl'];
+ console.log(JSON.stringify({kind:'rollout-settings',settings:await tx.appSettings.findMany({where:{key:{in:keys}},select:{key:true,value:true}})}));
+ console.log(JSON.stringify({kind:'accounting-history',taxEntries:await tx.taxIncomeEntry.count(),referralCredits:await tx.walletTransaction.count({where:{direction:'CREDIT',type:'REFERRAL_INCOME'}}),invitedAccounts:await tx.user.count({where:{referredBy:{not:null}}})}));
+ try{const {dashboardStatistics}=require('./dist/src/admin/dashboard-statistics');for(const period of ['24h','today','week','month']){const r=await dashboardStatistics(tx,period);console.log(JSON.stringify({kind:'dashboard-check',period,users:r.users,orders:r.orders,completedInPeriod:r.completedInPeriod,dailyRows:r.daily.length}));}}catch(e){if(e.code==='MODULE_NOT_FOUND')console.log('Dashboard statistics module is not deployed yet');else throw e;}
+ },{timeout:30000})}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSROLLOUT
+      exit 0
+    fi
     if [[ "$TARGET" == "tax" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-backend node <<'JSTAXSTATUS'
