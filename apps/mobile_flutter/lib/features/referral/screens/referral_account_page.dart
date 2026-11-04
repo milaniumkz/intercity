@@ -127,7 +127,8 @@ class _ReferralAccountPageState extends State<ReferralAccountPage> {
     final driver = _summary?['isDriver'] == true;
     final individual = profile?['kind'] == 'INDIVIDUAL';
     final verified = profile?['status'] == 'VERIFIED';
-    final canWithdraw = !driver || individual || verified;
+    final paused = _summary?['driverTaxIntegrationPaused'] == true;
+    final canWithdraw = paused || !driver || individual || verified;
     final income = (_summary?['income'] as List?) ?? [];
     return Scaffold(
       appBar: AppBar(title: const Text('Реферальная система')),
@@ -163,6 +164,7 @@ class _ReferralAccountPageState extends State<ReferralAccountPage> {
               ),
             if (_summary != null &&
                 driver &&
+                !paused &&
                 !individual &&
                 _summary!['enabled'] != true)
               const Card(
@@ -173,7 +175,7 @@ class _ReferralAccountPageState extends State<ReferralAccountPage> {
                   ),
                 ),
               ),
-            if (driver && profile != null)
+            if (driver && !paused && profile != null)
               Card(
                 child: ListTile(
                   leading: Icon(
@@ -256,8 +258,10 @@ class _ReferralAccountPageState extends State<ReferralAccountPage> {
               ReferralProfileCard(
                 user: const {},
                 apiClient: _api,
-                showLegacyTotals:
-                    driver && !individual && _summary!['enabled'] != true,
+                showLegacyTotals: driver &&
+                    !paused &&
+                    !individual &&
+                    _summary!['enabled'] != true,
               ),
             if (_summary != null && (!driver || individual))
               const PersonalIncomeTaxNotice(),

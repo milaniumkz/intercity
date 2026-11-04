@@ -31,6 +31,7 @@ class TaxApi extends ApiClient {
             : path == '/tax/me'
                 ? {
                     'enabled': true,
+                    'driverTaxIntegrationPaused': paused,
                     'profile': profile,
                     'isDriver': isDriver,
                     'referralBalance': balance,
@@ -70,6 +71,22 @@ class TaxApi extends ApiClient {
 }
 
 void main() {
+  testWidgets(
+      'paused driver can request referral withdrawal without a tax profile',
+      (tester) async {
+    tester.view.physicalSize = const Size(600, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+        home: ReferralAccountPage(
+            apiClient: TaxApi(isDriver: true, profile: null, paused: true))));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Вывести на карту'));
+    await tester.tap(find.text('Вывести на карту'));
+    await tester.pumpAndSettle();
+    expect(find.text('Создать заявку'), findsOneWidget);
+    expect(find.text('Ваш налоговый статус'), findsNothing);
+  });
   testWidgets('paused driver tax shows information without status selection',
       (tester) async {
     final api = TaxApi(isDriver: true, paused: true);
