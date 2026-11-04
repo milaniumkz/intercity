@@ -1,3 +1,4 @@
+import '../../referral/widgets/driver_tax_information_page.dart';
 import '../widgets/route_departure_field.dart';
 import '../../../core/utils/localization_service.dart';
 import '../../../core/widgets/account_deletion_dialog.dart';
@@ -833,6 +834,13 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                     'Заработок',
                     'Доход, комиссия и социальные платежи',
                     () => _openAndRefresh('/driver/earnings'),
+                  ),
+                  _boardProfileRow(
+                    Icons.receipt_long_outlined,
+                    'Налоги и чеки',
+                    'Информация об обязанностях водителя',
+                    () => Navigator.of(context).push(MaterialPageRoute<void>(
+                        builder: (_) => const DriverTaxInformationPage())),
                   ),
                   _boardProfileRow(
                     Icons.alt_route_rounded,

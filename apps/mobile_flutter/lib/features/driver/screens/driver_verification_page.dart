@@ -1,3 +1,4 @@
+import '../../referral/widgets/driver_tax_notice.dart';
 import '../../referral/widgets/tax_status_panel.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -38,6 +39,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
   String _message = '';
   String _taxCountry = 'KZ';
   bool _taxSaved = false;
+  bool _taxIntegrationPaused = true;
   String _accountPhone = '';
   bool _loading = false;
   String? _docUploadingType;
@@ -89,6 +91,10 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
   Future<void> _loadTaxStatus() async {
     try {
       final response = await ApiClient().get('/tax/me');
+      if (mounted) {
+        setState(() => _taxIntegrationPaused =
+            response.data['driverTaxIntegrationPaused'] == true);
+      }
       final profile = response.data['profile'];
       if (mounted &&
           profile is Map &&
@@ -315,7 +321,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
     final carModel =
         '${_carBrandCtrl.text.trim()} ${_carModelCtrl.text.trim()}'.trim();
     final carNumber = _carNumberCtrl.text.trim();
-    if (_taxCountry == 'KZ' && !_taxSaved) {
+    if (!_taxIntegrationPaused && _taxCountry == 'KZ' && !_taxSaved) {
       setState(() => _message = 'Сначала сохраните налоговый статус.');
       return;
     }
@@ -647,21 +653,23 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
                         ),
                     trailing: Icons.chevron_right_rounded),
                 const SizedBox(height: 16),
-                DropdownButtonFormField<String>(
-                    initialValue: _taxCountry,
-                    decoration: const InputDecoration(
-                        labelText: 'Страна налогового статуса'),
-                    items: const [
-                      DropdownMenuItem(value: 'KZ', child: Text('Казахстан')),
-                      DropdownMenuItem(value: 'RU', child: Text('Россия'))
-                    ],
-                    onChanged: (value) =>
-                        setState(() => _taxCountry = value ?? 'KZ')),
-                if (_taxCountry == 'KZ')
+                if (_taxIntegrationPaused) const DriverTaxNotice(),
+                if (!_taxIntegrationPaused)
+                  DropdownButtonFormField<String>(
+                      initialValue: _taxCountry,
+                      decoration: const InputDecoration(
+                          labelText: 'Страна налогового статуса'),
+                      items: const [
+                        DropdownMenuItem(value: 'KZ', child: Text('Казахстан')),
+                        DropdownMenuItem(value: 'RU', child: Text('Россия'))
+                      ],
+                      onChanged: (value) =>
+                          setState(() => _taxCountry = value ?? 'KZ')),
+                if (!_taxIntegrationPaused && _taxCountry == 'KZ')
                   TaxStatusPanel(
                       driver: true,
                       onSaved: () => setState(() => _taxSaved = true)),
-                if (_taxCountry == 'RU')
+                if (!_taxIntegrationPaused && _taxCountry == 'RU')
                   const Padding(
                       padding: EdgeInsets.all(12),
                       child: Text(

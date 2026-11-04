@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/api/api_client.dart';
 import 'package:flutter/material.dart';
@@ -28,6 +29,12 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
   late final String _code = _normalizeCode(widget.referralCode);
   bool _saved = false;
   String? _appStoreUrl;
+  String? _testFlightUrl;
+  String _iosMode = 'web';
+  bool _accountReady = false;
+  bool _invitationConfirmed = false;
+  String? _accountError;
+  bool get _isIos => defaultTargetPlatform == TargetPlatform.iOS;
   String? _googlePlayUrl;
 
   @override
@@ -35,6 +42,9 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
     super.initState();
     if (!widget.downloadOnly) _saveReferral();
     _loadStores();
+    if (widget.downloadOnly) {
+      _confirmAccount();
+    }
   }
 
   Future<void> _loadStores() async {
@@ -44,6 +54,8 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
       if (!mounted || response.data is! Map) return;
       setState(() {
         _appStoreUrl = response.data['appStoreUrl'] as String?;
+        _testFlightUrl = response.data['testFlightUrl'] as String?;
+        _iosMode = response.data['iosDistributionMode'] as String? ?? 'web';
         final play = response.data['googlePlayUrl'] as String?;
         if (play != null) {
           final uri = Uri.parse(play);
@@ -55,6 +67,25 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
       });
     } catch (_) {
       // Registration remains available independently of store settings.
+    }
+  }
+
+  Future<void> _confirmAccount() async {
+    setState(() => _accountError = null);
+    try {
+      final response = await (widget.apiClient ?? ApiClient()).get('/me');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _accountReady = true;
+        _invitationConfirmed = response.data['referredBy'] == _code;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _accountError =
+            'Не удалось проверить аккаунт. Повторите проверку перед установкой.');
+      }
     }
   }
 
@@ -153,7 +184,11 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
                       const SizedBox(height: 18),
                       Text(
                         widget.downloadOnly
-                            ? 'Приглашение закреплено'
+                            ? (_invitationConfirmed
+                                ? 'Приглашение закреплено'
+                                : _accountReady
+                                    ? 'Ваш аккаунт готов'
+                                    : 'Проверяем аккаунт')
                             : 'Вас пригласили в INTERCITY',
                         style: TextStyle(
                           color: colorScheme.onSurface,
@@ -165,9 +200,15 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
                       const SizedBox(height: 10),
                       Text(
                         widget.downloadOnly
-                            ? 'Скачайте приложение и войдите с номером телефона и паролем, указанными при регистрации. Приглашение уже сохранено в вашем аккаунте.'
+                            ? (_accountReady
+                                ? (!_invitationConfirmed
+                                    ? 'У вас уже есть аккаунт. Ранее закреплённое приглашение сохраняется. Новая ссылка не меняет пригласившего. После установки войдите с тем же номером телефона и паролем.'
+                                    : _isIos && _iosMode == 'web'
+                                        ? 'Пользуйтесь веб-версией на iPhone. При переходе в приложение позже войдите в тот же аккаунт — приглашение сохранится.'
+                                        : 'Установите приложение и войдите с тем же номером телефона и паролем. Приглашение хранится в аккаунте и не потеряется при установке.')
+                                : 'Подтверждаем сохранение вашего аккаунта на сервере.')
                             : _saved
-                                ? 'При регистрации здесь приглашение закрепится автоматически. После скачивания войдите в тот же аккаунт. Код приглашения: $_code.'
+                                ? 'Зарегистрируйтесь по этой ссылке — приглашение применится автоматически. На Android затем установите приложение из Google Play и войдите в тот же аккаунт. На iPhone продолжайте в веб-версии.'
                                 : 'Сохраняем приглашение...',
                         style: TextStyle(
                           color: colorScheme.onSurfaceVariant,
@@ -206,43 +247,53 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
                               .go('/register/passenger?ref=$_code&download=1'),
                         ),
                       const SizedBox(height: 10),
-                      if (widget.downloadOnly && _googlePlayUrl != null) ...[
+                      if (widget.downloadOnly &&
+                          _accountReady &&
+                          !_isIos &&
+                          _googlePlayUrl != null) ...[
                         ICGradientButton(
                             label: 'Скачать в Google Play',
                             icon: Icons.android,
                             onPressed: () => _openStore(_googlePlayUrl!)),
                         const SizedBox(height: 10),
                       ],
-                      if (widget.downloadOnly && _appStoreUrl != null) ...[
+                      if (widget.downloadOnly &&
+                          _accountReady &&
+                          _isIos &&
+                          _iosMode == 'appstore' &&
+                          _appStoreUrl != null) ...[
                         ICGradientButton(
                             label: 'Скачать в App Store',
                             icon: Icons.apple,
                             onPressed: () => _openStore(_appStoreUrl!)),
                         const SizedBox(height: 10),
                       ],
-                      ICPremiumTextButton(
-                          label: 'Скопировать код приглашения',
-                          icon: Icons.copy,
-                          onPressed: () async {
-                            await Clipboard.setData(ClipboardData(text: _code));
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content:
-                                        Text('Код приглашения скопирован')));
-                          }),
-                      const SizedBox(height: 10),
+                      if (widget.downloadOnly &&
+                          _accountReady &&
+                          _isIos &&
+                          _iosMode == 'testflight' &&
+                          _testFlightUrl != null) ...[
+                        ICGradientButton(
+                            label: 'Установить через TestFlight',
+                            icon: Icons.apple,
+                            onPressed: () => _openStore(_testFlightUrl!)),
+                        const SizedBox(height: 10),
+                      ],
+                      if (_accountError != null) ...[
+                        Text(_accountError!),
+                        TextButton(
+                            onPressed: _confirmAccount,
+                            child: const Text('Повторить проверку')),
+                      ],
                       if (widget.downloadOnly)
                         ICGradientButton(
                           label: 'Продолжить в веб-версии',
                           icon: Icons.public,
                           onPressed: () => context.go('/order'),
                         ),
-                      if (widget.downloadOnly &&
-                          _appStoreUrl == null &&
-                          _googlePlayUrl == null)
+                      if (widget.downloadOnly && _isIos && _iosMode == 'web')
                         const Text(
-                            'Скачивание пока недоступно. Вы можете пользоваться веб-версией.'),
+                            'Приложение для iPhone проходит одобрение. Веб-версия уже доступна.'),
                       Row(
                         children: [
                           Expanded(

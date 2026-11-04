@@ -784,6 +784,12 @@ export class AdminController {
         };
     }
 
+    @Get('dashboard/statistics')
+    async getDashboardStatistics(@Request() req, @Query('period') period?: string, @Query('from') from?: string, @Query('to') to?: string) {
+        await this.ensurePermission(req, 'dashboard.view');
+        return this.adminService.getDashboardStatistics(period, from, to);
+    }
+
     @Get('dashboard/kpis')
     @ApiOperation({ summary: 'Get dashboard KPI metrics for admin panel' })
     async getDashboardKpis(@Request() req) {

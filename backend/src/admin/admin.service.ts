@@ -1,3 +1,6 @@
+import { DRIVER_TAX_PAUSED_KEY, offlineUnverifiedTaxDrivers } from '../tax/driver-tax-mode';
+import { lockIncomeAccounting } from '../tax/tax-ledger';
+import { dashboardStatistics } from './dashboard-statistics';
 import { ROUTE_TOP_POLICY_KEY, parseRouteTopPolicy } from '../common/driver-route-top';
 import { releaseVerifiedTripRewards } from '../common/trip-verification';
 import { reviseDriverRating, validateReviewDecision } from '../common/driver-rating-review';
@@ -673,6 +676,16 @@ export class AdminService {
     async setSetting(key: string, value: string) {
         if(key===ROUTE_TOP_POLICY_KEY) value=JSON.stringify(parseRouteTopPolicy(value));
         if (key.startsWith('kzTax') || key === 'referralMinPayoutKzt') throw new BadRequestException('Настройка выполняется только в разделе налоговых реестров');
+        if (key === DRIVER_TAX_PAUSED_KEY) {
+            if (!['true','false'].includes(value)) throw new BadRequestException('Укажите true или false');
+            return this.prisma.$transaction(async tx => {
+                await lockIncomeAccounting(tx);
+                const setting = await tx.appSettings.upsert({where:{key},create:{key,value},update:{value}});
+                if (value === 'false' && (await tx.appSettings.findUnique({where:{key:'kzTaxEnabled'}}))?.value === 'true') await offlineUnverifiedTaxDrivers(tx);
+                return setting;
+            });
+        }
+        if (key === 'iosDistributionMode' && !['web','testflight','appstore'].includes(value)) throw new BadRequestException('Выберите web, testflight или appstore');
         if (key === 'kassa24SavedCardsEnabled' && !['true','false'].includes(value)) throw new BadRequestException('Укажите true или false');
         if (key === 'kassa24AcquiringId' && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0)) throw new BadRequestException('Укажите числовой acquiringId терминала Kassa24');
         if (['driverDailyBonusKZT', 'driverDailyBonusRUB'].includes(key)) {
@@ -682,11 +695,11 @@ export class AdminService {
             const percent = Number(value);
             if (!value.trim() || !Number.isFinite(percent) || percent < 0 || percent > 100) throw new BadRequestException('Referral commission percentage must be between 0 and 100');
         }
-        if (['appStoreUrl', 'googlePlayUrl'].includes(key) && value.trim()) {
+        if (['appStoreUrl', 'googlePlayUrl', 'testFlightUrl'].includes(key) && value.trim()) {
             let url: URL;
             try { url = new URL(value); } catch { throw new BadRequestException('Invalid app store URL'); }
-            const host = key === 'appStoreUrl' ? 'apps.apple.com' : 'play.google.com';
-            if (url.protocol !== 'https:' || url.hostname !== host) throw new BadRequestException('Invalid app store URL');
+            const host = key === 'appStoreUrl' ? 'apps.apple.com' : key === 'testFlightUrl' ? 'testflight.apple.com' : 'play.google.com';
+            if (url.protocol !== 'https:' || url.hostname !== host || (key === 'testFlightUrl' && !/^\/join\/[A-Za-z0-9]+\/?$/.test(url.pathname))) throw new BadRequestException('Invalid app store URL');
         }
         if (key === 'allowDemoTopupCredits' && !['true','false'].includes(value)) throw new BadRequestException('Тестовые пополнения: true или false');
         if (key === 'orderCommissionPercent' && (!value.trim() || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100)) throw new BadRequestException('Комиссия должна быть от 0 до 100 процентов');
@@ -1625,6 +1638,10 @@ export class AdminService {
             lines.push(['payouts', row.id, row.createdAt.toISOString(), row.amount, row.walletId].join(','));
         }
         return lines.join('\n');
+    }
+
+    getDashboardStatistics(period?: string, from?: string, to?: string) {
+        return dashboardStatistics(this.prisma, period, from, to);
     }
 
     async getDashboardKpis() {

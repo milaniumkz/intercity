@@ -38,13 +38,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _carNumberController = TextEditingController();
   bool _isLoading = false;
   bool _showPassword = false;
+  late final Future<void> _referralReady;
 
   bool get _isDriver => widget.role.toLowerCase() == 'driver';
 
   @override
   void initState() {
     super.initState();
-    _loadReferralCode();
+    _referralReady = _loadReferralCode();
   }
 
   Future<void> _loadReferralCode() async {
@@ -52,6 +53,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final routeCode = _normalizeReferralInput(widget.referralCode);
     if (routeCode != null) {
       _referralController.text = routeCode;
+      try {
+        await AppPreferences.setPendingReferralCode(routeCode);
+      } catch (_) {
+        // The current link still supplies the code directly to registration.
+      }
+      if (mounted) {
+        setState(() {});
+      }
       return;
     }
     final storedCode =
@@ -61,7 +70,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _referralController.text.trim().isNotEmpty) {
       return;
     }
-    _referralController.text = storedCode;
+    setState(() => _referralController.text = storedCode);
   }
 
   String? _normalizeReferralInput(String? raw) => normalizeReferralCode(raw);
@@ -78,6 +87,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _register() async {
+    await _referralReady;
+    if (!mounted) {
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
@@ -117,7 +130,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
           },
         );
 
-        if (loginResponse.statusCode == 200) {
+        if (loginResponse.statusCode == 200 ||
+            loginResponse.statusCode == 201) {
           await apiClient.setTokens(
             loginResponse.data['accessToken'].toString(),
             loginResponse.data['refreshToken'].toString(),
@@ -377,16 +391,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   return null;
                                 },
                               ),
-                              if (!_isDriver) ...[
+                              if (_referralController.text.isNotEmpty) ...[
                                 const SizedBox(height: 16),
-                                TextFormField(
-                                  controller: _referralController,
-                                  decoration: _inputDecoration(
-                                    labelText:
-                                        'Реферальная ссылка или код (опционально)',
-                                    icon: Icons.card_giftcard_rounded,
-                                  ),
-                                ),
+                                const Row(children: [
+                                  Icon(Icons.card_giftcard_rounded),
+                                  SizedBox(width: 10),
+                                  Expanded(
+                                      child: Text(
+                                          'Приглашение сохранено. Оно применится автоматически при регистрации.')),
+                                ]),
                               ],
                             ],
                           ),

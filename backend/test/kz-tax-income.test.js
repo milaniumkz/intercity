@@ -32,7 +32,7 @@ test('KZ monetary referrals: verified status, no duplicate money, caps, IP, curr
   const url = new URL(database); assert.equal(url.hostname, '127.0.0.1'); assert.equal(url.pathname, '/dispatch_test');
   const p = new PrismaClient({ datasources: { db: { url: database } } });
   const tax = new TaxService(p), key = `tax-test:${randomUUID()}`, owners = [], driverProfiles = [], requests = [], cities = [];
-  const settingKeys = ['kzTaxEnabled','kzTaxOperatorReference','kzTaxReferralContractReference','referralMinPayoutKzt',`kzTaxPolicy${new Date().getUTCFullYear()}`];
+  const settingKeys = ['driverTaxIntegrationPaused','kzTaxEnabled','kzTaxOperatorReference','kzTaxReferralContractReference','referralMinPayoutKzt',`kzTaxPolicy${new Date().getUTCFullYear()}`];
   const previous = await p.appSettings.findMany({where:{key:{in:settingKeys}}});
   const oldKey = process.env.TAX_ID_ENCRYPTION_KEY;
   process.env.TAX_ID_ENCRYPTION_KEY = 'isolated-test-tax-encryption-secret-only';
@@ -62,6 +62,7 @@ test('KZ monetary referrals: verified status, no duplicate money, caps, IP, curr
   }
   const credit = (u,id,gross=10000,currency='KZT',sourceKind='REFERRAL') => p.$transaction(tx => recordTaxIncome(tx,{key:`${key}:${id}`,userId:u.id,sourceKind,sourceId:id,gross,currency,occurredAt:new Date()}));
   try {
+    await p.appSettings.upsert({where:{key:'driverTaxIntegrationPaused'},create:{key:'driverTaxIntegrationPaused',value:'false'},update:{value:'false'}});
     const legacy=[];
     for(const countryCode of ['KZ','RU']) {
       const city=await p.city.create({data:{name:key+countryCode,countryCode,lat:50,lng:80}});cities.push(city.id);

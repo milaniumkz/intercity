@@ -1,3 +1,4 @@
+import { driverTaxIntegrationPaused, offlineUnverifiedTaxDrivers } from './driver-tax-mode';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma.service';
@@ -42,12 +43,12 @@ export class TaxService {
         return this.prisma.$transaction(async tx => {
             const profile = await tx.taxProfile.findUnique({ where: { userId } });
             const driver = await tx.driverProfile.findUnique({ where: { userId }, select: { id: true } });
-            if (!driver || isIndividual(profile)) await releasePendingIncome(tx, userId, new Date(), true);
+            if (!driver || isIndividual(profile) || await driverTaxIntegrationPaused(tx)) await releasePendingIncome(tx, userId, new Date(), true);
             const wallet = await tx.wallet.findUnique({ where: { userId } });
             const config = await taxSettings(tx);
             const income = await tx.taxIncomeEntry.findMany({ where: { ownerKey: userId }, orderBy: { occurredAt: 'desc' }, take: 100 });
             const pending = await tx.taxIncomeEntry.aggregate({ where: { ownerKey: userId, sourceKind: 'REFERRAL', status: 'REVIEW', currency: 'KZT' }, _sum: { gross: true } });
-            return { profile: this.publicProfile(profile), isDriver: !!driver, enabled: config.enabled, consentVersion: TAX_CONSENT_VERSION,
+            return { driverTaxIntegrationPaused: await driverTaxIntegrationPaused(tx), profile: this.publicProfile(profile), isDriver: !!driver, enabled: config.enabled, consentVersion: TAX_CONSENT_VERSION,
                 referralBalance: wallet?.referralMoney ?? money(0), minPayout: config.minPayout,
                 pendingReferral: pending._sum.gross ?? money(0), income,
                 period: kazakhstanPeriod(new Date()) };
@@ -147,8 +148,10 @@ export class TaxService {
     }
     release(userId: string) { return this.prisma.$transaction(tx => releasePendingIncome(tx, userId), { timeout: 30000 }); }
     async collectDebt(userId: string) {
+        if (await driverTaxIntegrationPaused(this.prisma)) return { collected: money(0), paused: true };
         return this.prisma.$transaction(async tx => {
             await lockIncomeAccounting(tx);
+            if (await driverTaxIntegrationPaused(tx)) return { collected: money(0), paused: true };
             await tx.$executeRaw`SELECT id FROM "User" WHERE id=${userId} FOR UPDATE`;
             const wallet = await tx.wallet.findUnique({ where: { userId } });
             if (!wallet) throw new NotFoundException('Кошелёк не найден');
@@ -255,13 +258,9 @@ export class TaxService {
         });
         return { ...dto, enabled: dto.enabled };
     }
-    private offlineUnverifiedKazakhstanDrivers(tx: any) {
-        return tx.driverOnline.updateMany({ where: { isOnline: true, AND: [
-            { OR: [{ city: { countryCode: 'KZ' } }, { cityId: null, driver: { user: { city: { countryCode: 'KZ' } } } }] },
-            { driver: { user: { OR: [ { taxProfile: null }, { taxProfile: { is: { AND: [{ kind: { not: 'INDIVIDUAL' } }, { OR: [
-                { status: { not: 'VERIFIED' } }, { countryCode: { not: 'KZ' } }, { NOT: { activities: { has: '49320' } } },
-            ] }] } } } ] } } },
-        ] }, data: { isOnline: false } });
+    private async offlineUnverifiedKazakhstanDrivers(tx: any) {
+        if (await driverTaxIntegrationPaused(tx)) return { count: 0 };
+        return offlineUnverifiedTaxDrivers(tx);
     }
     async configuration() {
         const year = new Date().getUTCFullYear().toString();

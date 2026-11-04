@@ -1,3 +1,4 @@
+import { driverTaxChecksEnabled } from '../tax/driver-tax-mode';
 import {routeRequestTimeRange, routeMatchesRequestSchedule} from '../common/driver-route-schedule';
 import { Optional } from '@nestjs/common';
 import { TechnicalService } from '../technical/technical.service';
@@ -35,7 +36,7 @@ export class DriverService {
     ) { }
 
     async createProfile(userId: string, dto: CreateDriverProfileDto) {
-        const rollout = (await this.prisma.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
+        const rollout = await driverTaxChecksEnabled(this.prisma);
         if (rollout && !dto.taxCountry && !await this.prisma.driverProfile.findUnique({ where: { userId } })) throw new BadRequestException('Укажите страну налогового статуса');
         if (rollout && dto.taxCountry === 'KZ') {
             const tax = await this.prisma.taxProfile.findUnique({ where: { userId } });
@@ -282,7 +283,7 @@ export class DriverService {
         }
         if (dto.isOnline) {
             const city = await this.prisma.city.findUnique({ where: { id: dto.cityId ?? profile.online?.cityId ?? profile.user?.cityId ?? '' } });
-            const rollout = (await this.prisma.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
+            const rollout = await driverTaxChecksEnabled(this.prisma);
             if (rollout && city?.countryCode === 'KZ') {
                 const tax = await this.prisma.taxProfile.findUnique({ where: { userId: driverUserId } });
                 if (!canWorkInKazakhstan(tax)) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');
@@ -310,7 +311,7 @@ export class DriverService {
         const updated = dto.isOnline ? await this.prisma.$transaction(async tx => {
             await lockIncomeAccounting(tx);
             const city = resolvedCityId ? await tx.city.findUnique({ where: { id: resolvedCityId } }) : null;
-            const enabled = (await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true';
+            const enabled = await driverTaxChecksEnabled(tx);
             if (enabled && city?.countryCode === 'KZ') {
                 const tax = await tx.taxProfile.findUnique({ where: { userId: driverUserId } });
                 if (!canWorkInKazakhstan(tax)) throw new BadRequestException('Для работы в Казахстане подтвердите налоговый статус в профиле');

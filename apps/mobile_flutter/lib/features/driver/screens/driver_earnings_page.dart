@@ -112,7 +112,9 @@ class _DriverEarningsPageState extends State<DriverEarningsPage> {
     final trips = data?['trips'] as Map? ?? {};
     final profile = data?['profile'] as Map?;
     final social = tax['showSocialPayments'] == true;
+    final paused = tax['driverTaxIntegrationPaused'] == true;
     final incomplete = social &&
+        !paused &&
         ((tax['unaccountedTrips'] as num? ?? 0) > 0 || tax['enabled'] != true);
     return Scaffold(
       appBar: AppBar(
@@ -206,6 +208,11 @@ class _DriverEarningsPageState extends State<DriverEarningsPage> {
                     _row('Возвращено по картам', data['refundedCard']),
                   const Divider(),
                   _row('Комиссия сервиса', data['commission']),
+                  if (paused)
+                    const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Text(
+                            'Налоговая интеграция приостановлена. С новых поездок удерживается только комиссия сервиса. Налоги и чеки водитель оформляет самостоятельно. Исторические удержания показаны ниже.')),
                   if (social)
                     _row('Начисленные соцплатежи по этим поездкам',
                         tax['rideAccrued']),
@@ -223,7 +230,7 @@ class _DriverEarningsPageState extends State<DriverEarningsPage> {
                   _section('Налоги и социальные платежи', [
                     const Text(
                         'На СНР для самозанятых ИПН — 0% при соблюдении условий режима. Ниже — учтённые социальные платежи.'),
-                    if (tax['enabled'] != true)
+                    if (tax['enabled'] != true && !paused)
                       const Text(
                           'Операторский учёт социальных платежей не включён.'),
                     _row('ОПВ · пенсионные взносы', tax['opv']),

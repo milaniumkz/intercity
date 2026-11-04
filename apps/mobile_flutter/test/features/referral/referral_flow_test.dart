@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intercity_mobile/features/passenger/screens/profile_page.dart';
 import 'package:dio/dio.dart';
@@ -18,31 +19,55 @@ class _ReferralApi extends ApiClient {
       Response(
           requestOptions: RequestOptions(path: path),
           statusCode: 200,
-          data: path == '/auth/referral'
-              ? {
-                  'refCode': 'INVITE123',
-                  'refLink':
-                      'https://intercity.89-207-255-27.sslip.io/#/ref/INVITE123',
-                  'invitedCount': 3,
-                  'earned': {'KZT': 25, 'RUB': 75},
-                }
-              : {
-                  'appStoreUrl': 'https://apps.apple.com/app/id123',
-                  'googlePlayUrl':
-                      'https://play.google.com/store/apps/details?id=test'
-                });
+          data: path == '/me'
+              ? {'referredBy': 'INVITE123'}
+              : path == '/auth/referral'
+                  ? {
+                      'refCode': 'INVITE123',
+                      'refLink':
+                          'https://intercity.89-207-255-27.sslip.io/#/ref/INVITE123',
+                      'invitedCount': 3,
+                      'earned': {'KZT': 25, 'RUB': 75},
+                    }
+                  : {
+                      'appStoreUrl': 'https://apps.apple.com/app/id123',
+                      'googlePlayUrl':
+                          'https://play.google.com/store/apps/details?id=test'
+                    });
 }
 
 void main() {
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
-  testWidgets('active passenger profile includes referrals and scrolls on phones',
+  testWidgets('iPhone uses web even when store URLs are configured',
+      (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    tester.view.physicalSize = const Size(600, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+        home: ReferralLandingPage(
+            referralCode: 'INVITE123',
+            downloadOnly: true,
+            apiClient: _ReferralApi())));
+    await tester.pumpAndSettle();
+    expect(find.text('Приглашение закреплено'), findsOneWidget);
+    expect(find.text('Продолжить в веб-версии'), findsOneWidget);
+    expect(find.text('Скачать в Google Play'), findsNothing);
+    expect(find.text('Скачать в App Store'), findsNothing);
+    expect(find.text('Установить через TestFlight'), findsNothing);
+    expect(find.text('Скопировать код приглашения'), findsNothing);
+    debugDefaultTargetPlatformOverride = null;
+  });
+  testWidgets(
+      'active passenger profile includes referrals and scrolls on phones',
       (tester) async {
     tester.view.physicalSize = const Size(390, 500);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(const ProviderScope(
-        child: MaterialApp(home: ProfilePage())));
+    await tester.pumpWidget(
+        const ProviderScope(child: MaterialApp(home: ProfilePage())));
     await tester.pump();
     expect(find.byType(ReferralProfileEntry), findsOneWidget);
     expect(find.byType(ListView), findsOneWidget);
@@ -96,7 +121,8 @@ void main() {
             apiClient: _ReferralApi())));
     await tester.pumpAndSettle();
     expect(find.text('Приглашение закреплено'), findsOneWidget);
-    expect(find.text('Скачать в App Store'), findsOneWidget);
+    expect(find.text('Скачать в App Store'), findsNothing);
+    expect(find.text('Скопировать код приглашения'), findsNothing);
     expect(find.text('Скачать в Google Play'), findsOneWidget);
     expect(find.text('Зарегистрироваться'), findsNothing);
     expect(

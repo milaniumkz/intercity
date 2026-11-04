@@ -1,3 +1,4 @@
+import { driverTaxIntegrationPaused } from './driver-tax-mode';
 import { Prisma } from '@prisma/client';
 import { COMPONENTS, kazakhstanPeriod, money, POLICY_VERSION, socialIncrement } from './kz-social-calculator';
 import { isIndividual } from './tax-profile-policy';
@@ -26,11 +27,14 @@ export type IncomeEvent = { key: string; userId: string; sourceKind: 'CITY' | 'I
 // Both tax and wallet mutations share the caller's transaction. A user row is the
 // common lock for driver/referral income and profile verification, including months.
 export async function recordTaxIncome(tx: Prisma.TransactionClient, input: IncomeEvent) {
+    const paused = await driverTaxIntegrationPaused(tx);
+    if (paused && input.sourceKind !== 'REFERRAL') return null;
     const independentReferral = input.sourceKind === 'REFERRAL' && input.currency === 'KZT' &&
         (!await tx.driverProfile.findUnique({ where: { userId: input.userId }, select: { id: true } }) ||
-            isIndividual(await tx.taxProfile.findUnique({ where: { userId: input.userId } })));
+            paused || isIndividual(await tx.taxProfile.findUnique({ where: { userId: input.userId } })));
     if (!independentReferral && (await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value !== 'true') return null;
     await lockIncomeAccounting(tx);
+    if (input.sourceKind !== 'REFERRAL' && await driverTaxIntegrationPaused(tx)) return null;
     await tx.$queryRaw`SELECT key FROM "AppSettings" WHERE key = 'kzTaxEnabled' FOR SHARE`;
     if (!independentReferral && (await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value !== 'true') return null;
     await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${input.userId} FOR UPDATE`;
@@ -57,14 +61,15 @@ async function calculateEntry(tx: Prisma.TransactionClient, input: IncomeEvent, 
     period: string, gross: Prisma.Decimal, pendingId?: string) {
     const passengerReferral = input.sourceKind === 'REFERRAL' &&
         !await tx.driverProfile.findUnique({ where: { userId: input.userId }, select: { id: true } });
+    const selfAccountingDriver = input.sourceKind === 'REFERRAL' && await driverTaxIntegrationPaused(tx) && !passengerReferral;
     const individualIncome = isIndividual(profile) &&
         (input.sourceKind === 'REFERRAL' || (profile.effectiveFrom && profile.effectiveFrom <= input.occurredAt));
-    if ((passengerReferral || individualIncome) && input.currency === 'KZT') {
+    if ((passengerReferral || individualIncome || selfAccountingDriver) && input.currency === 'KZT') {
         // No tax identity, status approval, monthly basis or social withholding.
         // Historical posted liabilities remain separate and are never rewritten.
         const data = { ownerKey: input.userId, taxpayerKey: null, sourceKind: input.sourceKind, sourceId: input.sourceId,
-            currency: input.currency, occurredAt: input.occurredAt, period, profileKind: 'INDIVIDUAL',
-            profileSnapshot: { kind: 'INDIVIDUAL', selfReported: true }, status: 'ACCOUNTED', reviewReason: null,
+            currency: input.currency, occurredAt: input.occurredAt, period, profileKind: selfAccountingDriver ? 'SELF_ACCOUNTED_DRIVER' : 'INDIVIDUAL',
+            profileSnapshot: selfAccountingDriver ? { driverTaxIntegrationPaused: true, taxesPaidBy: 'DRIVER' } : { kind: 'INDIVIDUAL', selfReported: true }, status: 'ACCOUNTED', reviewReason: null,
             gross, opv: money(0), opvr: money(0), so: money(0), osms: money(0), withheld: money(0) };
         const entry = pendingId ? await tx.taxIncomeEntry.update({ where: { id: pendingId }, data })
             : await tx.taxIncomeEntry.create({ data: { ...data, eventKey: input.key } });
@@ -151,7 +156,9 @@ export async function releasePendingIncome(tx: Prisma.TransactionClient, userId:
     const pending = await tx.taxIncomeEntry.findMany({ where: { ownerKey: userId, status: 'REVIEW', currency: 'KZT',
         ...(referralsOnly ? { sourceKind: 'REFERRAL' } : {}) }, orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }], take: 100 });
     let released = 0;
+    const paused = await driverTaxIntegrationPaused(tx);
     for (const entry of pending) {
+        if (paused && entry.sourceKind !== 'REFERRAL') continue;
         const date = entry.sourceKind === 'REFERRAL' ? now : entry.occurredAt;
         const result = await calculateEntry(tx, { key: entry.eventKey, userId, sourceKind: entry.sourceKind as IncomeEvent['sourceKind'],
             sourceId: entry.sourceId, gross: entry.gross, currency: entry.currency, occurredAt: date }, profile,

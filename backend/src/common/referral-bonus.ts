@@ -1,3 +1,4 @@
+import { driverTaxIntegrationPaused } from '../tax/driver-tax-mode';
 import { Prisma } from '@prisma/client';
 import { bonusField } from './currency';
 import { lockIncomeAccounting, recordTaxIncome } from '../tax/tax-ledger';
@@ -32,7 +33,7 @@ export async function creditRideReferrals(tx: Prisma.TransactionClient, ride: {
         // Passenger and individual-driver KZT referrals are independent of the
         // operator social-accounting rollout. RUB keeps its existing ledger.
         const cashReferral = ride.currency === 'KZT' &&
-            ((await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true' ||
+            ((await tx.appSettings.findUnique({ where: { key: 'kzTaxEnabled' } }))?.value === 'true' || await driverTaxIntegrationPaused(tx) ||
                 !await tx.driverProfile.findUnique({ where: { userId: credit.userId }, select: { id: true } }) ||
                 isIndividual(await tx.taxProfile.findUnique({ where: { userId: credit.userId } })));
         if (cashReferral) {

@@ -15,6 +15,9 @@ test('admin validates referral percentages and actual app store hosts', async ()
     const admin = new AdminService({ appSettings: { upsert: async ({ create }) => create } }, {}, {});
     for (const value of ['-1', '101', 'invalid', '']) await assert.rejects(admin.setSetting('referralCommissionPercent', value));
     for (const value of ['http://apps.apple.com/app/id123', 'https://apps.apple.com.evil.invalid/app/id123', 'not-a-url']) await assert.rejects(admin.setSetting('appStoreUrl', value));
+    for (const value of ['https://testflight.apple.com.evil.invalid/join/abc','http://testflight.apple.com/join/abc','https://testflight.apple.com/invalid']) await assert.rejects(admin.setSetting('testFlightUrl',value));
+    assert.equal((await admin.setSetting('testFlightUrl','https://testflight.apple.com/join/ABCD1234')).value,'https://testflight.apple.com/join/ABCD1234');
+    await assert.rejects(admin.setSetting('iosDistributionMode','invalid'));
     assert.equal((await admin.setSetting('referralCommissionPercent', '25')).value, '25');
     assert.equal((await admin.setSetting('googlePlayUrl', 'https://play.google.com/store/apps/details?id=test')).key, 'googlePlayUrl');
 });

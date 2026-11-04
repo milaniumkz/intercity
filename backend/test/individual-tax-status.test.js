@@ -40,7 +40,7 @@ test('passenger referral accruals and payouts need no profile; individual driver
   const p = new PrismaClient({ datasources: { db: { url: url.toString() } } });
   const tax = new TaxService(p);
   const key = `individual-test:${randomUUID()}`, users = [];
-  const settingKeys = ['kzTaxEnabled', 'kzTaxOperatorReference', 'kzTaxReferralContractReference', 'referralMinPayoutKzt', `kzTaxPolicy${new Date().getUTCFullYear()}`];
+  const settingKeys = ['driverTaxIntegrationPaused','kzTaxEnabled', 'kzTaxOperatorReference', 'kzTaxReferralContractReference', 'referralMinPayoutKzt', `kzTaxPolicy${new Date().getUTCFullYear()}`];
   const previous = await p.appSettings.findMany({ where: { key: { in: settingKeys } } });
   const oldFetch = global.fetch;
   global.fetch = async () => ({ ok: false, json: async () => ({}) }); // Never call a real payment provider.
@@ -55,6 +55,7 @@ test('passenger referral accruals and payouts need no profile; individual driver
     key: `${key}:${id}`, userId, sourceKind, sourceId: id, gross, currency: 'KZT', occurredAt: new Date(),
   }));
   try {
+    await p.appSettings.upsert({where:{key:'driverTaxIntegrationPaused'},create:{key:'driverTaxIntegrationPaused',value:'false'},update:{value:'false'}});
     // Passenger money does not depend on the self-employed operator rollout.
     await p.appSettings.upsert({ where: { key: 'kzTaxEnabled' }, create: { key: 'kzTaxEnabled', value: 'false' }, update: { value: 'false' } });
     const passenger = await createUser();

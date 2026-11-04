@@ -63,9 +63,11 @@ void main() {
     addTearDown(router.dispose);
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pumpAndSettle();
-    final ref = find.widgetWithText(
-        TextFormField, 'Реферальная ссылка или код (опционально)');
-    expect(tester.widget<TextFormField>(ref).controller!.text, 'INVITE42');
+    expect(find.textContaining('Оно применится автоматически'), findsOneWidget);
+    expect(
+        find.widgetWithText(
+            TextFormField, 'Реферальная ссылка или код (опционально)'),
+        findsNothing);
     for (final entry in {
       'Имя': 'Invited QA',
       'Телефон': '7000000999',

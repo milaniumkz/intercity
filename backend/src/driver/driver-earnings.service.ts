@@ -1,3 +1,4 @@
+import { driverTaxIntegrationPaused } from '../tax/driver-tax-mode';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
@@ -85,7 +86,7 @@ export class DriverEarningsService {
                 gross, received, cash, card, bonus, pendingBonus, pendingCard, refundedCard, commission,
                 afterCommission: received.sub(commission), net: received.sub(commission).sub(rideAccrued),
                 commissionBreakdown: commissionRows.map(row => ({ type: row.type, amount: money(row._sum.amount ?? 0) })),
-                tax: { enabled: enabled?.value === 'true',
+                tax: { driverTaxIntegrationPaused: await driverTaxIntegrationPaused(tx), enabled: enabled?.value === 'true' && !await driverTaxIntegrationPaused(tx),
                     showSocialPayments: currency === 'KZT' && ((profile?.countryCode === 'KZ' && profile?.kind === 'SELF_EMPLOYED') ||
                         [...monthIncome, ...rideIncome].some(row => row.profileKind === 'SELF_EMPLOYED')),
                     opv: sum(accounted, 'opv'), opvr: sum(accounted, 'opvr'), so: sum(accounted, 'so'), osms: sum(accounted, 'osms'),

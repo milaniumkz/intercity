@@ -10,9 +10,11 @@ class TaxApi extends ApiClient {
     this.profile = const {'kind': 'SELF_EMPLOYED', 'status': 'VERIFIED'},
     this.isDriver = false,
     this.balance = '6240',
+    this.paused = false,
   });
   final Map<String, dynamic>? profile;
   final bool isDriver;
+  final bool paused;
   final String balance;
   Map<String, dynamic>? payload;
   String? posted;
@@ -24,20 +26,22 @@ class TaxApi extends ApiClient {
   }) async =>
       Response(
         requestOptions: RequestOptions(path: path),
-        data: path == '/tax/me'
-            ? {
-                'enabled': true,
-                'profile': profile,
-                'isDriver': isDriver,
-                'referralBalance': balance,
-                'minPayout': '5000',
-                'income': [],
-              }
-            : {
-                'refCode': 'TEST',
-                'refLink': 'https://example.test/#/ref/TEST',
-                'invitedCount': 0,
-              },
+        data: path == '/app/runtime-settings'
+            ? {'driverTaxIntegrationPaused': paused}
+            : path == '/tax/me'
+                ? {
+                    'enabled': true,
+                    'profile': profile,
+                    'isDriver': isDriver,
+                    'referralBalance': balance,
+                    'minPayout': '5000',
+                    'income': [],
+                  }
+                : {
+                    'refCode': 'TEST',
+                    'refLink': 'https://example.test/#/ref/TEST',
+                    'invitedCount': 0,
+                  },
       );
   @override
   Future<Response<dynamic>> post(
@@ -66,6 +70,20 @@ class TaxApi extends ApiClient {
 }
 
 void main() {
+  testWidgets('paused driver tax shows information without status selection',
+      (tester) async {
+    final api = TaxApi(isDriver: true, paused: true);
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: ListView(
+                children: [TaxStatusPanel(apiClient: api, driver: true)]))));
+    await tester.pumpAndSettle();
+    expect(find.text('Налоги и чеки водителя'), findsOneWidget);
+    expect(find.textContaining('удерживает только комиссию'), findsOneWidget);
+    expect(find.text('Физическое лицо'), findsNothing);
+    expect(find.text('Сохранить статус'), findsNothing);
+    expect(api.payload, isNull);
+  });
   testWidgets(
     'withdrawal uses only referral source and retains an actionable server error',
     (tester) async {
@@ -143,10 +161,12 @@ void main() {
           ),
         ),
       );
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Физическое лицо'));
       await tester.pumpAndSettle();
       expect(find.byType(TextField), findsNothing);
       expect(find.byType(CheckboxListTile), findsNothing);
+      await tester.pumpAndSettle();
       await Scrollable.ensureVisible(
           tester.element(find.text('Сохранить статус')),
           alignment: .5);
@@ -186,6 +206,7 @@ void main() {
           ),
         ),
       );
+      await tester.pumpAndSettle();
       await Scrollable.ensureVisible(
           tester.element(find.text('Сохранить статус')),
           alignment: .5);
@@ -199,6 +220,7 @@ void main() {
       await tester.enterText(find.byType(TextField), '900101300010');
       await tester.ensureVisible(find.byType(CheckboxListTile));
       await tester.tap(find.byType(CheckboxListTile));
+      await tester.pumpAndSettle();
       await tester.pumpAndSettle();
       await Scrollable.ensureVisible(
           tester.element(find.text('Сохранить статус')),

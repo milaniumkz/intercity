@@ -1,10 +1,10 @@
+import '../widgets/dashboard_statistics.dart';
 import '../widgets/freight_tariff_dialog.dart';
 import 'admin_trip_reviews_page.dart';
 import '../../../core/utils/csv_export.dart';
 import 'admin_rating_reviews_page.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:dio/dio.dart';
 import 'package:intercity_shared/intercity_shared.dart';
 
 import '../../../core/api/admin_api_client.dart';
@@ -53,9 +53,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final degraded = _kpis?['notificationDispatchDegraded24h'] == true;
     return AdminShell(
       title: 'Панель',
-      subtitle: 'Обзор операций и состояния уведомлений.',
+      subtitle: 'Пользователи, поездки, заказы и финансы.',
       child: ListView(
         children: [
+          const DashboardStatistics(),
+          const SizedBox(height: 16),
           _StatusBanner(
             message: _summary,
             tone: _summary.startsWith('Ошибка загрузки')
@@ -64,7 +66,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ),
           const SizedBox(height: 16),
           _SectionCard(
-            title: 'Оперативная сводка',
+            title: 'Состояние рассылок',
             trailing: _RefreshButton(
                 onPressed: _loading ? null : _load, loading: _loading),
             child: Column(
@@ -82,15 +84,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     spacing: 12,
                     runSpacing: 12,
                     children: [
-                      _StatChip(
-                          label: 'Активные заказы',
-                          value: '${_kpis!['activeOrders'] ?? 0}'),
-                      _StatChip(
-                          label: 'Водители онлайн',
-                          value: '${_kpis!['onlineDrivers'] ?? 0}'),
-                      _StatChip(
-                          label: 'Проблемные заказы',
-                          value: '${_kpis!['problemOrders'] ?? 0}'),
                       _StatChip(
                           label: 'В очереди',
                           value:
@@ -153,26 +146,11 @@ class _AdminOverviewLoader {
 
   Future<_AdminOverviewSnapshot> load() async {
     final api = _apiFactory();
-    final responses = await Future.wait<dynamic>([
-      api.get('/admin/drivers/pending'),
-      api.get('/admin/topups'),
-      api.get('/admin/payouts'),
-      api.get('/admin/orders'),
-      api.get('/admin/dashboard/kpis'),
-    ]);
-    final pending = List<dynamic>.from((responses[0] as Response).data as List);
-    final topups = List<dynamic>.from((responses[1] as Response).data as List);
-    final payouts = List<dynamic>.from((responses[2] as Response).data as List);
-    final orders = List<dynamic>.from((responses[3] as Response).data as List);
-    final kpis = Map<String, dynamic>.from(
-      ((responses[4] as Response).data as Map?) ?? const {},
-    );
+    final response = await api.get('/admin/dashboard/kpis');
     return _AdminOverviewSnapshot(
-      summary: 'Ожидают проверки ${pending.length}, '
-          'пополнения ${topups.length}, '
-          'выплаты ${payouts.length}, '
-          'заказы ${orders.length}',
-      kpis: kpis,
+      summary:
+          'Текущее состояние заказов и уведомлений. Статистика за выбранный период показана выше.',
+      kpis: Map<String, dynamic>.from((response.data as Map?) ?? const {}),
     );
   }
 }
@@ -1365,6 +1343,25 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
     }
   }
 
+  Future<void> _setDriverTaxMode(bool enabled) async {
+    setState(() => _saving = true);
+    try {
+      await AdminApiClient.instance.post('/admin/settings', data: {
+        'key': 'driverTaxIntegrationPaused',
+        'value': (!enabled).toString()
+      });
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _message = 'Не удалось изменить налоговый режим: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AdminShell(
@@ -1373,6 +1370,26 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
       child: ListView(
         children: [
           _StatusBanner(message: _message),
+          const SizedBox(height: 16),
+          _SectionCard(
+              title: 'Налоговая интеграция водителей',
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                            'Проверка налогового статуса и удержания платформой'),
+                        subtitle: const Text(
+                            'Выключено: выбор статуса не нужен, удерживается только комиссия. Включайте после получения интеграции и настройки налогового учёта.'),
+                        value: !_settings.any((row) =>
+                            row['key'] == 'driverTaxIntegrationPaused' &&
+                            row['value'] == 'true'),
+                        onChanged:
+                            _loading || _saving ? null : _setDriverTaxMode),
+                    const Text(
+                        'Исторические начисления и удержания сохраняются. Перечисления в государственные системы не включаются этим переключателем.'),
+                  ])),
           const SizedBox(height: 16),
           const DriverRouteTopSettingsCard(),
           const SizedBox(height: 16),
@@ -1395,6 +1412,9 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
                     'referralCommissionPercent': 'Бонус от комиссии, %',
                     'appStoreUrl': 'Ссылка App Store',
                     'googlePlayUrl': 'Ссылка Google Play',
+                    'testFlightUrl': 'Общедоступная ссылка TestFlight',
+                    'iosDistributionMode':
+                        'Режим iPhone: web / testflight / appstore',
                     'kassa24SavedCardsEnabled':
                         'Сохранённые карты Kassa24 (true/false)',
                     'kassa24AcquiringId': 'Терминал Kassa24 (acquiringId)',

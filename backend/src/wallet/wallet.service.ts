@@ -1,3 +1,4 @@
+import { driverTaxIntegrationPaused } from '../tax/driver-tax-mode';
 import { lockedBonusField, withdrawableMoney } from '../common/currency';
 import { walletCurrency, moneyField, bonusField } from '../common/currency';
 import {
@@ -331,7 +332,7 @@ export class WalletService {
                     await lockIncomeAccounting(tx);
                     await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
                     const driver = await tx.driverProfile.findUnique({ where: { userId }, select: { id: true } });
-                    if (driver) {
+                    if (driver && !await driverTaxIntegrationPaused(tx)) {
                         const tax = await tx.taxProfile.findUnique({ where: { userId } });
                         if (!isIndividual(tax) && (tax?.countryCode !== 'KZ' || tax.status !== 'VERIFIED')) throw new BadRequestException('Налоговый статус требует проверки');
                     }

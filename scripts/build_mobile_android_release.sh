@@ -9,7 +9,7 @@ source "$ROOT_DIR/scripts/lib/flutter_release_helpers.sh"
 RELEASE_TARGET="${RELEASE_TARGET:-appbundle}"
 RUN_PREFLIGHT="${RUN_PREFLIGHT:-1}"
 RUN_FLUTTER_BUILD="${RUN_FLUTTER_BUILD:-1}"
-INTERCITY_API_BASE_URL="${INTERCITY_API_BASE_URL:-https://intercity-backend-176647550231.us-central1.run.app/api}"
+INTERCITY_API_BASE_URL="${INTERCITY_API_BASE_URL:-https://api.intercity.89-207-255-27.sslip.io/api}"
 
 resolve_flutter_bin
 
@@ -51,7 +51,7 @@ Environment variables:
   RELEASE_TARGET      appbundle or apk. Default: appbundle
   INTERCITY_API_BASE_URL
                       API base URL compiled into the Flutter app. Defaults to
-                      the production Cloud Run API.
+                      the production API shared with the web version.
   RUN_PREFLIGHT       1 to run release preflight first, 0 to skip. Default: 1
   RUN_FLUTTER_BUILD   1 to run flutter build after preflight, 0 to stop after
                       preflight. Default: 1
