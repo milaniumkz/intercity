@@ -18,6 +18,7 @@ async function reset(db,commit=false){
   const rows=await db[delegate(m)].findMany({where,select:{[pk(m)]:true}});let set=marks.get(name);if(!set){set=new Set();marks.set(name,set);}const old=set.size;for(const r of rows)set.add(r[pk(m)]);return set.size-old;
  }
  await mark('User',{id:{in:ids}});
+ if(byName.has('BiometricChallenge'))await mark('BiometricChallenge',{userId:null});
  await mark('IntercityRequest',{OR:[{passengerId:{notIn:adminIds}},{selectedDriverId:{not:null,notIn:adminPrincipals}}]});
  await mark('IntercityOffer',{driverId:{notIn:adminPrincipals}});
  await mark('RideSharingTrip',{driverId:{notIn:adminPrincipals}});
@@ -47,6 +48,8 @@ async function reset(db,commit=false){
  const dirs=new Set([...(marks.get('DriverProfile')||[]),...ids]);
  for(const job of await db.accountDeletionFileJob.findMany()){if(!adminPrincipals.includes(job.directory)){dirs.add(job.directory);await mark('AccountDeletionFileJob',{id:job.id});}}
  const catalog={};for(const name of keepModels){const m=byName.get(name);if(!m)continue;const rows=await db.$queryRawUnsafe(`SELECT count(*)::int AS count, md5(COALESCE(string_agg(row_to_json(t)::text,E'\\n' ORDER BY t."${pk(m)}"),'')) AS hash FROM "${m.dbName||name}" t`);catalog[name]=rows[0];}
+ for(const dir of dirs)assert(/^[0-9a-f-]{36}$/i.test(dir),'Unexpected user directory');
+ for(const file of techFiles)assert(/^[a-f0-9]{32}\.bin$/.test(file.path),'Unexpected private file path');
  const publicReport={usersBefore:all.length,administratorsRetained:adminIds.length,usersToDelete:ids.length,rowsToDelete:Object.fromEntries([...marks].map(([n,s])=>[n,s.size])),catalogs:Object.fromEntries(Object.entries(catalog).map(([n,x])=>[n,x.count])),privateFiles:techFiles.length,userDirectories:dirs.size};
  if(!commit)return publicReport;
  const visited=new Set();
@@ -59,7 +62,15 @@ async function reset(db,commit=false){
  for(const [name,before]of Object.entries(catalog)){const m=byName.get(name),[after]=await db.$queryRawUnsafe(`SELECT count(*)::int AS count, md5(COALESCE(string_agg(row_to_json(t)::text,E'\\n' ORDER BY t."${pk(m)}"),'')) AS hash FROM "${m.dbName||name}" t`);assert.deepEqual(after,before,'Protected catalogue changed: '+name);}
  assert.equal(await db.user.count({where:{id:{notIn:adminIds}}}),0,'Nonadministrative account remains');
  await db.adminAuditLog.create({data:{adminId:adminBefore.find(u=>u.role==='ADMIN'&&!u.blockedAt).id,action:'OWNER_REQUEST_RESET_CUSTOMERS',targetType:'SYSTEM',status:'SUCCESS',details:{deletedUsers:ids.length,deletedRows:counts,protectedCatalogsUnchanged:true,backupRequired:true}}});
- return {...publicReport,committed:true,deletedRows:counts,catalogsUnchanged:true,adminsUnchanged:true,cleanup:{directories:[...dirs],privateFiles:techFiles.map(f=>f.path)}};
+ return {...publicReport,committed:true,deletedRows:counts,catalogsUnchanged:true,adminsUnchanged:true,cleanup:{directories:[...dirs],identityDirectories:[...dirs],privateFiles:techFiles.map(f=>f.path)}};
 }
-module.exports={reset};
-if(require.main===module){const p=new PrismaClient();(async()=>{const commit=process.argv.includes('--commit');const report=await p.$transaction(async tx=>{if(!commit)await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');return reset(tx,commit)},{maxWait:10000,timeout:120000,isolationLevel:'Serializable'});if(commit){if(process.env.RESET_MANIFEST)await fs.writeFile(process.env.RESET_MANIFEST,JSON.stringify(report.cleanup),{mode:0o600});const uploadRoot=process.env.UPLOAD_DIR||'/app/uploads',privateRoot=process.env.TECH_STORAGE_DIR||'/app/technical-data';let removed=0;for(const dir of report.cleanup.directories){assert(/^[0-9a-f-]{36}$/i.test(dir));const full=path.resolve(uploadRoot,dir);assert(full.startsWith(path.resolve(uploadRoot)+path.sep));await fs.rm(full,{recursive:true,force:true});removed++;}for(const file of report.cleanup.privateFiles){assert(/^[a-f0-9]{32}\.bin$/.test(file));await fs.rm(path.join(privateRoot,file),{force:true});removed++;}delete report.cleanup;report.filesCleanupCompleted=true;report.cleanupTargets=removed;}console.log(JSON.stringify(report));})().catch(e=>{console.error('Customer reset aborted: '+e.message);process.exitCode=1}).finally(()=>p.$disconnect());}
+async function cleanupFiles(cleanup,uploadRoot,privateRoot){
+ let removed=0;
+ for(const [root,dirs] of [[uploadRoot,cleanup.directories],[path.join(privateRoot,'identity'),cleanup.identityDirectories||[]]]){
+  for(const dir of dirs){assert(/^[0-9a-f-]{36}$/i.test(dir));const full=path.resolve(root,dir);assert(full.startsWith(path.resolve(root)+path.sep));await fs.rm(full,{recursive:true,force:true});removed++;}
+ }
+ for(const file of cleanup.privateFiles){assert(/^[a-f0-9]{32}\.bin$/.test(file));await fs.rm(path.join(privateRoot,file),{force:true});removed++;}
+ return removed;
+}
+module.exports={reset,cleanupFiles};
+if(require.main===module){const p=new PrismaClient();(async()=>{const commit=process.argv.includes('--commit');const report=await p.$transaction(async tx=>{if(!commit)await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');return reset(tx,commit)},{maxWait:10000,timeout:120000,isolationLevel:'Serializable'});if(commit){if(process.env.RESET_MANIFEST)await fs.writeFile(process.env.RESET_MANIFEST,JSON.stringify(report.cleanup),{mode:0o600});const uploadRoot=process.env.UPLOAD_DIR||'/app/uploads',privateRoot=process.env.TECH_STORAGE_DIR||'/app/technical-data';const removed=await cleanupFiles(report.cleanup,uploadRoot,privateRoot);delete report.cleanup;report.filesCleanupCompleted=true;report.cleanupTargets=removed;}console.log(JSON.stringify(report));})().catch(e=>{console.error('Customer reset aborted: '+e.message);process.exitCode=1}).finally(()=>p.$disconnect());}
