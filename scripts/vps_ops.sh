@@ -175,6 +175,12 @@ SELECT json_build_object('country',c."countryCode",'basePrice',t."basePrice",'pr
 SQLTARIFFAUDIT
       exit 0
     fi
+    if [[ "$TARGET" == "identity-permissions" ]]; then
+      docker exec -i intercity-backend node <<'JSPERMISSIONS'
+const {PrismaClient}=require('@prisma/client');(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');console.log(JSON.stringify({admins:await tx.user.count({where:{role:'ADMIN'}}),roles:await tx.adminRole.findMany({select:{code:true,_count:{select:{users:true}}}})}));});}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSPERMISSIONS
+      exit 0
+    fi
     if [[ "$TARGET" == "identity-verification" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-backend node <<'JSIDENTITY'
