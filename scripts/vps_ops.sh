@@ -175,6 +175,14 @@ SELECT json_build_object('country',c."countryCode",'basePrice',t."basePrice",'pr
 SQLTARIFFAUDIT
       exit 0
     fi
+    if [[ "$TARGET" == "notification-dispatch" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSDISPATCH'
+const {PrismaClient}=require('@prisma/client');
+(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');console.log(JSON.stringify({jobs:await tx.notificationDispatchJob.findMany({orderBy:{queuedAt:'desc'},take:10,select:{id:true,status:true,successCount:true,failCount:true,lastError:true,queuedAt:true,finishedAt:true}}),eligibleUsers:await tx.user.count({where:{blockedAt:null,pushToken:{not:null}}}),platforms:await tx.user.groupBy({by:['pushPlatform'],where:{blockedAt:null,pushToken:{not:null}},_count:true})}));});}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSDISPATCH
+      exit 0
+    fi
     if [[ "$TARGET" == "notifications" ]]; then
       docker exec -i intercity-backend node <<'JSNOTIFICATIONS'
 const raw=process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
