@@ -11,7 +11,7 @@ test('bulk tariffs preserve existing rates, disabled cities, country boundaries 
   const first=await seedAllCityTariffs(p,where);assert.equal(first.KZ.created,1);assert.equal(first.RU.created,2);
   assert.deepEqual(await p.tariffCity.findUnique({where:{id:custom.id}}),custom);assert.deepEqual(await p.tariffCity.findUnique({where:{id:inactive.id}}),inactive);
   assert.equal((await p.city.findUnique({where:{id:cities[3].id}})).isActive,false);assert.equal(await p.tariffCity.count({where:{cityId:cities[4].id}}),0);
-  assert.equal((await p.tariffCity.findFirst({where:{cityId:cities[0].id,isActive:true}})).minPrice,700);assert.equal((await p.tariffCity.findFirst({where:{cityId:cities[1].id,isActive:true}})).minPrice,150);
+  assert.equal((await p.tariffCity.findFirst({where:{cityId:cities[0].id,isActive:true}})).minPrice,500);assert.equal((await p.tariffCity.findFirst({where:{cityId:cities[1].id,isActive:true}})).minPrice,71.43);
   const count=await p.tariffCity.count({where:{cityId:{in:cities.map(c=>c.id)}}});const second=await seedAllCityTariffs(p,where);assert.equal(second.KZ.created+second.RU.created,0);assert.equal(await p.tariffCity.count({where:{cityId:{in:cities.map(c=>c.id)}}}),count);
   await p.tariffCity.create({data:{cityId:cities[0].id,name:'Invalid',basePrice:0,pricePerKm:0,pricePerMin:0,minPrice:0}});await assert.rejects(seedAllCityTariffs(p,where),/requires review/);assert.equal(await p.tariffCity.count({where:{cityId:{in:cities.map(c=>c.id)}}}),count+1);
  } finally {
@@ -30,7 +30,7 @@ test('new-city preview provisions country rates once and respects manual tariff 
    const dto={fromLat:40,fromLng:60,toLat:40.01,toLng:60.01,mode:'CITY'};
    const results=await Promise.all([service.previewOrder(dto),service.previewOrder(dto)]);
    assert.equal(await p.tariffCity.count({where:{cityId:city.id}}),1);
-   assert.equal(results[0].currency,countryCode==='RU'?'RUB':'KZT');assert.equal(results[0].price,countryCode==='RU'?150:700);assert.equal(results[0].tariff.id,results[1].tariff.id);
+   assert.equal(results[0].currency,countryCode==='RU'?'RUB':'KZT');assert.equal(results[0].price,countryCode==='RU'?112:550);assert.equal(results[0].tariff.id,results[1].tariff.id);
    await p.tariffCity.update({where:{id:results[0].tariff.id},data:{isActive:false}});
    await assert.rejects(service.previewOrder(dto),/City tariff is not configured/);
    assert.equal(await p.tariffCity.count({where:{cityId:city.id}}),1);

@@ -1,7 +1,7 @@
 import {notifyTripChat} from '../common/trip-chat-notification';
 import { settleBonusRidePayment } from '../common/bonus-ride-payment';
 import { lockIncomeAccounting, recordCashDriverIncome } from '../tax/tax-ledger';
-import { CITY_TARIFF_DEFAULTS } from '../common/city-tariff-defaults';
+import { CITY_TARIFF_DEFAULTS, cityTariffDefaults } from '../common/city-tariff-defaults';
 import { passengerLeaving } from '../common/passenger-leaving';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { CardPaymentsService } from '../payments/card-payments.service';
@@ -122,7 +122,7 @@ export class OrdersService {
                 if (active) return active;
                 // Explicitly disabled tariffs must stay disabled.
                 if (existing.length) return null;
-                return tx.tariffCity.create({data:{cityId,name:'Эконом — базовый тариф',...CITY_TARIFF_DEFAULTS[city.countryCode]}});
+                return tx.tariffCity.create({data:{cityId,name:'Эконом — базовый тариф',...await cityTariffDefaults(tx, city.countryCode)}});
             });
             return { tariff: tariff && (tariff.vehicleClass || 'ECONOMY') === vehicleClass ? tariff : null, multiplier: 1 };
         }
@@ -383,7 +383,7 @@ export class OrdersService {
             }
         }
 
-        return { distance: route.distance, duration: route.duration, price: this.roundRidePrice(price), tariff, cityId, currency: geoResult.currency };
+        return { distance: route.distance, duration: route.duration, price: this.roundRidePrice(price, geoResult.currency), tariff, cityId, currency: geoResult.currency };
     }
 
     private validateFreightWeight(weight: number | undefined, rate: number) {
@@ -391,10 +391,10 @@ export class OrdersService {
         if (rate > 0 && weight == null) throw new BadRequestException('Для расчёта тарифа необходимо указать вес груза');
     }
 
-    private roundRidePrice(price: number) {
+    private roundRidePrice(price: number, currency = 'KZT') {
         if (!Number.isFinite(price) || price <= 0) return 0;
-        const step = 50;
-        return Math.ceil(price / step) * step;
+        const step = currency === 'RUB' ? 0.01 : 50;
+        return Number((Math.ceil(price / step - 1e-9) * step).toFixed(2));
     }
 
     async getMyOrders(userId: string) {

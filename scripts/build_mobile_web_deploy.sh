@@ -127,13 +127,17 @@ if index.exists():
             if (!("serviceWorker" in navigator)) return [];
             return navigator.serviceWorker.getRegistrations()
               .then(function(regs) {{
-                return Promise.all(regs.map(function(reg) {{ return reg.unregister(); }}));
+                return Promise.all(regs.filter(function(reg) {{
+                  var workers = [reg.active, reg.waiting, reg.installing].filter(Boolean);
+                  return workers.some(function(w) {{ return /flutter_service_worker\.js(?:\?|$)/.test(w.scriptURL); }}) &&
+                    !workers.some(function(w) {{ return /firebase-messaging-sw\.js(?:\?|$)/.test(w.scriptURL); }});
+                }}).map(function(reg) {{ return reg.unregister(); }}));
               }});
           }})
           .then(function() {{
             if (!window.caches) return [];
             return caches.keys().then(function(keys) {{
-              return Promise.all(keys.map(function(cacheKey) {{ return caches.delete(cacheKey); }}));
+              return Promise.all(keys.filter(function(key) {{ return key.indexOf("flutter-") === 0; }}).map(function(cacheKey) {{ return caches.delete(cacheKey); }}));
             }});
           }});
       }}
@@ -141,6 +145,7 @@ if index.exists():
         clearCaches()
           .then(function() {{
             if (navigator.serviceWorker && navigator.serviceWorker.controller &&
+                /flutter_service_worker\.js(?:\?|$)/.test(navigator.serviceWorker.controller.scriptURL) &&
                 sessionStorage.getItem(reloadKey) !== "1") {{
               sessionStorage.setItem(reloadKey, "1");
               window.location.reload();

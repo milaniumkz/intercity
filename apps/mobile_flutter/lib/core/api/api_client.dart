@@ -1,3 +1,4 @@
+import '../services/pwa_support.dart';
 import 'dart:async';
 import 'dart:math';
 
@@ -419,11 +420,13 @@ class ApiClient {
   Future<void> setTokens(String accessToken, String refreshToken) async {
     await _storage.write(AppConstants.accessTokenKey, accessToken);
     await _storage.write(AppConstants.refreshTokenKey, refreshToken);
+    PwaSupport.refresh();
   }
 
   Future<void> clearTokens() async {
     await _storage.delete(AppConstants.accessTokenKey);
     await _storage.delete(AppConstants.refreshTokenKey);
+    PwaSupport.refresh();
   }
 
   Future<String?> getAccessToken() {

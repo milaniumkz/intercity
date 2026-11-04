@@ -1,3 +1,4 @@
+import '../../../core/services/pwa_support.dart';
 import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/api/api_client.dart';
@@ -285,6 +286,11 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
                             onPressed: _confirmAccount,
                             child: const Text('Повторить проверку')),
                       ],
+                      if (widget.downloadOnly && PwaSupport.isIosWeb)
+                        const ICGradientButton(
+                            label: 'На главный экран iPhone',
+                            icon: Icons.add_to_home_screen,
+                            onPressed: PwaSupport.showHelp),
                       if (widget.downloadOnly)
                         ICGradientButton(
                           label: 'Продолжить в веб-версии',

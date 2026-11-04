@@ -1,3 +1,6 @@
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+
 // Register before Firebase: its default click handler stops later listeners.
 self.addEventListener('notificationclick', (event) => {
   event.stopImmediatePropagation();

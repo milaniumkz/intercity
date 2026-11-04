@@ -1,7 +1,7 @@
 import { DRIVER_TAX_PAUSED_KEY, offlineUnverifiedTaxDrivers } from '../tax/driver-tax-mode';
 import { lockIncomeAccounting } from '../tax/tax-ledger';
 import { dashboardStatistics } from './dashboard-statistics';
-import { ROUTE_TOP_POLICY_KEY, parseRouteTopPolicy } from '../common/driver-route-top';
+import { ROUTE_TOP_POLICY_KEY, parseRouteTopPolicy, routeTopPrice } from '../common/driver-route-top';
 import { releaseVerifiedTripRewards } from '../common/trip-verification';
 import { reviseDriverRating, validateReviewDecision } from '../common/driver-rating-review';
 import { parseDailyBonus } from '../common/driver-daily-bonus';
@@ -674,7 +674,15 @@ export class AdminService {
     }
 
     async setSetting(key: string, value: string) {
-        if(key===ROUTE_TOP_POLICY_KEY) value=JSON.stringify(parseRouteTopPolicy(value));
+        if (key === ROUTE_TOP_POLICY_KEY) {
+            const policy = parseRouteTopPolicy(value);
+            value = JSON.stringify(policy);
+            return this.prisma.$transaction(async tx => {
+                const setting = await tx.appSettings.upsert({where:{key},create:{key,value},update:{value}});
+                await tx.tariffCity.updateMany({where:{city:{countryCode:'RU'}},data:{minPrice:routeTopPrice({...policy,priceKzt:500}, 'RUB')}});
+                return setting;
+            });
+        }
         if (key.startsWith('kzTax') || key === 'referralMinPayoutKzt') throw new BadRequestException('Настройка выполняется только в разделе налоговых реестров');
         if (key === DRIVER_TAX_PAUSED_KEY) {
             if (!['true','false'].includes(value)) throw new BadRequestException('Укажите true или false');

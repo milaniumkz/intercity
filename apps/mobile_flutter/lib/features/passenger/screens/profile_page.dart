@@ -1,3 +1,4 @@
+import '../../../core/services/pwa_support.dart';
 import '../../../core/widgets/account_deletion_dialog.dart';
 import '../../../core/widgets/password_change_dialog.dart';
 import '../../referral/widgets/referral_profile_entry.dart';
@@ -1765,6 +1766,13 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
                           ),
                           onTap: _openSupportInfo,
                         ),
+                        if (PwaSupport.isIosWeb)
+                          _profileActionTile(
+                              icon: Icons.add_to_home_screen_rounded,
+                              title: 'Веб-приложение и уведомления',
+                              subtitle:
+                                  'Главный экран iPhone и push-уведомления',
+                              onTap: PwaSupport.showHelp),
                         _profileActionTile(
                           icon: Icons.info_outline_rounded,
                           title: LocalizationService.translate(

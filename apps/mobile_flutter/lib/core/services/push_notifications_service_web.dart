@@ -11,6 +11,11 @@ import 'push_notification_payloads.dart';
 import 'trip_status_sound.dart';
 import 'push_notifications_startup_policy.dart';
 
+@JS('window.intercityRequestWebPush')
+external set _requestWebPush(JSFunction callback);
+@JS('window.intercityWebPushStatus')
+external set _webPushStatus(JSFunction callback);
+
 class PushNotificationsService {
   PushNotificationsService._();
 
@@ -29,11 +34,16 @@ class PushNotificationsService {
   final Set<String> _shownTripNotices = {};
   bool _initialized = false;
   bool _firebaseReady = false;
+  bool _registered = false;
+  bool _foregroundBound = false;
 
   Stream<Map<String, dynamic>> get onNotificationPayload =>
       _payloadStreamController.stream;
 
   Future<void> init() async {
+    _requestWebPush =
+        (() => enableWebNotifications().then((v) => v.toJS).toJS).toJS;
+    _webPushStatus = (() => webPushStatus().then((v) => v.jsify()!).toJS).toJS;
     if (_initialized) return;
     _initialized = true;
 
@@ -58,7 +68,10 @@ class PushNotificationsService {
     _bindServiceWorkerClicks();
 
     if (_firebaseReady) {
-      FirebaseMessaging.onMessage.listen(_onForegroundMessage);
+      if (!_foregroundBound) {
+        _foregroundBound = true;
+        FirebaseMessaging.onMessage.listen(_onForegroundMessage);
+      }
       if (shouldSyncPushTokenOnStartup(
         firebaseReady: _firebaseReady,
         notificationPermission: _notificationPermission,
@@ -66,11 +79,59 @@ class PushNotificationsService {
         await syncTokenIfAuthorized();
       }
     }
+    web.window.dispatchEvent(web.Event('intercity-push-ready'));
   }
 
   Future<void> enableDriverNotifications() async {
     await _requestPermissionIfNeeded();
     await syncTokenIfAuthorized();
+  }
+
+  Future<Map<String, Object>> webPushStatus() async {
+    bool signedIn = false;
+    try {
+      signedIn = (await ApiClient().getAccessToken())?.isNotEmpty == true;
+    } catch (_) {}
+    return {
+      'signedIn': signedIn,
+      'permission': _notificationPermission,
+      'registered': signedIn && _registered && _isPermissionGranted
+    };
+  }
+
+  Future<bool> enableWebNotifications() async {
+    // This call must start synchronously from a click. No network/storage await
+    // may precede the iOS permission request.
+    final permission = _notificationPermission;
+    if (permission == 'unsupported' || permission == 'denied') return false;
+    try {
+      if (permission != 'granted') {
+        final result = await web.Notification.requestPermission().toDart;
+        if (result.toDart != 'granted') return false;
+      }
+      if (!_firebaseReady) {
+        await Firebase.initializeApp(
+            options: const FirebaseOptions(
+          apiKey: 'AIzaSyBx5o8anmvNDDubNHjEEVKWLRxddM-BERE',
+          appId: '1:176647550231:web:6e778252e634289c6d7352',
+          messagingSenderId: '176647550231',
+          projectId: 'inter-city-pkzpps',
+          authDomain: 'inter-city-pkzpps.firebaseapp.com',
+          storageBucket: 'inter-city-pkzpps.firebasestorage.app',
+        ));
+        _firebaseReady = true;
+        if (!_foregroundBound) {
+          _foregroundBound = true;
+          FirebaseMessaging.onMessage.listen(_onForegroundMessage);
+        }
+      }
+      final token = await FirebaseMessaging.instance
+          .getToken(vapidKey: _webVapidKey.isEmpty ? null : _webVapidKey);
+      if (token == null || token.isEmpty) return false;
+      return await _sendTokenToBackend(token);
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> syncTokenIfAuthorized() async {
@@ -344,10 +405,10 @@ class PushNotificationsService {
     }
   }
 
-  Future<void> _sendTokenToBackend(String token) async {
+  Future<bool> _sendTokenToBackend(String token) async {
     try {
       final accessToken = await ApiClient().getAccessToken();
-      if (accessToken == null || accessToken.isEmpty) return;
+      if (accessToken == null || accessToken.isEmpty) return false;
       await ApiClient().post(
         '/auth/push-token',
         data: <String, dynamic>{
@@ -355,8 +416,13 @@ class PushNotificationsService {
           'platform': 'WEB',
         },
       );
+      _registered = true;
+      return true;
     } catch (_) {
-      // Keep notifications functional even if backend token sync fails.
+      _registered = false;
+      return false;
+    } finally {
+      web.window.dispatchEvent(web.Event('intercity-push-ready'));
     }
   }
 }

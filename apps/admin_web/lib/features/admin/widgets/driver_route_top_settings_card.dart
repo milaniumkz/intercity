@@ -103,7 +103,7 @@ class _DriverRouteTopSettingsCardState
               Wrap(spacing: 16, runSpacing: 12, children: [
                 for (final entry in {
                   'Базовая цена, тг': _price,
-                  'Курс: тг за 1 рубль': _rate,
+                  'Курс (топ и минимум поездки), ₸ за 1 ₽': _rate,
                   'Срок в топе, часов': _hours,
                   'Первый доступ, секунд': _seconds
                 }.entries)
@@ -119,6 +119,8 @@ class _DriverRouteTopSettingsCardState
               const SizedBox(height: 12),
               Text(
                   'Стоимость в России: ${rate > 0 ? (price / rate).toStringAsFixed(2) : '—'} руб.'),
+              Text(
+                  'Минимум городской поездки: 500 ₸ / ${rate > 0 ? (500 / rate).toStringAsFixed(2) : '—'} ₽'),
               const SizedBox(height: 8),
               const Text(
                   'Действующие покупки сохраняют оплаченный срок. Изменение настроек применяется к новым покупкам; повторный запрос оплаты не списывает деньги снова.'),

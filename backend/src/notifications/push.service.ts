@@ -95,7 +95,7 @@ export class PushService {
         }
     }
 
-    private async sendToToken(token: string, payload: PushPayload): Promise<boolean> {
+    async sendToToken(token: string, payload: PushPayload): Promise<boolean> {
         try {
             const inline = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
             const path = process.env.GOOGLE_APPLICATION_CREDENTIALS;

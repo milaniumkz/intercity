@@ -1,3 +1,4 @@
+import '../../../core/services/pwa_support.dart';
 import '../../referral/widgets/driver_tax_information_page.dart';
 import '../widgets/route_departure_field.dart';
 import '../../../core/utils/localization_service.dart';
@@ -835,6 +836,12 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                     'Доход, комиссия и социальные платежи',
                     () => _openAndRefresh('/driver/earnings'),
                   ),
+                  if (PwaSupport.isIosWeb)
+                    _boardProfileRow(
+                        Icons.add_to_home_screen_rounded,
+                        'Веб-приложение и уведомления',
+                        'Иконка на главном экране iPhone и push',
+                        PwaSupport.showHelp),
                   _boardProfileRow(
                     Icons.receipt_long_outlined,
                     'Налоги и чеки',

@@ -1,3 +1,4 @@
+import 'dart:async';
 import '../widgets/dashboard_statistics.dart';
 import '../widgets/freight_tariff_dialog.dart';
 import 'admin_trip_reviews_page.dart';
@@ -1920,15 +1921,24 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
   String _message = '';
   bool _loading = false;
   String? _busyAction;
+  Timer? _poll;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _poll = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!_loading &&
+          _jobsByCampaign.values
+              .any((j) => ['QUEUED', 'RUNNING'].contains(j['status']))) {
+        _load();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _poll?.cancel();
     _titleCtrl.dispose();
     _bodyCtrl.dispose();
     super.dispose();
@@ -1940,7 +1950,7 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
       await task();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = '$action failed: $e');
+      setState(() => _message = 'Не удалось выполнить действие «$action»: $e');
     } finally {
       if (mounted) {
         setState(() => _busyAction = null);
@@ -1974,6 +1984,7 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
           map[campaignId] = job;
         }
       }
+      if (!mounted) return;
       setState(() {
         _campaigns = campaigns;
         _jobsByCampaign
@@ -1991,7 +2002,7 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
     }
   }
 
-  Future<void> _create() => _runAction('Create campaign', () async {
+  Future<void> _create() => _runAction('Создать кампанию', () async {
         if (_titleCtrl.text.trim().isEmpty || _bodyCtrl.text.trim().isEmpty) {
           setState(() => _message = 'Укажите заголовок и текст уведомления');
           return;
@@ -2008,7 +2019,7 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
       });
 
   Future<void> _queueSend(String campaignId) =>
-      _runAction('Queue campaign', () async {
+      _runAction('Отправить кампанию', () async {
         await AdminApiClient.instance
             .post('/admin/notifications/$campaignId/send', data: {
           'reason': 'Поставлено в очередь через admin_web',
@@ -2079,6 +2090,13 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
                       final job = _jobsByCampaign[id];
                       final jobStatus =
                           (job?['status'] ?? '').toString().toUpperCase();
+                      final jobLabel = const {
+                            'QUEUED': 'В очереди',
+                            'RUNNING': 'Отправляется',
+                            'DONE': 'Завершена',
+                            'FAILED': 'Ошибка'
+                          }[jobStatus] ??
+                          jobStatus;
                       final jobId = (job?['id'] ?? '').toString();
                       final sent = c['isSent'] == true;
                       return Padding(
@@ -2089,7 +2107,7 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
                           tileColor: const Color(0xFFF7FAFC),
                           title: Text('${c['title'] ?? ''}'),
                           subtitle: Text(
-                              '${c['body'] ?? ''}\n${sent ? 'Отправлено' : 'Черновик'}${jobStatus.isNotEmpty ? ' • Задача $jobStatus' : ''}'),
+                              '${c['body'] ?? ''}\n${sent ? 'Передано push-сервису' : 'Не отправлено'}${jobStatus.isNotEmpty ? ' • $jobLabel' : ''}\nПринято сервисом: ${job?['successCount'] ?? 0}, ошибок: ${job?['failCount'] ?? 0}${(job?['lastError'] ?? '').toString().isNotEmpty ? '\n${job?['lastError']}' : ''}'),
                           isThreeLine: true,
                           trailing: sent
                               ? const Text('Отправлено')

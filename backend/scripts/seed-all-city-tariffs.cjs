@@ -3,8 +3,8 @@ const {randomUUID} = require('node:crypto');
 const {PrismaClient} = require('@prisma/client');
 
 const defaults = {
-  KZ: {basePrice:400,pricePerKm:90,pricePerMin:15,minPrice:700},
-  RU: {basePrice:90,pricePerKm:18,pricePerMin:4,minPrice:150},
+  KZ: {basePrice:400,pricePerKm:90,pricePerMin:15,minPrice:500},
+  RU: {basePrice:90,pricePerKm:18,pricePerMin:4,minPrice:71.43},
 };
 const valid = tariff => Number.isFinite(tariff.basePrice) && tariff.basePrice>=0 &&
   Number.isFinite(tariff.pricePerKm) && tariff.pricePerKm>0 &&
@@ -15,6 +15,11 @@ async function seedAllCityTariffs(db, where = {countryCode:{in:['KZ','RU']}}) {
   return db.$transaction(async tx => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(6100629)`;
     await tx.$executeRawUnsafe('LOCK TABLE "TariffCity" IN SHARE ROW EXCLUSIVE MODE');
+    const raw = (await tx.appSettings.findUnique({where:{key:'driverRouteTopPolicy'}}))?.value;
+    const rate = raw ? Number(JSON.parse(raw).kztPerRub) : 7;
+    assert(Number.isFinite(rate) && rate > 0, 'Invalid configured exchange rate');
+    const stored = Number((500/rate).toFixed(2));
+    const countryDefaults = {...defaults, RU:{...defaults.RU, minPrice: Number.isFinite(stored)&&stored>0 ? stored : defaults.RU.minPrice}};
     const cities = await tx.city.findMany({where,include:{tariffs:{orderBy:{id:'asc'}}},orderBy:{id:'asc'}});
     const originals = cities.flatMap(c=>c.tariffs);
     const originalIds = new Set(originals.map(t=>t.id));
@@ -26,7 +31,7 @@ async function seedAllCityTariffs(db, where = {countryCode:{in:['KZ','RU']}}) {
       const active = city.tariffs.filter(t=>t.isActive);
       assert(active.every(valid), 'Existing invalid active tariff requires review: '+city.name);
       if (active.length) continue;
-      rows.push({id:randomUUID(),cityId:city.id,name:'Эконом — базовый тариф',...defaults[city.countryCode],isActive:true});
+      rows.push({id:randomUUID(),cityId:city.id,name:'Эконом — базовый тариф',...countryDefaults[city.countryCode],isActive:true});
       result[city.countryCode].created++;
     }
     for (let offset=0; offset<rows.length; offset+=500) {

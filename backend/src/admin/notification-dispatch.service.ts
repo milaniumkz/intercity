@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
+import { PushService } from '../notifications/push.service';
 import { RealtimeService } from '../realtime/realtime.service';
 
 type DispatchJobStatus = 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED';
@@ -31,6 +32,7 @@ export class NotificationDispatchService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly realtimeService: RealtimeService,
+        private readonly pushService: PushService,
     ) { }
 
     async enqueue(
@@ -124,34 +126,39 @@ export class NotificationDispatchService {
             throw new Error('Campaign not found');
         }
 
-        const users = await this.prisma.user.findMany({
-            where: {
-                ...(campaign.cityId ? { cityId: campaign.cityId } : {}),
-                pushToken: { not: null },
-            },
-            select: {
-                id: true,
-                pushToken: true,
-            },
-            take: 5000,
-        });
-
-        const tokens = users
-            .map((u) => (u.pushToken ?? '').trim())
-            .filter((token) => token.length > 0);
-
-        let successCount = 0;
-        let failCount = 0;
-        let lastError: string | undefined;
-        for (const token of tokens) {
-            const ok = await this.sendPushWithRetry(token, campaign.title, campaign.body);
-            if (ok) {
-                successCount += 1;
-            } else {
-                failCount += 1;
-                lastError = 'One or more tokens failed';
+        const audience = (campaign.audience || 'ALL').toUpperCase();
+        if (!['ALL', 'DRIVER', 'DRIVERS', 'PASSENGER', 'PASSENGERS'].includes(audience))
+            throw new Error('Неизвестная аудитория рассылки');
+        const seen = new Set<string>();
+        let successCount = 0, failCount = 0;
+        let cursor: string | undefined, lastError: string | undefined;
+        while (true) {
+            const users = await this.prisma.user.findMany({
+                where: {
+                    ...(campaign.cityId ? { cityId: campaign.cityId } : {}),
+                    blockedAt: null,
+                    ...(audience.startsWith('DRIVER') ? { driverProfile: { isNot: null } } :
+                        audience.startsWith('PASSENGER') ? { role: 'PASSENGER', driverProfile: null } : {}),
+                    pushToken: { not: null },
+                },
+                select: { id: true, pushToken: true },
+                orderBy: { id: 'asc' }, take: 500,
+                ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+            });
+            for (const user of users) {
+                const token = (user.pushToken || '').trim();
+                if (!token || seen.has(token)) continue;
+                seen.add(token);
+                if (await this.sendPushWithRetry(token, campaign.title, campaign.body)) successCount++;
+                else {
+                    failCount++;
+                    lastError = 'Push-сервис не принял часть уведомлений. Проверьте настройки Firebase и актуальность токенов.';
+                }
             }
+            if (users.length < 500) break;
+            cursor = users[users.length - 1].id;
         }
+        if (!seen.size) throw new Error('Нет получателей с подключёнными push-уведомлениями. Рассылка не отправлена.');
 
         await (this.prisma as any).notificationCampaign.update({
             where: { id: campaignId },
@@ -165,29 +172,10 @@ export class NotificationDispatchService {
     }
 
     private async sendPushWithRetry(token: string, title: string, body: string): Promise<boolean> {
-        const serverKey = (process.env.FCM_SERVER_KEY || '').trim();
-        if (!serverKey) {
-            return false;
-        }
         for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-                const response = await fetch('https://fcm.googleapis.com/fcm/send', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `key=${serverKey}`,
-                    },
-                    body: JSON.stringify({
-                        to: token,
-                        notification: { title, body },
-                        priority: 'high',
-                    }),
-                });
-                if (response.ok) return true;
-            } catch (_) {
-                // retry
-            }
-            await new Promise((resolve) => setTimeout(resolve, attempt * 400));
+            const ok = await this.pushService.sendToToken(token, { title, body, data: { type: 'campaign' } });
+            if (ok) return true;
+            if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 400));
         }
         return false;
     }

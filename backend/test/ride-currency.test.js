@@ -46,7 +46,7 @@ test('city preview uses only configured city rates and returns its currency', as
     const dto = { fromLat: 55, fromLng: 37, toLat: 55.01, toLng: 37.01, mode: 'CITY' };
     const ru = await service.previewOrder(dto);
     assert.equal(ru.currency, 'RUB');
-    assert.equal(ru.price, 250);
+    assert.equal(ru.price, 240);
     const kz = await service.previewOrder({ ...dto, fromLat: 43 });
     assert.equal(kz.currency, 'KZT');
     assert.equal(kz.price, 1000);
