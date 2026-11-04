@@ -11,6 +11,40 @@ compose() {
 }
 
 case "$ACTION" in
+  reset-customer-accounts)
+    [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || { echo 'Exact expected release SHA required' >&2; exit 1; }
+    test "$(cat "$APP_ROOT/current_commit")" = "$TARGET"
+    (cd "$APP_ROOT/current" && sha256sum -c /tmp/customer-reset-source.sha256)
+    test -s /tmp/reset-nonadmin-users.cjs
+    umask 077
+    backup="$APP_ROOT/backups/$(date -u +%Y%m%d-%H%M%S)-customer-reset-$TARGET"
+    mkdir -p "$backup"
+    uploads_root="$(docker inspect intercity-backend --format '{{range .Mounts}}{{if eq .Destination "/app/uploads"}}{{.Source}}{{end}}{{end}}')"
+    private_root="$(docker inspect intercity-backend --format '{{range .Mounts}}{{if eq .Destination "/app/technical-data"}}{{.Source}}{{end}}{{end}}')"
+    [[ "$uploads_root" == "$APP_ROOT/"* && "$private_root" == "$APP_ROOT/"* ]] || { echo 'Unexpected data roots' >&2; exit 1; }
+    test -d "$uploads_root" && test -d "$private_root"
+    compose stop backend
+    trap 'compose start backend >/dev/null' EXIT
+    docker exec intercity-postgres sh -c 'exec pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup/database.dump"
+    test -s "$backup/database.dump"
+    docker exec -i intercity-postgres pg_restore --list < "$backup/database.dump" > "$backup/database-contents.txt"
+    test -s "$backup/database-contents.txt"
+    tar -czf "$backup/uploads.tar.gz" -C "$uploads_root" .
+    tar -tzf "$backup/uploads.tar.gz" > "$backup/uploads-contents.txt"
+    tar -czf "$backup/technical-data.tar.gz" -C "$private_root" .
+    tar -tzf "$backup/technical-data.tar.gz" > "$backup/technical-contents.txt"
+    echo "Verified database, uploads and private-data backup: $backup"
+    compose run --rm -T --no-deps -v /tmp/reset-nonadmin-users.cjs:/tmp/reset-nonadmin-users.cjs:ro -v "$backup:/ops-backup" -e RESET_MANIFEST=/ops-backup/cleanup-manifest.json backend node /tmp/reset-nonadmin-users.cjs --commit
+    compose start backend
+    trap - EXIT
+    ready=0
+    for attempt in $(seq 1 30); do
+      if docker exec intercity-backend node -e "fetch('http://127.0.0.1:3000/api/geo/cities').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then ready=1; break; fi
+      sleep 2
+    done
+    test "$ready" = 1
+    echo 'API restarted and geographic catalogue is available'
+    ;;
   enable-kz-tax-accounting)
     [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || { echo 'Expected deployed commit SHA is required' >&2; exit 1; }
     test "$(cat "$APP_ROOT/current_commit")" = "$TARGET"
@@ -88,6 +122,19 @@ const p=new PrismaClient();
 JSENABLEDEMO
     ;;
   status)
+    if [[ "$TARGET" == "reset-customer-audit" ]]; then
+      cat "$APP_ROOT/current_commit"
+      compose run --rm -T --no-deps -v /tmp/reset-nonadmin-users.cjs:/tmp/reset-nonadmin-users.cjs:ro backend node /tmp/reset-nonadmin-users.cjs
+      exit 0
+    fi
+    if [[ "$TARGET" == "legal-documents" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSLEGAL'
+const {PrismaClient}=require('@prisma/client'),fs=require('fs');
+(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');const rows=await tx.appSettings.findMany({where:{OR:['privacy','offer','terms','legal','оферт','соглашен','конфиденц'].map(x=>({key:{contains:x,mode:'insensitive'}}))},select:{key:true,value:true}});console.log(JSON.stringify({legalSettings:rows.map(r=>({key:r.key,value:r.value.slice(0,16000)}))}));});for(const root of [process.env.UPLOAD_DIR||'/app/uploads','/app/public']){if(!fs.existsSync(root))continue;const names=fs.readdirSync(root,{recursive:true}).filter(f=>/privacy|policy|terms|ofert|оферт|соглашен|конфиденц/i.test(f)&&/\.(html?|pdf|txt|docx?)$/i.test(f));console.log(JSON.stringify({publicLegalFiles:names.slice(0,50)}));}}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSLEGAL
+      exit 0
+    fi
     if [[ "$TARGET" == "dashboard-rollout" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-backend node <<'JSROLLOUT'

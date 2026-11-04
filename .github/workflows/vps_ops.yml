@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - status
+          - reset-customer-accounts
           - enable-kz-tax-accounting
           - enable-demo-topups
           - seed-city-tariffs
@@ -73,6 +74,11 @@ jobs:
           TARGET: ${{ inputs.target }}
         run: |
           scp scripts/vps_ops.sh "$VPS_USER@$VPS_HOST:/tmp/vps_ops.sh"
+          if [[ "$ACTION" == "reset-customer-accounts" || "$TARGET" == "reset-customer-audit" ]]; then
+            scp scripts/reset-nonadmin-users.cjs "$VPS_USER@$VPS_HOST:/tmp/reset-nonadmin-users.cjs"
+            sha256sum backend/prisma/schema.prisma backend/src/auth/jwt-auth.guard.ts backend/src/auth/account-deletion.service.ts > /tmp/customer-reset-source.sha256
+            scp /tmp/customer-reset-source.sha256 "$VPS_USER@$VPS_HOST:/tmp/customer-reset-source.sha256"
+          fi
           if [[ "$ACTION" == "seed-city-tariffs" ]]; then
             scp backend/scripts/seed-all-city-tariffs.cjs "$VPS_USER@$VPS_HOST:/tmp/seed-all-city-tariffs.cjs"
           fi
