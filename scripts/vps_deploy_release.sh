@@ -17,6 +17,7 @@ PREVIOUS_RELEASE="$(readlink -f "$APP_ROOT/current")"
 PROJECT_NAME="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' intercity-postgres)"
 [[ -n "$PROJECT_NAME" ]] || { echo 'Cannot identify the existing database Compose project' >&2; exit 1; }
 PREVIOUS_IMAGE="$(docker inspect --format '{{.Image}}' intercity-backend)"
+PREVIOUS_IDENTITY_IMAGE="$(docker inspect --format '{{.Image}}' intercity-identity 2>/dev/null || true)"
 
 mkdir -p "$RELEASE_DIR"
 tar -xzf "$BUNDLE_PATH" -C "$RELEASE_DIR" --strip-components=1
@@ -65,6 +66,7 @@ rollback_on_failure() {
   if [[ "$status" -ne 0 && "$switch_started" -eq 1 ]]; then
     echo 'Release health check failed; restoring the previous application release' >&2
     docker tag "$PREVIOUS_IMAGE" intercity-backend:prod
+    if [[ -n "$PREVIOUS_IDENTITY_IMAGE" ]]; then docker tag "$PREVIOUS_IDENTITY_IMAGE" intercity-identity:prod; fi
     cd "$PREVIOUS_RELEASE/infra/vps"
     compose up -d --no-build backend caddy
     ln -sfn "$PREVIOUS_RELEASE" "$APP_ROOT/current"

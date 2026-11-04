@@ -727,6 +727,7 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
   }
 
   Widget _identityConsentCard() => Card(
+      semanticContainer: false,
       child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(children: [
