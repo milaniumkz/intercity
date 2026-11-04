@@ -175,6 +175,10 @@ SELECT json_build_object('country',c."countryCode",'basePrice',t."basePrice",'pr
 SQLTARIFFAUDIT
       exit 0
     fi
+    if [[ "$TARGET" == "push-errors" ]]; then
+      docker logs --since 2h --tail 5000 intercity-backend 2>&1 | grep -E 'Firebase push failed: HTTP [0-9]{3}|Invalid Firebase token removed' | tail -n 30 || true
+      exit 0
+    fi
     if [[ "$TARGET" == "identity-permissions" ]]; then
       docker exec -i intercity-backend node <<'JSPERMISSIONS'
 const {PrismaClient}=require('@prisma/client');(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');console.log(JSON.stringify({admins:await tx.user.count({where:{role:'ADMIN'}}),roles:await tx.adminRole.findMany({select:{code:true,_count:{select:{users:true}}}})}));});}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
