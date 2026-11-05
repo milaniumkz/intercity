@@ -6,7 +6,7 @@ const make=(settings={},index)=>new GeoService({city:{findMany:async()=>cities,f
 const feature={properties:{name:'улица Ленина',street:'улица Ленина',housenumber:'10',city:'Омск',country:'Россия',countrycode:'RU'},geometry:{coordinates:[73.37,54.99]}};
 const road={code:'Ok',routes:[{distance:2100,duration:240,geometry:{type:'LineString',coordinates:[[73.368,54.989],[73.375,54.995],[73.38,55.0]]},legs:[]}]};
 test('autocomplete never calls public Nominatim, including implicit city reverse',async()=>{
- const geo=make();const urls=[];geo.fetchGeo=async url=>{urls.push(url);return {json:async()=>({features:[feature]})}};
+ const geo=make();const urls=[];geo.fetchGeo=async url=>{urls.push(url);assert.notEqual(new URL(url).searchParams.get('lang'),'ru');return {json:async()=>({features:[feature]})}};
  const results=await geo.searchLocations('Ленина 10',54.989,73.368);assert.equal(results[0].houseNumber,'10');assert.match(results[0].displayName,/Омск/);
  await geo.fetchSearchResults('Ленина','ru',cities[0]);await geo.fetchCitySearchResults('Омск');assert.equal(urls.length,1);assert(urls[0].startsWith('https://photon.komoot.io/api/'));
 });

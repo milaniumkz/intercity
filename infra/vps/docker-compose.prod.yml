@@ -56,7 +56,7 @@ services:
       - ../../routing-data:/segments4:ro
     networks: [routing_internal]
     healthcheck:
-      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/17777']
+      test: ['CMD', 'bash', '-c', "grep -q ':4571 .* 0A ' /proc/net/tcp /proc/net/tcp6"]
       interval: 10s
       timeout: 3s
       retries: 6

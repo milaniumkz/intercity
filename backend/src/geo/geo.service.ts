@@ -111,7 +111,7 @@ export class GeoService {
     private async reverseData(lat:number,lng:number) {
         if(!publicNominatim(this.nominatimUrl))return (await this.fetchGeo(`${this.nominatimUrl}/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1&accept-language=ru`)).json();
         const url=new URL(`${this.configService.get('PHOTON_URL')||'https://photon.komoot.io'}/reverse`);
-        url.searchParams.set('lat',String(lat));url.searchParams.set('lon',String(lng));url.searchParams.set('lang','ru');url.searchParams.set('limit','1');
+        url.searchParams.set('lat',String(lat));url.searchParams.set('lon',String(lng));url.searchParams.set('lang','default');url.searchParams.set('limit','1');
         const data=await (await this.fetchGeo(url.toString())).json();
         if(data.address)return data; // compatible owner-controlled reverse services
         const p=data.features?.[0]?.properties;
@@ -590,7 +590,7 @@ export class GeoService {
         const url = new URL(`${this.configService.get('PHOTON_URL') || 'https://photon.komoot.io'}/api/`);
         url.searchParams.set('q', query.trim());
         url.searchParams.set('limit', '15');
-        url.searchParams.set('lang','ru');
+        url.searchParams.set('lang','default');
         if(city){
           url.searchParams.set('lat', String(city.lat));url.searchParams.set('lon', String(city.lng));
           const box=this.buildCityViewBox(city);url.searchParams.set('bbox',`${box.west},${box.south},${box.east},${box.north}`);
