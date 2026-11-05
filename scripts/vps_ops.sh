@@ -179,6 +179,12 @@ SQLTARIFFAUDIT
       docker logs --since 2h --tail 5000 intercity-backend 2>&1 | grep -E 'Firebase push failed: HTTP [0-9]{3}|Invalid Firebase token removed' | tail -n 30 || true
       exit 0
     fi
+    if [[ "$TARGET" == "registration-invite-diagnostics" ]]; then
+      docker exec -i intercity-backend node <<'JSREGCHECK'
+const {PrismaClient}=require('@prisma/client');(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');const output=[];for(const [source,phone]of [['registration','+77780646779'],['login','+77780676779']]){const u=await tx.user.findUnique({where:{phone},select:{createdAt:true,role:true,blockedAt:true}});output.push({source,exists:!!u,role:u?.role,createdAt:u?.createdAt,blocked:!!u?.blockedAt});}console.log(JSON.stringify({accounts:output}));});}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSREGCHECK
+      exit 0
+    fi
     if [[ "$TARGET" == "identity-oleg-diagnostics" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-backend node <<'JSOLEGAUDIT'
