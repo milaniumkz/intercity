@@ -179,6 +179,14 @@ SQLTARIFFAUDIT
       docker logs --since 2h --tail 5000 intercity-backend 2>&1 | grep -E 'Firebase push failed: HTTP [0-9]{3}|Invalid Firebase token removed' | tail -n 30 || true
       exit 0
     fi
+    if [[ "$TARGET" == "identity-recovery-diagnostics" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSRECOVERY'
+const {PrismaClient}=require('@prisma/client'),{IdentityVault}=require('./dist/src/identity/identity-vault'),{similarity}=require('./dist/src/identity/identity.service'),fs=require('fs');
+(async()=>{const p=new PrismaClient(),vault=new IdentityVault();try{if(!fs.existsSync(vault.root+'/key.bin'))throw Error('Identity key must already exist');await vault.init();await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');const rows=await tx.biometricChallenge.findMany({where:{purpose:'RECOVERY'},orderBy:{createdAt:'desc'},take:10});const report=[];for(const c of rows){const ref=c.userId?await tx.biometricProfile.findUnique({where:{userId:c.userId}}):null;let score=null;if(ref&&c.candidate){score=Math.round(similarity(JSON.parse(vault.open(Buffer.from(ref.template,'base64'),c.userId)),JSON.parse(vault.open(Buffer.from(c.candidate,'base64'),c.userId)))*1000)/1000;}report.push({at:c.createdAt,status:c.status,reason:c.reason,modelMatch:ref?ref.model===c.model:null,score,hasReferenceVideo:!!ref?.referenceVideoPath});}console.log(JSON.stringify({recoveries:report}));},{timeout:30000});}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSRECOVERY
+      exit 0
+    fi
     if [[ "$TARGET" == "identity-permissions" ]]; then
       docker exec -i intercity-backend node <<'JSPERMISSIONS'
 const {PrismaClient}=require('@prisma/client');(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');console.log(JSON.stringify({admins:await tx.user.count({where:{role:'ADMIN'}}),roles:await tx.adminRole.findMany({select:{code:true,_count:{select:{users:true}}}})}));});}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
