@@ -860,7 +860,7 @@ export class GeoService {
           try {
             const isBrouter = provider === brouter;
             const url = isBrouter
-                ? `${provider.replace(/\/$/, '')}/brouter?lonlats=${fromLng},${fromLat}%7C${toLng},${toLat}&profile=car-fast-nocost&alternativeidx=0&format=geojson`
+                ? `${provider.replace(/\/$/, '')}/brouter?lonlats=${fromLng},${fromLat}%7C${toLng},${toLat}&profile=car-fast-nocost&alternativeidx=0&format=geojson&timode=3`
                 : `${provider.replace(/\/$/, '')}/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson&steps=true&alternatives=false`;
             if (isBrouter && this.brouterBusy) throw new Error('Private road router is busy');
             if (isBrouter) this.brouterBusy = true;

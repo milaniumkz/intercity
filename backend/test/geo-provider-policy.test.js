@@ -74,3 +74,14 @@ test('a second distinct private route never interrupts the active single routing
  await assert.rejects(geo.getRoute(54.989,73.368,55.1,73.38),e=>e.getResponse().reason==='PROVIDER_UNAVAILABLE');
  assert.equal(calls,1);complete();assert.equal((await first).distance,2.1);
 });
+test('real BRouter car hints retain left/right voice navigation and arrival in the existing step contract',async()=>{
+ const fixture=require('./fixtures/brouter-car-road.json');
+ const geo=make({BROUTER_URL:'http://routing:17777'});
+ geo.fetchGeo=async url=>{assert.match(url,/timode=3/);return {json:async()=>fixture}};
+ const route=await geo.getRoute(49.9489,82.6279,49.97,82.609);
+ assert.equal(route.steps[0].maneuver.type,'depart');assert.equal(route.steps.at(-1).maneuver.type,'arrive');
+ assert(route.steps.some(step=>step.maneuver.modifier==='left'));
+ assert(route.steps.some(step=>step.maneuver.modifier==='right'));
+ assert.deepEqual(route.steps[1].maneuver.location,fixture.features[0].geometry.coordinates[3].slice(0,2));
+ assert.equal(route.geometry.coordinates.length,86);
+});
