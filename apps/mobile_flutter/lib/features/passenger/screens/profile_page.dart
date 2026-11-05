@@ -707,30 +707,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
   }
 
   Future<void> _openDriverModeEntry() async {
-    final status = _driverProfile?['status']?.toString();
-    if (isApprovedDriverStatus(status)) {
-      await _switchToDriverMode();
-      return;
-    }
-    if ((status ?? '').toUpperCase() == 'PENDING') {
-      await AppModeManager.rememberPassengerMode();
-      if (!mounted) return;
-      final message = driverAccessMessageRu(status);
-      setState(() => _message = message);
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(
-          content: Text(message),
-          duration: const Duration(seconds: 3),
-        ));
-      await Future<void>.delayed(const Duration(milliseconds: 900));
-      if (!mounted) return;
-      context.go('/order');
-      return;
-    }
-    await _openAndRefresh(_driverProfile == null
-        ? '/driver/verification/personal'
-        : '/driver/verification/docs');
+    // Approval may have changed since this page was opened.
+    await _switchToDriverMode();
   }
 
   Widget _card({required Widget child, EdgeInsets? padding}) {

@@ -27,7 +27,7 @@ class ReferralLandingPage extends StatefulWidget {
 }
 
 class _ReferralLandingPageState extends State<ReferralLandingPage> {
-  late final String _code = _normalizeCode(widget.referralCode);
+  String get _code => _normalizeCode(widget.referralCode);
   bool _saved = false;
   String? _appStoreUrl;
   String? _testFlightUrl;
@@ -45,6 +45,24 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
     _loadStores();
     if (widget.downloadOnly) {
       _confirmAccount();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ReferralLandingPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.referralCode != widget.referralCode ||
+        oldWidget.downloadOnly != widget.downloadOnly) {
+      _saved = false;
+      _accountReady = false;
+      _invitationConfirmed = false;
+      _accountError = null;
+      if (!widget.downloadOnly) {
+        _saveReferral();
+      } else {
+        _confirmAccount();
+      }
+      _loadStores();
     }
   }
 
@@ -107,9 +125,10 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
   String get _referralLink => '${AppConstants.publicWebUrl}/#/ref/$_code';
 
   Future<void> _saveReferral() async {
-    if (_code.isEmpty) return;
-    await AppPreferences.setPendingReferralCode(_code);
-    if (!mounted) return;
+    final code = _code;
+    if (code.isEmpty) return;
+    await AppPreferences.setPendingReferralCode(code);
+    if (!mounted || code != _code) return;
     setState(() => _saved = true);
   }
 

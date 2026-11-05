@@ -34,12 +34,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   final _nameController = TextEditingController();
-  final _referralController = TextEditingController();
+  String? _referralCode;
+  int _referralGeneration = 0;
   final _carModelController = TextEditingController();
   final _carNumberController = TextEditingController();
   bool _isLoading = false;
   bool _showPassword = false;
-  late final Future<void> _referralReady;
+  late Future<void> _referralReady;
 
   bool get _isDriver => widget.role.toLowerCase() == 'driver';
 
@@ -52,17 +53,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
   }
 
+  @override
+  void didUpdateWidget(covariant RegisterScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_normalizeReferralInput(oldWidget.referralCode) !=
+        _normalizeReferralInput(widget.referralCode)) {
+      _referralReady = _loadReferralCode();
+    }
+  }
+
   Future<void> _loadReferralCode() async {
+    final generation = ++_referralGeneration;
     // A referral supplied by the current link must not wait for browser storage.
     final routeCode = _normalizeReferralInput(widget.referralCode);
     if (routeCode != null) {
-      _referralController.text = routeCode;
+      _referralCode = routeCode;
       try {
         await AppPreferences.setPendingReferralCode(routeCode);
       } catch (_) {
         // The current link still supplies the code directly to registration.
       }
-      if (mounted) {
+      if (mounted && generation == _referralGeneration) {
         setState(() {});
       }
       return;
@@ -70,11 +81,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final storedCode =
         _normalizeReferralInput(await AppPreferences.getPendingReferralCode());
     if (!mounted ||
+        generation != _referralGeneration ||
         storedCode == null ||
-        _referralController.text.trim().isNotEmpty) {
+        (_referralCode ?? '').trim().isNotEmpty) {
       return;
     }
-    setState(() => _referralController.text = storedCode);
+    // Only discard an old browser invitation after a definitive server answer.
+    // A current link is never replaced with storage or silently removed.
+    try {
+      final check = await (widget.apiClient ?? ApiClient()).get(
+          '/auth/referral-validity',
+          queryParameters: {'code': storedCode});
+      if (check.data is Map && check.data['valid'] == false) {
+        if (!mounted || generation != _referralGeneration) return;
+        await AppPreferences.clearPendingReferralCode();
+        if (mounted && generation == _referralGeneration) {
+          setState(() => _referralCode = null);
+        }
+        return;
+      }
+    } catch (_) {
+      /* A network error is not proof that an invitation is invalid. */
+    }
+    if (mounted && generation == _referralGeneration) {
+      setState(() => _referralCode = storedCode);
+    }
   }
 
   String? _normalizeReferralInput(String? raw) => normalizeReferralCode(raw);
@@ -84,7 +115,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _phoneController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
-    _referralController.dispose();
     _carModelController.dispose();
     _carNumberController.dispose();
     super.dispose();
@@ -95,7 +125,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (!mounted) {
       return;
     }
-    if (!_formKey.currentState!.validate()) return;
+    if (_isLoading || !_formKey.currentState!.validate()) return;
+    final submittedReferral = _normalizeReferralInput(_referralCode);
 
     setState(() => _isLoading = true);
 
@@ -110,13 +141,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'phone': normalizedPhone,
           'password': password,
           'name': _nameController.text,
-          'referralCode': _referralController.text.isNotEmpty
-              ? _normalizeReferralInput(_referralController.text)
-              : null,
+          'referralCode': submittedReferral,
         },
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
+        // The server already bound the inviter. Clear the temporary browser code
+        // before login or any later step can fail.
+        _referralCode = null;
+        await AppPreferences.clearPendingReferralCode();
         final accessToken = response.data['accessToken']?.toString();
         final refreshToken = response.data['refreshToken']?.toString();
 
@@ -151,9 +184,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
             },
           );
         }
-        await AppPreferences.clearPendingReferralCode();
         if (mounted) {
-          final code = _normalizeReferralInput(_referralController.text);
+          final code = submittedReferral;
           final next = widget.downloadAfterRegistration && code != null
               ? '/ref/$code/download'
               : (_isDriver ? '/driver/verification' : '/order');
@@ -410,7 +442,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   return null;
                                 },
                               ),
-                              if (_referralController.text.isNotEmpty) ...[
+                              if ((_referralCode ?? '').isNotEmpty) ...[
                                 const SizedBox(height: 16),
                                 const Row(children: [
                                   Icon(Icons.card_giftcard_rounded),

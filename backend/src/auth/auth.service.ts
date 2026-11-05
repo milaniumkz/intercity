@@ -25,6 +25,12 @@ export class AuthService {
         private identity: IdentityService,
     ) { }
 
+    async referralValidity(raw:string) {
+        const code=this.normalizeReferralCode(raw);
+        if(!code||code.length>64)return {valid:false};
+        const user=await this.prisma.user.findUnique({where:{refCode:code},select:{phone:true}});
+        return {valid:!!user&&!user.phone.startsWith('erased:')};
+    }
     async register(dto: RegisterDto) {
         const existingUser = await this.prisma.user.findUnique({
             where: { phone: dto.phone },
@@ -53,7 +59,7 @@ export class AuthService {
             const referrer = await this.prisma.user.findUnique({
                 where: { refCode: normalizedReferralCode },
             });
-            if (!referrer) throw new BadRequestException('Реферальный код не найден. Проверьте код или удалите его для регистрации без приглашения');
+            if (!referrer) throw new BadRequestException('Ссылка приглашения недействительна. Попросите актуальную ссылку у пригласившего');
             referredBy = referrer.refCode;
             cityId = referrer.cityId;
         }

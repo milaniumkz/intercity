@@ -2,7 +2,7 @@ import { AccountDeletionService } from './account-deletion.service';
 import { IsString, MinLength, MaxLength } from 'class-validator';
 class ChangePasswordDto { @IsString() @MinLength(1) @MaxLength(72) currentPassword: string; @IsString() @MinLength(12) @MaxLength(72) newPassword: string; }
 class DeleteOwnAccountDto { @IsString() @MinLength(1) password: string; }
-import { Controller, Post, Body, Get, UseGuards, Request, Patch } from '@nestjs/common';
+import { Controller, Query, Post, Body, Get, UseGuards, Request, Patch } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto, LoginDto, RefreshTokenDto, ResetPasswordDto, SavePushTokenDto, UpdateMyCityDto } from './dto/auth.dto';
@@ -57,6 +57,9 @@ export class AuthController {
     async me(@Request() req) {
         return this.authService.validateUser(req.user.sub);
     }
+
+    @Get('referral-validity')
+    async referralValidity(@Query('code') code:string){return this.authService.referralValidity(String(code||''));}
 
     @Get('referral')
     @UseGuards(JwtAuthGuard)

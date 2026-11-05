@@ -1,3 +1,5 @@
+import 'dart:async';
+import '../../../core/utils/driver_access.dart';
 import '../../auth/screens/face_verification_page.dart';
 import '../../referral/widgets/driver_tax_notice.dart';
 import '../../referral/widgets/tax_status_panel.dart';
@@ -28,7 +30,10 @@ class DriverVerificationPage extends StatefulWidget {
   State<DriverVerificationPage> createState() => _DriverVerificationPageState();
 }
 
-class _DriverVerificationPageState extends State<DriverVerificationPage> {
+class _DriverVerificationPageState extends State<DriverVerificationPage>
+    with WidgetsBindingObserver {
+  Timer? _approvalTimer;
+  bool _approvedDriver = false, _checkingApproval = false;
   late final _api = widget.apiClient ?? ApiClient();
   final _docTypeCtrl = TextEditingController(text: 'selfie');
   final _firstNameCtrl = TextEditingController();
@@ -76,6 +81,10 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _approvalTimer =
+        Timer.periodic(const Duration(seconds: 8), (_) => _refreshApproval());
+    _refreshApproval();
     _loadAccountProfile();
     _loadDriverDocs();
     _loadTaxStatus();
@@ -83,6 +92,8 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _approvalTimer?.cancel();
     _identityPassword.dispose();
     _docTypeCtrl.dispose();
     _firstNameCtrl.dispose();
@@ -94,6 +105,36 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
     _carNumberCtrl.dispose();
     _carClassCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_refreshApproval());
+  }
+
+  Future<void> _refreshApproval() async {
+    if (!mounted || _checkingApproval || _loading || _docUploadingType != null) {
+      return;
+    }
+    _checkingApproval = true;
+    try {
+      final r = await _api.get('/driver/profile');
+      if (!mounted) return;
+      final p = r.data;
+      if (p is Map && isApprovedDriverStatus(p['status']?.toString())) {
+        final me = await _api.get('/auth/me');
+        if (mounted) {
+          setState(() => _approvedDriver =
+              me.data is Map && me.data['driverDocumentsRequired'] != true);
+        }
+      } else if (_approvedDriver) {
+        setState(() => _approvedDriver = false);
+      }
+    } catch (_) {
+      /* Temporary network failure must not erase the completed registration. */
+    } finally {
+      _checkingApproval = false;
+    }
   }
 
   Future<void> _loadTaxStatus() async {
@@ -413,6 +454,37 @@ class _DriverVerificationPageState extends State<DriverVerificationPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_approvedDriver) {
+      return Scaffold(
+          appBar: AppBar(title: const Text('Профиль водителя')),
+          body: Center(
+              child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 480),
+                  child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        const Icon(Icons.verified_user,
+                            color: Colors.green, size: 72),
+                        const SizedBox(height: 20),
+                        const Text(
+                            'Вы зарегистрированы как водитель. Анкета одобрена.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 22, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 12),
+                        const Text(
+                            'Повторная регистрация не нужна. Можно перейти в режим водителя.',
+                            textAlign: TextAlign.center),
+                        const SizedBox(height: 24),
+                        FilledButton.icon(
+                            onPressed: () async {
+                              await AppModeManager.rememberDriverMode();
+                              if (context.mounted) context.go('/driver/home');
+                            },
+                            icon: const Icon(Icons.directions_car),
+                            label: const Text('Перейти в режим водителя'))
+                      ])))));
+    }
     final boardStage = _boardStageOverride;
     if (boardStage == 'driver_personal' ||
         _routeStage('driver_personal') ||
