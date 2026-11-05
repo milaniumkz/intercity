@@ -1,3 +1,4 @@
+import '../../../core/widgets/passenger_map_tiles.dart';
 import '../widgets/driver_rating_dialog.dart';
 import '../../../core/utils/route_query.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -17,7 +18,6 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../core/api/api_client.dart';
-import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/theme_controller.dart';
 import '../../../core/utils/error_message_ru.dart';
 import '../../../core/utils/location_display.dart';
@@ -267,7 +267,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     final offers = (_request?['offers'] as List? ?? []).whereType<Map>();
     final accepted = offers.where((o) => o['status'] == 'ACCEPTED').firstOrNull;
     try {
-      await showDriverRatingDialog(
+      final submitted = await showDriverRatingDialog(
           context: context,
           driverName: accepted?['driver']?['name']?.toString(),
           allowSkip: true,
@@ -291,6 +291,10 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
               throw Exception(errorMessageRu(error));
             }
           });
+      if (submitted && mounted) {
+        _stopPolling();
+        context.go('/order');
+      }
     } finally {
       _ratingDialogOpen = false;
     }
@@ -1908,11 +1912,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
             initialZoom: 6.8,
           ),
           children: [
-            TileLayer(
-              urlTemplate: AppConstants.osmTileUrl,
-              subdomains: AppConstants.mapTileSubdomains,
-              userAgentPackageName: 'com.milanium.intercity',
-            ),
+            const PassengerMapTiles(),
             const MapDataAttribution(),
             if (_pickupDriverPoint != null)
               MarkerLayer(markers: [

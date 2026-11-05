@@ -6,7 +6,7 @@ class BrowserLocationException implements Exception {
 
   String get userMessage => switch (reason) {
         BrowserLocationFailure.permissionDenied =>
-          'Браузер запретил местоположение. Разрешите доступ в настройках сайта и нажмите значок GPS.',
+          'GPS отключён. Введите адреса вручную или выберите точки на карте. Для определения своего места разрешите геолокацию в настройках сайта.',
         BrowserLocationFailure.unavailable =>
           'Устройство не передало местоположение. Включите геолокацию и нажмите повторить.',
         BrowserLocationFailure.timeout =>

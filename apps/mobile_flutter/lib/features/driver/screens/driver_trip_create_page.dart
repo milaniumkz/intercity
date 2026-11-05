@@ -40,7 +40,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   DateTime _departureTime = _defaultDepartureTime();
   List<dynamic> _openRequests = [];
   List<Map<String, dynamic>> _activeRequests = [];
-  final Set<String> _acceptedNotices = {};
+  static final Set<String> _acceptedNotices = {};
   String? _loadWarning;
   bool _refreshing = false;
   List<dynamic> _myTrips = [];
@@ -457,10 +457,14 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
           final id = '${request['id']}';
           if (['DRIVER_ASSIGNED', 'ACCEPTED'].contains(request['status']) &&
               _acceptedNotices.add(id)) {
+            if (_acceptedNotices.length > 200) {
+              _acceptedNotices.remove(_acceptedNotices.first);
+            }
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content:
                     const Text('Пассажир принял вашу цену. Заказ подтверждён.'),
-                duration: const Duration(seconds: 8),
+                duration: const Duration(seconds: 5),
                 action: SnackBarAction(
                     label: 'Открыть',
                     onPressed: () =>

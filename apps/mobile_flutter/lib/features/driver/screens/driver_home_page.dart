@@ -2353,6 +2353,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
       setState(() => _message = 'Статус заказа обновлен');
       if (status == 'COMPLETED' || status == 'CANCELLED') {
+        if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
         _activeOrderPollTimer?.cancel();
         _declinedNextOfferIds.clear();
         await _loadDriverProfileState();

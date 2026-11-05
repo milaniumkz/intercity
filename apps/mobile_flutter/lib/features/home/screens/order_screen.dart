@@ -1,3 +1,4 @@
+import '../../../core/widgets/passenger_map_tiles.dart';
 import '../../driver/widgets/route_departure_field.dart';
 import '../../../core/services/trip_status_sound.dart';
 import '../../../core/services/push_notifications_service.dart';
@@ -753,6 +754,12 @@ class _OrderScreenState extends State<OrderScreen> {
       'intercityDate': _intercityDateConfirmed
           ? _intercityTripDate.toUtc().toIso8601String()
           : null,
+      'intercitySeats': _intercitySeats,
+      'intercityWholeCabin': _intercityWholeCabin,
+      'intercityBaggage': _intercityBaggage,
+      'intercityPets': _intercityPets,
+      'intercityChildSeats': _intercityChildSeats,
+      'intercitySmokingAllowed': _intercitySmokingAllowed,
       'intercityFromCityId': _intercityFromCityId,
       'intercityToCityId': _intercityToCityId,
       'intercityFromCityName': _intercityFromCityName,
@@ -845,6 +852,15 @@ class _OrderScreenState extends State<OrderScreen> {
         if (toLat != null && toLng != null) {
           _toLocation = LatLng(toLat, toLng);
         }
+        _intercitySeats =
+            ((draft['intercitySeats'] as num?)?.toInt() ?? 1).clamp(1, 4);
+        _intercityWholeCabin = draft['intercityWholeCabin'] == true;
+        _intercityBaggage =
+            ((draft['intercityBaggage'] as num?)?.toInt() ?? 1).clamp(0, 4);
+        _intercityPets = (draft['intercityPets'] ?? 'Нет').toString();
+        _intercityChildSeats =
+            ((draft['intercityChildSeats'] as num?)?.toInt() ?? 0).clamp(0, 4);
+        _intercitySmokingAllowed = draft['intercitySmokingAllowed'] == true;
         _intercityFromCityId =
             (draft['intercityFromCityId'] ?? _intercityFromCityId)?.toString();
         _intercityToCityId =
@@ -2879,11 +2895,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 onTap: (_, point) => setState(() => _mapCenter = point),
               ),
               children: [
-                TileLayer(
-                  urlTemplate: AppConstants.osmTileUrl,
-                  subdomains: AppConstants.mapTileSubdomains,
-                  userAgentPackageName: 'com.milanium.intercity',
-                ),
+                PassengerMapTiles(tileProvider: widget.mapTileProvider),
                 const MapDataAttribution(),
                 if (_userLocation != null)
                   MarkerLayer(
@@ -3223,11 +3235,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 _applyCityMapPoint(point, isFrom: _cityMapFieldIsFrom);
               }),
           children: [
-            TileLayer(
-                tileProvider: widget.mapTileProvider,
-                urlTemplate: AppConstants.osmTileUrl,
-                subdomains: AppConstants.mapTileSubdomains,
-                userAgentPackageName: 'com.milanium.intercity'),
+            PassengerMapTiles(tileProvider: widget.mapTileProvider),
             if (from != null && to != null)
               RoadRouteLayer(
                   from: from,
@@ -5625,11 +5633,20 @@ class _OrderScreenState extends State<OrderScreen> {
                     child: Stack(
                       children: [
                         Positioned.fill(child: _routeMapPreview(isDark)),
-                        const Positioned(
-                          left: 34,
-                          bottom: 32,
-                          child: _MiniPremiumCar(width: 112),
-                        ),
+                        if (_fromLocation == null || _toLocation == null)
+                          Positioned(
+                              left: 16,
+                              right: 16,
+                              bottom: 16,
+                              child: Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                      color: theme.colorScheme.surface
+                                          .withValues(alpha: .94),
+                                      borderRadius: BorderRadius.circular(12)),
+                                  child: const Text(
+                                      'Выберите города и адреса — здесь появится ваш маршрут.',
+                                      textAlign: TextAlign.center))),
                       ],
                     ),
                   ),
@@ -5712,12 +5729,8 @@ class _OrderScreenState extends State<OrderScreen> {
                       ),
                       _boardRoundControl(
                         Icons.remove_rounded,
-                        onTap: () => setState(
-                          () => _intercitySeats = (_intercitySeats - 1).clamp(
-                            1,
-                            4,
-                          ),
-                        ),
+                        key: const ValueKey('intercity-seats-decrease'),
+                        onTap: () => _changeIntercitySeats(_intercitySeats - 1),
                       ),
                       const Padding(
                         padding: EdgeInsets.symmetric(horizontal: 14),
@@ -5733,12 +5746,8 @@ class _OrderScreenState extends State<OrderScreen> {
                       const SizedBox(width: 14),
                       _boardRoundControl(
                         Icons.add_rounded,
-                        onTap: () => setState(
-                          () => _intercitySeats = (_intercitySeats + 1).clamp(
-                            1,
-                            4,
-                          ),
-                        ),
+                        key: const ValueKey('intercity-seats-increase'),
+                        onTap: () => _changeIntercitySeats(_intercitySeats + 1),
                       ),
                     ],
                   ),
@@ -5815,8 +5824,14 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-  Widget _boardRoundControl(IconData icon, {VoidCallback? onTap}) {
+  void _changeIntercitySeats(int value) {
+    setState(() => _intercitySeats = value.clamp(1, 4));
+    unawaited(_saveBoardDraft());
+  }
+
+  Widget _boardRoundControl(IconData icon, {VoidCallback? onTap, Key? key}) {
     return InkWell(
+      key: key,
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
       child: Container(
@@ -7398,11 +7413,7 @@ class _OrderScreenState extends State<OrderScreen> {
               'route-${from.latitude}-${from.longitude}-${to.latitude}-${to.longitude}'),
           options: MapOptions(initialCenter: center, initialZoom: zoom),
           children: [
-            TileLayer(
-              urlTemplate: AppConstants.osmTileUrl,
-              subdomains: AppConstants.mapTileSubdomains,
-              userAgentPackageName: 'com.milanium.intercity',
-            ),
+            PassengerMapTiles(tileProvider: widget.mapTileProvider),
             const MapDataAttribution(),
             RoadRouteLayer(from: from, to: to, color: AppTheme.primaryColor),
             MarkerLayer(
@@ -11317,7 +11328,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 IconButton(
                   onPressed: _intercitySeats > 1
                       ? () {
-                          setState(() => _intercitySeats--);
+                          _changeIntercitySeats(_intercitySeats - 1);
                           _scheduleAutoBoard();
                         }
                       : null,
@@ -11349,7 +11360,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 IconButton(
                   onPressed: _intercitySeats < 4
                       ? () {
-                          setState(() => _intercitySeats++);
+                          _changeIntercitySeats(_intercitySeats + 1);
                           _scheduleAutoBoard();
                         }
                       : null,

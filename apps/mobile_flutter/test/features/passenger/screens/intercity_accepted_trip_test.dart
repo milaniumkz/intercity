@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,16 +13,26 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final api = TripApi(status: 'COMPLETED');
-    await tester.pumpWidget(MaterialApp(
-        home: IntercityRequestPage(
-            requestId: 'trip', apiClient: api, enableLiveMap: false)));
+    final router = GoRouter(routes: [
+      GoRoute(
+          path: '/',
+          builder: (_, __) => IntercityRequestPage(
+              requestId: 'trip', apiClient: api, enableLiveMap: false)),
+      GoRoute(
+          path: '/order',
+          builder: (_, __) =>
+              const Scaffold(body: Text('Заказать новую поездку')))
+    ]);
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pump();
     await tester.pumpAndSettle();
     expect(find.byType(Dialog), findsOneWidget);
     await tester.tap(find.text('Отправить'));
     await tester.pumpAndSettle();
     expect(api.ratings, [5]);
-    expect(find.text('Ваша оценка: 5 ★'), findsOneWidget);
+    expect(find.text('Заказать новую поездку'), findsOneWidget);
+    expect(find.byType(IntercityRequestPage), findsNothing);
     expect(find.text('Оценить водителя'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
