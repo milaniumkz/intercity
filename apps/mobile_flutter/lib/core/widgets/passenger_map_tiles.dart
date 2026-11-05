@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter_map/flutter_map.dart';
 import '../constants/app_constants.dart';
 import '../utils/network_recovery.dart';
@@ -16,7 +17,8 @@ class PassengerMapTiles extends StatefulWidget {
 }
 
 class _PassengerMapTilesState extends State<PassengerMapTiles> {
-  late TileProvider _provider = widget.tileProvider ?? NetworkTileProvider();
+  late final TileProvider _provider =
+      widget.tileProvider ?? NetworkTileProvider(httpClient: _MapHttpClient());
   int _attempt = 0;
   final Map<TileImage, VoidCallback> _observed = {};
   Timer? _timeout, _monitor, _automaticRetry;
@@ -43,11 +45,16 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
   }
 
   bool _failed = false, _loaded = false, _queued = false, _retrying = false;
+  bool _partialFailure = false;
   @override
   void initState() {
     super.initState();
     void restored() {
-      if (mounted && _failed) unawaited(_retry());
+      if (mounted &&
+          (_failed ||
+              _visibleTiles.any((t) => t.loadError || t.imageInfo == null))) {
+        unawaited(_retry());
+      }
     }
 
     _network = (widget.networkEvents ?? networkRecoveryEvents())
@@ -88,15 +95,17 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
           t.opacity > 0;
       final loaded = visible.any(displayed);
       final complete = visible.isNotEmpty && visible.every(displayed);
-      final failed =
+      final needsRetry =
           visible.any((t) => t.loadError) || (!complete && _viewExpired);
+      // A late tile is not a failure of the entire map.
+      final failed = !loaded && _viewExpired;
       if (complete) {
         _timeout?.cancel();
         _automaticRetry?.cancel();
         _automaticRetry = null;
         _autoAttempts = 0;
       }
-      if (failed &&
+      if (needsRetry &&
           _automaticRetry == null &&
           _autoAttempts < 3 &&
           !_retrying) {
@@ -108,10 +117,15 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
           _retry(automatic: true);
         });
       }
-      if (loaded != _loaded || failed != _failed) {
+      final partialFailure =
+          loaded && !complete && _viewExpired && _autoAttempts >= 3;
+      if (loaded != _loaded ||
+          failed != _failed ||
+          partialFailure != _partialFailure) {
         setState(() {
           _loaded = loaded;
           _failed = failed;
+          _partialFailure = partialFailure;
         });
       }
     });
@@ -136,29 +150,29 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
     _automaticRetry?.cancel();
     _automaticRetry = null;
     if (!automatic) _autoAttempts = 0;
-    _startTimeout();
-    // The image provider caches by URL, including failed completers on web.
-    // Evict before mounting the replacement layer, not during its disposal.
-    await Future.wait(_observed.keys
-        .where((tile) => tile.loadError || tile.imageInfo == null)
-        .map((tile) async {
+    final tiles = _visibleTiles
+        .where((tile) =>
+            tile.loadError || (_viewExpired && tile.imageInfo == null))
+        .toList();
+    if (!automatic) _startTimeout();
+    _attempt++;
+    await Future.wait(tiles.map((tile) async {
+      final original = tile.imageProvider is _RetryTileImage
+          ? (tile.imageProvider as _RetryTileImage).original
+          : tile.imageProvider;
       try {
         await tile.imageProvider.evict();
+        await original.evict();
       } catch (_) {}
+      if (!mounted || tile.cancelLoading.isCompleted) return;
+      tile.imageProvider = _RetryTileImage(original, _attempt);
+      tile.loadError = false;
+      tile.load();
     }));
     if (!mounted) return;
     _retrying = false;
-    for (final entry in _observed.entries) {
-      entry.key.removeListener(entry.value);
-    }
-    _observed.clear();
-    setState(() {
-      _failed = false;
-      _loaded = false;
-      _attempt++;
-      _provider = widget.tileProvider ?? NetworkTileProvider();
-    });
-    _startTimeout();
+    if (!automatic) setState(() => _failed = false);
+    _health();
   }
 
   @override
@@ -188,7 +202,7 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
     }
     return Stack(fit: StackFit.expand, children: [
       TileLayer(
-          key: ValueKey(_attempt),
+          panBuffer: 0,
           tileProvider: _provider,
           urlTemplate: _url,
           maxNativeZoom: 19,
@@ -212,6 +226,16 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
                         child: Padding(
                             padding: EdgeInsets.all(10),
                             child: Text('Загрузка карты…')))))),
+      if (_partialFailure)
+        Positioned(
+            top: 70,
+            right: 12,
+            child: Material(
+                borderRadius: BorderRadius.circular(12),
+                child: TextButton.icon(
+                    onPressed: () => _retry(),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Догрузить карту')))),
       if (_failed)
         Positioned(
             top: 70,
@@ -234,4 +258,46 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
                     ])))),
     ]);
   }
+}
+
+/// Renew a failed image's Flutter key without changing its cacheable HTTP URL.
+class _RetryTileImage extends ImageProvider<_RetryTileKey> {
+  const _RetryTileImage(this.original, this.generation);
+  final ImageProvider original;
+  final int generation;
+  @override
+  Future<_RetryTileKey> obtainKey(ImageConfiguration configuration) async =>
+      _RetryTileKey(
+          original, await original.obtainKey(configuration), generation);
+  @override
+  ImageStreamCompleter loadImage(
+      _RetryTileKey key, ImageDecoderCallback decode) {
+    // Delegate decoding using the original provider's correctly typed key.
+    // ignore: invalid_use_of_protected_member
+    return key.original.loadImage(key.originalKey, decode);
+  }
+}
+
+class _RetryTileKey {
+  const _RetryTileKey(this.original, this.originalKey, this.generation);
+  final ImageProvider original;
+  final dynamic originalKey;
+  final int generation;
+  @override
+  bool operator ==(Object other) =>
+      other is _RetryTileKey &&
+      other.originalKey == originalKey &&
+      other.generation == generation;
+  @override
+  int get hashCode => Object.hash(originalKey, generation);
+}
+
+/// Retry policy belongs to the map widget, not to an additional HTTP retry loop.
+class _MapHttpClient extends http.BaseClient {
+  final http.Client _inner = http.Client();
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) =>
+      _inner.send(request);
+  @override
+  void close() => _inner.close();
 }

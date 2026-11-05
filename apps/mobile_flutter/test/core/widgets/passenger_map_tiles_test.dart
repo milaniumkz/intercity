@@ -33,6 +33,51 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets(
+      'partial slow map retains loaded tiles and layer while retrying only missing images',
+      (tester) async {
+    final provider = PartialTiles();
+    final events = StreamController<void>.broadcast();
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: FlutterMap(
+      options: const MapOptions(
+          initialCenter: LatLng(49.97, 82.61), initialZoom: 14),
+      children: [
+        PassengerMapTiles(tileProvider: provider, networkEvents: events.stream)
+      ],
+    ))));
+    await tester.runAsync(() =>
+        precacheImage(provider.image, tester.element(find.byType(FlutterMap))));
+    await tester.pumpAndSettle();
+    final originalLayer = tester.state(find.byType(TileLayer));
+    final originalFactories = provider.factories;
+    final before = PendingImage.loads;
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+    expect(PendingImage.loads, greaterThan(before));
+    expect(
+        identical(tester.state(find.byType(TileLayer)), originalLayer), isTrue);
+    expect(provider.factories, originalFactories);
+    expect(
+        tester
+            .widgetList<RawImage>(find.byType(RawImage))
+            .any((i) => i.image != null),
+        isTrue);
+    expect(find.text('Повторить загрузку карты'), findsNothing);
+    final beforeRecovery = PendingImage.loads;
+    events.add(null);
+    await tester.pump();
+    await tester.pump();
+    expect(PendingImage.loads, greaterThan(beforeRecovery));
+    await tester.pumpWidget(const SizedBox());
+    await events.close();
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+  });
+
   testWidgets('previous loaded tiles do not hide failure after camera moves',
       (tester) async {
     final controller = MapController();
@@ -53,10 +98,10 @@ void main() {
     await tester.pump(const Duration(seconds: 11));
     await tester.pump();
     expect(find.text('Повторить загрузку карты'), findsOneWidget);
-    final before = provider.serverRequests;
+    final before = PendingImage.loads;
     await tester.pump(const Duration(seconds: 2));
     await tester.pump();
-    expect(provider.serverRequests, greaterThan(before));
+    expect(PendingImage.loads, greaterThan(before));
     await tester.pumpWidget(const SizedBox());
     PaintingBinding.instance.imageCache.clear();
     PaintingBinding.instance.imageCache.clearLiveImages();
@@ -164,5 +209,15 @@ class MovingTiles extends MemoryTileProvider {
     return fail
         ? const PendingImage(999)
         : super.getImage(coordinates, options);
+  }
+}
+
+class PartialTiles extends MemoryTileProvider {
+  int factories = 0;
+  @override
+  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) {
+    factories++;
+    if (coordinates.x.isEven) return const PendingImage(888);
+    return image;
   }
 }
