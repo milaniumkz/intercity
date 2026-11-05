@@ -185,7 +185,7 @@ class _AdminIdentityReviewsPageState extends State<AdminIdentityReviewsPage> {
                                           'TURN_RIGHT': 'поворот вправо',
                                           'LOOK_UP': 'взгляд вверх',
                                           'OPEN_MOUTH': 'открыть рот',
-                                          'BLINK': 'моргнуть два раза'
+                                          'BLINK': 'моргнуть один раз'
                                         }[a] ?? a).join(' → ')}'),
                               const SizedBox(height: 12),
                               Wrap(spacing: 16, runSpacing: 16, children: [

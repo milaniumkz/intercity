@@ -16,6 +16,17 @@ export function similarity(a:number[],b:number[]) {
  if(norms<0.01)throw new Error('Invalid face template');
  return a.reduce((s,v,i)=>s+v*b[i],0)/norms;
 }
+/** A single missed gesture may be tolerated only with a strong face match
+ * and independently successful PAD, continuity and sharpness checks. */
+export function confidentRecoveryMotion(result:any,score:number) {
+ const c=result.checks;
+ return result.verdict==='REVIEW'&&score>=.70&&c?.oneFace===true&&
+  c.totalActions===3&&c.passedActions===2&&
+  Array.isArray(c.issues)&&c.issues.length===1&&c.issues[0]==='ACTIONS'&&
+  Number.isFinite(c.continuity)&&c.continuity>=.60&&c.continuity<=1&&Number.isFinite(c.sharpness)&&c.sharpness>=35&&
+  Array.isArray(c.padMedian)&&c.padMedian.length===2&&c.padMedian.every((v:any)=>typeof v==='number'&&v>=.97&&v<=1)&&
+  Array.isArray(c.padLower)&&c.padLower.length===2&&c.padLower.every((v:any)=>typeof v==='number'&&v>=.85&&v<=1);
+}
 /** Detect virtually identical temporal frames after common container re-encoding.
  * Scoped to this account; never used to search for people across accounts. */
 export function repeatedVideo(a:string[],b:string[]) {
@@ -110,15 +121,17 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
     await this.prisma.biometricChallenge.update({where:{id},data:{status:'REJECTED',reason:'Повтор ранее использованной записи'}});return {status:'REJECTED',message:c.purpose==='ENROLL'?'Эта запись уже использовалась. Запишите новое видео.':identityFailure};
    }
   }
-  let verdict=result.verdict;
+  let verdict=result.verdict;let reviewReason=result.reason||'';
   if(c.purpose==='RECOVERY'){
    const profile=user.biometricProfile;
-   if(!profile||profile.model!==result.model){verdict='REVIEW';}
+   if(!profile||profile.model!==result.model){verdict='REVIEW';reviewReason='Нужно уточнить совместимость эталона лица. Можно повторить запись или дождаться проверки.';}
    else{
     const reference=JSON.parse(this.vault.open(Buffer.from(profile.template,'base64'),user.id).toString()) as number[];
     const score=similarity(reference,result.embedding!);
     if(score<0.45){await this.prisma.biometricChallenge.update({where:{id},data:{status:'REJECTED',reason:'Лицо не совпадает с эталоном'}});return {status:'REJECTED',message:identityFailure};}
-    if(score<0.60)verdict='REVIEW';
+    if(score<0.60){verdict='REVIEW';reviewReason='Сходство с эталоном недостаточно уверенное. Смотрите прямо в камеру и повторите запись при ровном освещении.';}
+    else if(confidentRecoveryMotion(result,score)){verdict='PASS';}
+    else if(verdict==='REVIEW'){reviewReason='Лицо совпало с эталоном. '+(result.reason||'Не удалось уверенно проверить качество видеозаписи.');}
    }
   }
   if(c.purpose==='ENROLL'&&verdict==='REVIEW'){
@@ -137,7 +150,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
    if(!current||current.blockedAt||current.authVersion!==c.authVersion)throw new UnauthorizedException(identityFailure);
    if(c.purpose==='ENROLL'&&verdict==='PASS' && await tx.biometricProfile.findUnique({where:{userId:user.id}}))throw new ConflictException('Эталон уже создан. Повторная привязка не разрешена');
    if(c.purpose==='ENROLL'&&verdict==='PASS')await tx.biometricProfile.create({data:{userId:user.id,template:candidate,referencePath,referenceVideoPath:videoPath,model:result.model,consentVersion:c.consentVersion,driverConsent:c.driverConsent}});
-   await tx.biometricChallenge.update({where:{id},data:{status:verdict==='PASS'?'VERIFIED':'REVIEW',videoSignature:result.videoSignature?this.vault.seal(Buffer.from(JSON.stringify(result.videoSignature)),user.id).toString('base64'):null,candidate:verdict==='REVIEW'?candidate:null,referencePath:c.purpose==='ENROLL'&&verdict==='PASS'?null:referencePath,videoPath:c.purpose==='ENROLL'&&verdict==='PASS'?null:videoPath,model:result.model,reason:verdict==='REVIEW'?result.reason||'Нужна ручная проверка':null}});
+   await tx.biometricChallenge.update({where:{id},data:{status:verdict==='PASS'?'VERIFIED':'REVIEW',videoSignature:result.videoSignature?this.vault.seal(Buffer.from(JSON.stringify(result.videoSignature)),user.id).toString('base64'):null,candidate:verdict==='REVIEW'?candidate:null,referencePath:c.purpose==='ENROLL'&&verdict==='PASS'?null:referencePath,videoPath:c.purpose==='ENROLL'&&verdict==='PASS'?null:videoPath,model:result.model,reason:verdict==='REVIEW'?reviewReason||'Нужна ручная проверка':null}});
   });
   } catch(error) {
    await Promise.allSettled([this.vault.remove(user.id,referencePath),...(videoPath?[this.vault.remove(user.id,videoPath)]:[])]);
@@ -157,7 +170,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
    if(!c.resetExpiresAt||c.resetExpiresAt<new Date())throw new UnauthorizedException('Разрешение на смену пароля истекло. Повторите видео.');
    return {status:'VERIFIED',resetToken:proof,message:'Личность подтверждена. Придумайте новый пароль.'};
   }
-  return {status:c.status,message:c.status==='FAILED'?'Обработка прервана. Запишите новое видео.':c.status==='EXPIRED'?'Срок проверки истёк. Запишите новое видео.':c.status==='REVIEW'?'Запись направлена администратору. Ожидайте результата на этом экране.':c.status==='VERIFIED'?'Видеопроверка пройдена.':c.status==='REJECTED'?(c.purpose==='ENROLL'?c.reason||'Видеопроверка не пройдена':identityFailure):undefined};
+  return {status:c.status,message:c.status==='FAILED'?'Обработка прервана. Запишите новое видео.':c.status==='EXPIRED'?'Срок проверки истёк. Запишите новое видео.':c.status==='REVIEW'?(c.reason||'Не удалось уверенно завершить автоматическую проверку.')+' Можно записать новое видео или дождаться решения администратора.':c.status==='VERIFIED'?'Видеопроверка пройдена.':c.status==='REJECTED'?(c.purpose==='ENROLL'?c.reason||'Видеопроверка не пройдена':identityFailure):undefined};
  }
  async resetPassword(proof:string,password:string){
   if(!proof||proof.length!==64||!password||password.length<12||Buffer.byteLength(password)>72)throw new BadRequestException('Укажите разрешение проверки и новый пароль от 12 символов, не более 72 байт');

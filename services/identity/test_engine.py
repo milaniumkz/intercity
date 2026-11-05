@@ -36,6 +36,15 @@ class IdentityEngineTests(unittest.TestCase):
    path=Path(root)/'short.mp4';writer=cv2.VideoWriter(str(path),cv2.VideoWriter_fourcc(*'mp4v'),20,(640,480))
    for _ in range(280):writer.write(np.zeros((480,640,3),dtype=np.uint8))
    writer.release();self.assertEqual(engine.verify(path,['OPEN_MOUTH','LOOK_UP'])['verdict'],'REJECT')
+ def test_one_natural_blink_is_enough_but_static_eyes_or_unfinished_closure_are_not(self):
+  baseline={'yaw':0,'pitch':.4,'eye':.25,'mouth':.03}
+  samples=[dict(baseline) for _ in range(40)]
+  samples[18]['eye']=.16;samples[19]['eye']=.16
+  self.assertTrue(engine.action_passed('BLINK',samples,baseline))
+  self.assertFalse(engine.action_passed('BLINK',[dict(baseline) for _ in range(40)],baseline))
+  unfinished=[dict(baseline) for _ in range(40)]
+  for n in range(18,40):unfinished[n]['eye']=.16
+  self.assertFalse(engine.action_passed('BLINK',unfinished,baseline))
  def test_multiple_faces_and_invalid_document_are_not_accepted(self):
   with self.assertRaises(Exception):read_image(b'not an image')
   self.assertIsNone(engine.detect(np.zeros((480,640,3),dtype=np.uint8)))

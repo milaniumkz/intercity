@@ -1,6 +1,6 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {PrismaClient}=require('@prisma/client'),bcrypt=require('bcrypt'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
-const {IdentityService,IDENTITY_CONSENT}=require('../dist/src/identity/identity.service');
+const {IdentityService,IDENTITY_CONSENT,confidentRecoveryMotion}=require('../dist/src/identity/identity.service');
 const database=process.env.DISPATCH_TEST_DATABASE_URL;
 test('private video enrollment, matching, rejection, manual review and one-use reset against PostgreSQL',{skip:!database},async t=>{
  const url=new URL(database);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.pathname,'/dispatch_test');
@@ -62,6 +62,14 @@ test('private video enrollment, matching, rejection, manual review and one-use r
    result.verdict='REVIEW';const c=await recover(alice,'127.0.0.9');assert.equal(c.actions.length,3);assert.equal(c.recordingSeconds,20);assert.equal((await service.submit(c.challengeId,c.challengeToken,video())).status,'REVIEW');
    await service.review(c.challengeId,admin.id,true,'Reviewed live video and compared with reference');assert.equal((await service.challengeStatus(c.challengeId,c.challengeToken)).status,'VERIFIED');result.verdict='PASS';
   });
+  await t.test('strongly matching live recovery accepts two clear tasks when one gesture is missed',async()=>{
+   await db.biometricChallenge.updateMany({where:{userId:alice.id},data:{createdAt:new Date(Date.now()-2*3600000)}});
+   result.verdict='REVIEW';result.reason='Не распознано моргание';result.checks={issues:['ACTIONS'],passedActions:2,totalActions:3,oneFace:true,continuity:.8,sharpness:60,padMedian:[.99,.99],padLower:[.95,.96]};
+   const c=await recover(alice,'127.0.0.19');const r=await service.submit(c.challengeId,c.challengeToken,video());assert.equal(r.status,'VERIFIED');assert(r.resetToken);
+   result.checks={...result.checks,issues:['ACTIONS','PAD'],padLower:[.5,.96]};
+   const uncertain=await recover(alice,'127.0.0.20');assert.equal((await service.submit(uncertain.challengeId,uncertain.challengeToken,video())).status,'REVIEW');
+   result.verdict='PASS';delete result.checks;
+  });
   await t.test('expired challenge and foreign session secret are rejected before engine work',async()=>{
    const c=await recover(alice,'127.0.0.3'),before=calls;await db.biometricChallenge.update({where:{id:c.challengeId},data:{expiresAt:new Date(Date.now()-1)}});
    await assert.rejects(service.submit(c.challengeId,c.challengeToken,video()),/истекла/);await assert.rejects(service.challengeStatus(c.challengeId,'x'.repeat(43)),/не разрешено/);assert.equal(calls,before);
@@ -83,4 +91,11 @@ test('private video enrollment, matching, rejection, manual review and one-use r
   if(original)await db.appSettings.update({where:{key:original.key},data:{value:original.value}});else await db.appSettings.deleteMany({where:{key:'identityVerificationEnabled'}});
   await db.$disconnect();await fs.rm(root,{recursive:true,force:true});if(previousRoot===undefined)delete process.env.TECH_STORAGE_DIR;else process.env.TECH_STORAGE_DIR=previousRoot;
  }
+});
+
+test('missed-gesture fallback never bypasses low face confidence, PAD, blur or incomplete metadata',()=>{
+ const result={verdict:'REVIEW',checks:{issues:['ACTIONS'],passedActions:2,totalActions:3,oneFace:true,continuity:.8,sharpness:60,padMedian:[.99,.99],padLower:[.95,.96]}};
+ assert.equal(confidentRecoveryMotion(result,.777),true);
+ assert.equal(confidentRecoveryMotion(result,.65),false);
+ for(const change of [{passedActions:1},{passedActions:3},{oneFace:false},{issues:['ACTIONS','PAD']},{padMedian:[.8,.99]},{padLower:[.3,.96]},{sharpness:20},{continuity:.5},{padLower:undefined}])assert.equal(confidentRecoveryMotion({...result,checks:{...result.checks,...change}},.777),false);
 });

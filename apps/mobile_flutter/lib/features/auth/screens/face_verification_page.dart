@@ -17,7 +17,7 @@ const identityActions = {
   'TURN_RIGHT': 'Слегка поверните голову направо',
   'LOOK_UP': 'Посмотрите вверх, слегка подняв голову',
   'OPEN_MOUTH': 'Откройте рот',
-  'BLINK': 'Медленно моргните два раза',
+  'BLINK': 'Моргните один раз',
 };
 
 class FaceVerificationPage extends StatefulWidget {
@@ -506,10 +506,27 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                               const Icon(Icons.pending_actions, size: 56),
                               const SizedBox(height: 16),
                               const Text(
-                                  'Запись направлена на ручную проверку. До решения доступ не открывается. Оставайтесь на этом экране; материалы доступны администратору до 24 часов.'),
+                                  'Автоматической проверке не хватило уверенности. Можно сразу записать новое видео или дождаться решения администратора. Материалы доступны для ручной проверки до 24 часов.'),
                               TextButton(
                                   onPressed: _busy ? null : _check,
                                   child: const Text('Проверить результат')),
+                              if (_recovery && _state == 'REVIEW')
+                                TextButton.icon(
+                                  onPressed: _busy
+                                      ? null
+                                      : () {
+                                          _poll?.cancel();
+                                          setState(() {
+                                            _state = 'READY';
+                                            _challenge = null;
+                                            _message = '';
+                                            _resetToken = null;
+                                          });
+                                          unawaited(_start());
+                                        },
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('Записать новое видео'),
+                                ),
                             ] else ...[
                               Text(_recovery
                                   ? 'Новая запись сравнивается с вашим ранее сохранённым эталоном. Если лицо не совпадёт, смена пароля будет запрещена. Без первичного эталона восстановление по лицу недоступно.'

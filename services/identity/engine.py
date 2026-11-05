@@ -68,9 +68,9 @@ def action_passed(action,samples,baseline):
  if action=='BLINK':
   closed=False;blinks=0
   for p in samples:
-   if p['eye']<baseline['eye']*.55:closed=True
-   elif closed and p['eye']>baseline['eye']*.80:blinks+=1;closed=False
-  return blinks>=2
+   if p['eye']<baseline['eye']*.72:closed=True
+   elif closed and p['eye']>baseline['eye']*.85:blinks+=1;closed=False
+  return blinks>=1
  return False
 
 def reject(reason):return {'verdict':'REJECT','reason':reason,'model':MODEL}
@@ -107,7 +107,7 @@ def verify(path,actions):
      fingerprints.append(f'{value:016x}');last_fingerprint=t
     if time.monotonic()-started>70:return reject('Обработка прервана. Повторите запись')
     if index>1600 or frame.shape[0]*frame.shape[1]>2100000:return reject('Запишите видео в обычном качестве, до 1280×720')
-    sample_tick=int(t*20+1e-6)
+    sample_tick=int(t*30+1e-6)
     if sample_tick<=last:continue
     last=sample_tick;seen+=1
     face=detect(frame)
@@ -121,14 +121,14 @@ def verify(path,actions):
      for phase in range(len(actions)):
       if 2+phase*6-.20<=t<=2+phase*6+4.65:poses[phase].append(p)
     neutral_phase=t<2 or (t>=2 and (t-2)%6>=4)
-    if seen%(3 if valid_fps and fps<12 else 5)==0:
+    if seen%(3 if valid_fps and fps<12 else 7)==0:
      v=vector(frame,face);vectors.append(v)
      if neutral_phase and abs(p['yaw'])<.18:neutral_vectors.append(v)
      if len(vectors)>1 and float(v@vectors[0])<.45:return reject('Лицо изменилось во время записи. Повторите проверку')
     # PAD models are trained on frontal faces; head-turn frames must not
     # be mistaken for a photo attack. All active tasks are still mandatory.
     neutral_phase=t<2 or (t>=2 and (t-2)%6>=4)
-    if seen%(2 if valid_fps and fps<12 else 6)==0 and neutral_phase and abs(p['yaw'])<.18:
+    if seen%(2 if valid_fps and fps<12 else 9)==0 and neutral_phase and abs(p['yaw'])<.18:
      scores.append(pad(frame,face))
      x,y,w,h=map(int,face[:4]);crop=frame[max(0,y):max(0,y)+h,max(0,x):max(0,x)+w]
      if crop.size:sharpness.append(float(cv2.Laplacian(cv2.cvtColor(crop,cv2.COLOR_BGR2GRAY),cv2.CV_64F).var()))
@@ -149,16 +149,16 @@ def verify(path,actions):
  if min(medians)<.50 or min(lower)<.15:return reject('Проверка подлинности видео не пройдена. Снимите себя вживую без экранов и фотографий')
  averaged=np.mean(neutral_vectors if len(neutral_vectors)>=6 else vectors,axis=0);averaged/=np.linalg.norm(averaged)
  continuity=min(float(v@averaged) for v in vectors)
- problems=[]
- names={'TURN_LEFT':'поворот головы налево','TURN_RIGHT':'поворот головы направо','LOOK_UP':'поднять подбородок','OPEN_MOUTH':'открыть рот','BLINK':'два моргания'}
- if not all(actions_ok):problems.append('Не распознаны задания: '+', '.join(names[a] for a,ok in zip(actions,actions_ok) if not ok))
- if min(medians)<(.85 if enrollment else .97) or min(lower)<(.50 if enrollment else .85):problems.append('Не удалось уверенно подтвердить живое лицо: уберите блики, направьте свет на лицо')
- if np.median(sharpness)<(25 if enrollment else 35):problems.append('Изображение размыто: протрите камеру и держите телефон неподвижно')
- if continuity<(.55 if enrollment else .60):problems.append('Лицо теряется при движении: поворачивайте голову плавно')
+ problems=[];issues=[]
+ names={'TURN_LEFT':'поворот головы налево','TURN_RIGHT':'поворот головы направо','LOOK_UP':'поднять подбородок','OPEN_MOUTH':'открыть рот','BLINK':'моргание'}
+ if not all(actions_ok):issues.append('ACTIONS');problems.append('Не распознаны задания: '+', '.join(names[a] for a,ok in zip(actions,actions_ok) if not ok))
+ if min(medians)<(.85 if enrollment else .97) or min(lower)<(.50 if enrollment else .85):issues.append('PAD');problems.append('Не удалось уверенно подтвердить живое лицо: уберите блики, направьте свет на лицо')
+ if np.median(sharpness)<(25 if enrollment else 35):issues.append('SHARPNESS');problems.append('Изображение размыто: протрите камеру и держите телефон неподвижно')
+ if continuity<(.55 if enrollment else .60):issues.append('CONTINUITY');problems.append('Лицо теряется при движении: поворачивайте голову плавно')
  uncertain=bool(problems)
  return {'verdict':'REVIEW' if uncertain else 'PASS','reason':'. '.join(problems), 'model':MODEL,
   'videoSignature':fingerprints,'embedding':averaged.tolist(),'reference':base64.b64encode(reference).decode(),
-  'checks':{'activeChallenge':all(actions_ok),'oneFace':True,'continuity':round(continuity,3),'padMedian':[round(float(x),3) for x in medians]}}
+  'checks':{'issues':issues,'passedActions':sum(actions_ok),'totalActions':len(actions),'activeChallenge':all(actions_ok),'oneFace':True,'sharpness':round(float(np.median(sharpness)),3),'padLower':[round(float(x),3) for x in lower],'continuity':round(continuity,3),'padMedian':[round(float(x),3) for x in medians]}}
 
 class Handler(BaseHTTPRequestHandler):
  def log_message(self,*args):pass
