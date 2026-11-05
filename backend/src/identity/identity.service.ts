@@ -83,7 +83,8 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   if(perUser>=5||perIp>=15)throw new ForbiddenException('Слишком много проверок. Повторите через час.');
   }
   if(enrollment){
-   if(!user||user.blockedAt||user.role==='ADMIN'||!await bcrypt.compare(input.password||'',user.password))throw new UnauthorizedException('Неверный пароль аккаунта');
+   // Enrollment is JWT-authenticated by the controller; bind only its subject.
+   if(!user||user.blockedAt||user.role==='ADMIN')throw new UnauthorizedException('Войдите в аккаунт для первичной видеопроверки');
    if(user.role==='DRIVER' && input.driverConsent!==true)throw new BadRequestException('Подтвердите согласие на сверку с удостоверением личности');
    if(user.biometricProfile)throw new ConflictException('Видеопроверка уже пройдена. Эталон нельзя заменить через первичную регистрацию.');
   } else if(!user||user.blockedAt||user.role==='ADMIN'||user.phone.startsWith('erased:')||user.biometricProfile?.status!=='VERIFIED')user=null;

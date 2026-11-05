@@ -38,8 +38,7 @@ class FaceVerificationPage extends StatefulWidget {
 class _FaceVerificationPageState extends State<FaceVerificationPage>
     with WidgetsBindingObserver {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
-  final _password = TextEditingController(),
-      _newPassword = TextEditingController(),
+  final _newPassword = TextEditingController(),
       _confirm = TextEditingController();
   CameraController? _camera;
   final _voice = IdentityVoice();
@@ -96,7 +95,6 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
     _poll?.cancel();
     _voice.dispose();
     unawaited(_camera?.dispose());
-    _password.dispose();
     _newPassword.dispose();
     _confirm.dispose();
     super.dispose();
@@ -130,10 +128,6 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
     if (!_consent || _busy) return;
     _voice.play('prepare');
     FocusScope.of(context).unfocus();
-    if (!_recovery && _password.text.isEmpty) {
-      setState(() => _message = 'Введите пароль аккаунта для привязки эталона');
-      return;
-    }
     setState(() {
       _busy = true;
       _message = '';
@@ -145,7 +139,6 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
           .post('/auth/identity/${_recovery ? 'recovery' : 'enroll'}', data: {
         'consentVersion': identityConsentVersion,
         if (_recovery) 'phone': widget.phone,
-        if (!_recovery) 'password': _password.text,
         if (!_recovery) 'driverConsent': _driver,
       });
       _challenge = Map<String, dynamic>.from(response.data as Map);
@@ -196,7 +189,6 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
             .post('/auth/identity/${_recovery ? 'recovery' : 'enroll'}', data: {
           'consentVersion': identityConsentVersion,
           if (_recovery) 'phone': widget.phone,
-          if (!_recovery) 'password': _password.text,
           if (!_recovery) 'driverConsent': _driver
         });
         _challenge = Map<String, dynamic>.from(response.data as Map);
@@ -555,15 +547,6 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                       : _driver
                                           ? 'Согласен на обработку биометрических данных для восстановления пароля и сверки с удостоверением личности'
                                           : 'Согласен на обработку биометрических данных только для восстановления пароля')),
-                              if (!_recovery)
-                                TextField(
-                                    controller: _password,
-                                    obscureText: true,
-                                    autofillHints: const [
-                                      AutofillHints.password
-                                    ],
-                                    decoration: const InputDecoration(
-                                        labelText: 'Текущий пароль аккаунта')),
                               const SizedBox(height: 16),
                               FilledButton.icon(
                                   onPressed: _busy || !_consent ? null : _start,

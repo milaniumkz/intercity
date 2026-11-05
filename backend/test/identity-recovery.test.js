@@ -16,10 +16,14 @@ test('private video enrollment, matching, rejection, manual review and one-use r
   await service.onModuleInit();
   for(let i=0;i<3;i++)users.push(await db.user.create({data:{phone:'+7708'+String(crypto.randomInt(1e7)).padStart(7,'0'),name:'Identity local QA',password:await bcrypt.hash('initial-password-qa',4),role:i===2?'ADMIN':'PASSENGER',refCode:crypto.randomUUID(),refLink:''}}));
   const [alice,bob,admin]=users;
-  const enroll=(u,extra={})=>service.challenge({userId:u.id,password:'initial-password-qa',ip:'127.0.0.1',consentVersion:IDENTITY_CONSENT,...extra});
+  const enroll=(u,extra={})=>service.challenge({userId:u.id,ip:'127.0.0.1',consentVersion:IDENTITY_CONSENT,...extra});
   const recover=(u,ip='127.0.0.2')=>service.challenge({phone:u.phone,ip,consentVersion:IDENTITY_CONSENT});
-  await t.test('binding requires password and explicit current consent',async()=>{
-   await assert.rejects(enroll(alice,{password:'wrong'}),/Неверный пароль/);
+  await t.test('binding requires an available authenticated account and explicit current consent',async()=>{
+   await assert.rejects(enroll(admin),/Войдите в аккаунт/);
+   await assert.rejects(enroll({id:crypto.randomUUID()}),/Войдите в аккаунт/);
+   await db.user.update({where:{id:bob.id},data:{blockedAt:new Date()}});
+   await assert.rejects(enroll(bob),/Войдите в аккаунт/);
+   await db.user.update({where:{id:bob.id},data:{blockedAt:null}});
    await assert.rejects(enroll(alice,{consentVersion:'old'}),/согласие/);
   });
   await t.test('previous enrollment consent cannot authorize newly retained full video',async()=>{
@@ -29,6 +33,7 @@ test('private video enrollment, matching, rejection, manual review and one-use r
   });
   await t.test('successful initial enrollment encrypts and binds reference; no overwrite',async()=>{
    const c=await enroll(alice);assert.equal(new Set(c.actions).size,2);assert.equal(c.recordingSeconds,14);
+   await assert.rejects(service.submit(c.challengeId,c.challengeToken,video(),bob.id));
    const recording=video();const r=await service.submit(c.challengeId,c.challengeToken,recording,alice.id);assert.equal(r.status,'VERIFIED');assert.equal(await service.needsVerification(alice.id,alice.role),false);
    const p=await db.biometricProfile.findUnique({where:{userId:alice.id}});assert(!p.template.includes(JSON.stringify(a)));
    assert.deepEqual(JSON.parse(service.vault.open(Buffer.from(p.template,'base64'),alice.id).toString()),a);
