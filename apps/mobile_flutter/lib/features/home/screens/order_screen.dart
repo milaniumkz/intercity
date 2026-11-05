@@ -921,7 +921,9 @@ class _OrderScreenState extends State<OrderScreen> {
         }
       });
       if (_fromLocation != null && _toLocation != null && _boardPrice == null) {
-        await _board();
+        // Restore the view immediately. Route/price calculation must not hold
+        // _draftReady and prevent the map from applying a cached or fresh GPS fix.
+        unawaited(_board());
       }
     } catch (_) {
       await AppPreferences.clearOrderDraft();

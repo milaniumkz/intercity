@@ -78,6 +78,35 @@ void main() {
     PaintingBinding.instance.imageCache.clearLiveImages();
   });
 
+  testWidgets('a returned screen cannot reuse a retry tied to a disposed map',
+      (tester) async {
+    Widget map(String key) => MaterialApp(
+            home: Scaffold(
+                body: FlutterMap(
+          key: ValueKey(key),
+          options: const MapOptions(
+              initialCenter: LatLng(49.97, 82.61), initialZoom: 14),
+          children: [PassengerMapTiles(tileProvider: PendingTiles())],
+        )));
+    await tester.pumpWidget(map('first-auction'));
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(map('second-auction'));
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pump();
+    final before = PendingImage.loads;
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+    expect(PendingImage.loads, greaterThan(before),
+        reason: 'retry must not attach to the old screen cached pending image');
+    await tester.pumpWidget(const SizedBox());
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+  });
+
   testWidgets('previous loaded tiles do not hide failure after camera moves',
       (tester) async {
     final controller = MapController();

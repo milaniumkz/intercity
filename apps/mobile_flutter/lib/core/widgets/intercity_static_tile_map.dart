@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../constants/app_constants.dart';
+import 'map_tile_transport.dart';
 
 class IntercityStaticTileMap extends StatelessWidget {
   const IntercityStaticTileMap({
@@ -33,10 +33,10 @@ class IntercityStaticTileMap extends StatelessWidget {
         final centerTile = _latLngToTile(center, scale);
         final centerPx = Offset(centerTile.dx * 256, centerTile.dy * 256);
         final topLeftPx = centerPx - Offset(width / 2, height / 2);
-        final startX = (topLeftPx.dx / 256).floor() - 1;
-        final startY = (topLeftPx.dy / 256).floor() - 1;
-        final endX = ((topLeftPx.dx + width) / 256).ceil() + 1;
-        final endY = ((topLeftPx.dy + height) / 256).ceil() + 1;
+        final startX = (topLeftPx.dx / 256).floor();
+        final startY = (topLeftPx.dy / 256).floor();
+        final endX = ((topLeftPx.dx + width) / 256).ceil();
+        final endY = ((topLeftPx.dy + height) / 256).ceil();
         final maxTile = 1 << z;
 
         final children = <Widget>[
@@ -48,8 +48,8 @@ class IntercityStaticTileMap extends StatelessWidget {
                   child: const Center(child: Text('Загрузка карты…')))),
         ];
 
-        for (var x = startX; x <= endX; x++) {
-          for (var y = startY; y <= endY; y++) {
+        for (var x = startX; x < endX; x++) {
+          for (var y = startY; y < endY; y++) {
             if (y < 0 || y >= maxTile) continue;
             final wrappedX = ((x % maxTile) + maxTile) % maxTile;
             final left = x * 256 - topLeftPx.dx;
@@ -60,11 +60,10 @@ class IntercityStaticTileMap extends StatelessWidget {
                 top: top,
                 width: 256,
                 height: 256,
-                child: Image.network(
-                  _tileUrl(wrappedX, y, z, isDark),
+                child: Image(
+                  image: mapTileImage(z, wrappedX, y),
                   fit: BoxFit.cover,
                   filterQuality: FilterQuality.low,
-                  webHtmlElementStrategy: WebHtmlElementStrategy.never,
                   errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                 ),
               ),
@@ -97,15 +96,5 @@ class IntercityStaticTileMap extends StatelessWidget {
             2 *
             scale;
     return Offset(x, y);
-  }
-
-  String _tileUrl(int x, int y, int z, bool isDark) {
-    final subdomain = AppConstants
-        .mapTileSubdomains[(x + y) % AppConstants.mapTileSubdomains.length];
-    return AppConstants.serverMapTileUrl
-        .replaceAll('{s}', subdomain)
-        .replaceAll('{z}', '$z')
-        .replaceAll('{x}', '$x')
-        .replaceAll('{y}', '$y');
   }
 }

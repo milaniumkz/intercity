@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'map_tile_transport.dart';
 import 'package:flutter_map/flutter_map.dart';
 import '../constants/app_constants.dart';
 import '../utils/network_recovery.dart';
@@ -17,9 +17,10 @@ class PassengerMapTiles extends StatefulWidget {
 }
 
 class _PassengerMapTilesState extends State<PassengerMapTiles> {
-  late final TileProvider _provider =
-      widget.tileProvider ?? NetworkTileProvider(httpClient: _MapHttpClient());
+  late final TileProvider _provider = widget.tileProvider ??
+      NetworkTileProvider(httpClient: MapTileHttpClient());
   int _attempt = 0;
+  final Object _retryOwner = Object();
   final Map<TileImage, VoidCallback> _observed = {};
   Timer? _timeout, _monitor, _automaticRetry;
   StreamSubscription<void>? _network;
@@ -137,6 +138,18 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
     void listener() => _health();
     _observed[tile] = listener;
     tile.addListener(listener);
+    // flutter_map 6 may create a tile during layout without starting it until
+    // a camera event. A restored camera can remain unchanged on re-entry.
+    // Start only unstarted visible tiles after layout, retaining cached pixels.
+    if (tile.loadStarted == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            !tile.cancelLoading.isCompleted &&
+            tile.loadStarted == null) {
+          tile.load();
+        }
+      });
+    }
     if (_observed.length > 256) {
       final old = _observed.keys.first;
       old.removeListener(_observed.remove(old)!);
@@ -165,7 +178,7 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
         await original.evict();
       } catch (_) {}
       if (!mounted || tile.cancelLoading.isCompleted) return;
-      tile.imageProvider = _RetryTileImage(original, _attempt);
+      tile.imageProvider = _RetryTileImage(original, _attempt, _retryOwner);
       tile.loadError = false;
       tile.load();
     }));
@@ -262,13 +275,14 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
 
 /// Renew a failed image's Flutter key without changing its cacheable HTTP URL.
 class _RetryTileImage extends ImageProvider<_RetryTileKey> {
-  const _RetryTileImage(this.original, this.generation);
+  const _RetryTileImage(this.original, this.generation, this.owner);
   final ImageProvider original;
   final int generation;
+  final Object owner;
   @override
   Future<_RetryTileKey> obtainKey(ImageConfiguration configuration) async =>
       _RetryTileKey(
-          original, await original.obtainKey(configuration), generation);
+          original, await original.obtainKey(configuration), generation, owner);
   @override
   ImageStreamCompleter loadImage(
       _RetryTileKey key, ImageDecoderCallback decode) {
@@ -279,25 +293,18 @@ class _RetryTileImage extends ImageProvider<_RetryTileKey> {
 }
 
 class _RetryTileKey {
-  const _RetryTileKey(this.original, this.originalKey, this.generation);
+  const _RetryTileKey(
+      this.original, this.originalKey, this.generation, this.owner);
   final ImageProvider original;
   final dynamic originalKey;
   final int generation;
+  final Object owner;
   @override
   bool operator ==(Object other) =>
       other is _RetryTileKey &&
       other.originalKey == originalKey &&
-      other.generation == generation;
+      other.generation == generation &&
+      identical(other.owner, owner);
   @override
-  int get hashCode => Object.hash(originalKey, generation);
-}
-
-/// Retry policy belongs to the map widget, not to an additional HTTP retry loop.
-class _MapHttpClient extends http.BaseClient {
-  final http.Client _inner = http.Client();
-  @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) =>
-      _inner.send(request);
-  @override
-  void close() => _inner.close();
+  int get hashCode => Object.hash(originalKey, generation, owner);
 }
