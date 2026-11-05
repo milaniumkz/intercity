@@ -715,6 +715,10 @@ class _DriverHomePageState extends State<DriverHomePage>
           unawaited(_syncActiveRoutePolyline(selected));
         }
         for (final request in active) {
+          if (['ACCEPTED', 'DRIVER_ASSIGNED'].contains(request['status'])) {
+            final id = '${request['id']}';
+            unawaited(TripStatusSound.playOnce(id, 'INTERCITY_ACCEPTED'));
+          }
           _notifyPassengerLeaving(request);
         }
       } catch (_) {

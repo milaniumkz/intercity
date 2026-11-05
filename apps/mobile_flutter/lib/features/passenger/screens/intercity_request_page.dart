@@ -53,6 +53,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
 
+  final _activeSheetController = DraggableScrollableController();
+  bool _hasFittedMap = false;
   Map<String, dynamic>? _request;
   bool _loading = true;
   bool _actionBusy = false;
@@ -98,6 +100,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     _offerTickTimer?.cancel();
     _mapController.dispose();
     _sheetController.dispose();
+    _activeSheetController.dispose();
     super.dispose();
   }
 
@@ -117,8 +120,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
       final status = '${request['status'] ?? ''}';
       final notices = <String, (String, String)>{
         'DRIVER_ASSIGNED': (
-          'Водитель собирает пассажиров',
-          'Предложение принято. О выезде к вам сообщим отдельно.'
+          'Заказ подтверждён',
+          'Ваше место забронировано. Водитель собирает пассажиров; о выезде к вам сообщим отдельно.'
         ),
         'DRIVER_EN_ROUTE': (
           'Водитель выехал к вам',
@@ -159,6 +162,11 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                 'route': '/intercity/request/${widget.requestId}'
               }));
         }
+      }
+      if (_request?['status'] != status &&
+          ['ACCEPTED', 'DRIVER_ASSIGNED', 'DRIVER_EN_ROUTE', 'IN_PROGRESS']
+              .contains(status)) {
+        _hasFittedMap = false;
       }
       _lastNotifiedStatus = status;
       setState(() {
@@ -286,7 +294,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
   void _openLinkedChatIfNeeded() {
     if (_linkedChatOpened ||
         _request == null ||
-        Uri.tryParse(currentRouteText(context))?.queryParameters['chat'] != '1') {
+        Uri.tryParse(currentRouteText(context))?.queryParameters['chat'] !=
+            '1') {
       return;
     }
     _linkedChatOpened = true;
@@ -396,6 +405,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     });
     try {
       final messenger = ScaffoldMessenger.of(context);
+      unawaited(TripStatusSound.prepare());
+      unawaited(PushNotificationsService.instance.enableDriverNotifications());
       await _api.post('/intercity/offers/$offerId/accept');
       if (!mounted) return;
       await _loadRequest();
@@ -411,25 +422,32 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     }
   }
 
-  void _fitMap() {
+  void _fitMap({bool force = false}) {
+    if (_hasFittedMap && !force) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final pickupPhase = {
+        'ACCEPTED',
+        'DRIVER_ASSIGNED',
+        'DRIVER_EN_ROUTE',
+        'DRIVER_ARRIVED'
+      }.contains(_request?['status']);
       final points = <LatLng>[
         if (_fromPoint != null) _fromPoint!,
-        if (_toPoint != null) _toPoint!,
+        if (_pickupDriverPoint != null) _pickupDriverPoint!,
+        if (_toPoint != null && !pickupPhase) _toPoint!,
       ];
       if (points.isEmpty) return;
       try {
         if (points.length == 1) {
           _mapController.move(points.first, 10);
+          _hasFittedMap = true;
           return;
         }
-        final lats = points.map((p) => p.latitude).toList();
-        final lngs = points.map((p) => p.longitude).toList();
-        final center = LatLng(
-          (lats.reduce((a, b) => a + b) / lats.length),
-          (lngs.reduce((a, b) => a + b) / lngs.length),
-        );
-        _mapController.move(center, 6.8);
+        _mapController.fitCamera(CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(points),
+            padding: EdgeInsets.fromLTRB(
+                44, 110, 44, MediaQuery.sizeOf(context).height * .38)));
+        _hasFittedMap = true;
       } catch (_) {}
     });
   }
@@ -2347,7 +2365,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     final phaseText = switch (status) {
       'ACCEPTED' || 'DRIVER_ASSIGNED' => _requestTypeOf(request) != 'INTERCITY'
           ? 'Водитель принял ваш заказ.'
-          : '$departureText. ${route == null ? '' : "Забронировано ${(route['seatsTotal'] as num) - (route['seatsAvailable'] as num)} из ${route['seatsTotal']} мест, свободно ${route['seatsAvailable']}."} Водитель ещё не сообщил о выезде к вам.',
+          : 'Заказ принят, место забронировано. $departureText. ${route == null ? '' : "Забронировано ${(route['seatsTotal'] as num) - (route['seatsAvailable'] as num)} из ${route['seatsTotal']} мест, свободно ${route['seatsAvailable']}."} Водитель ещё не сообщил о выезде к вам.',
       'DRIVER_EN_ROUTE' => _pickupEtaMinutes == null
           ? 'Водитель едет к вам. Время прибытия пока не определено: ожидаем актуальную геопозицию и дорожный маршрут.'
           : 'До приезда около ${_pickupEtaMinutes!.ceil().clamp(1, 9999)} мин. Оценка по дорожному маршруту, без учёта пробок.',
@@ -2398,13 +2416,21 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
               ),
             ),
             Positioned(
-              left: 16,
-              right: 16,
-              bottom: 110,
-              child: Container(
-                constraints: BoxConstraints(
-                    maxHeight: (MediaQuery.sizeOf(context).height - 210)
-                        .clamp(180, 800)),
+                top: 84,
+                right: 16,
+                child: _roundBoardButton(Icons.my_location,
+                    onTap: () => _fitMap(force: true))),
+            DraggableScrollableSheet(
+              key: const ValueKey('intercity-active-sheet'),
+              controller: _activeSheetController,
+              initialChildSize: .42,
+              minChildSize: .16,
+              maxChildSize: .82,
+              snap: true,
+              snapSizes: const [.16, .42, .82],
+              builder: (context, scrollController) => Container(
+                key: const ValueKey('intercity-active-card'),
+                margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
                   color: theme.colorScheme.surface,
@@ -2421,150 +2447,171 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                   ],
                 ),
                 child: SingleChildScrollView(
+                    controller: scrollController,
                     child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '$fromText — $toText',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 15,
-                            ),
-                          ),
-                        ),
-                        const Icon(
-                          Icons.star_rounded,
-                          color: Colors.amber,
-                          size: 18,
-                        ),
-                        Text(
-                          ratingText,
-                          style: TextStyle(
-                            color: theme.colorScheme.onSurface,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(phaseText,
-                        key: const ValueKey('intercity-pickup-progress')),
-                    const SizedBox(height: 10),
-                    LinearProgressIndicator(
-                      minHeight: 5,
-                      value: progress,
-                      borderRadius: BorderRadius.circular(99),
-                      color: AppTheme.primaryColor,
-                      backgroundColor: AppTheme.primaryColor.withValues(
-                        alpha: 0.12,
-                      ),
-                    ),
-                    if (request?['status'] == 'DRIVER_ARRIVED') ...[
-                      const SizedBox(height: 10),
-                      _leavingButton()
-                    ],
-                    const SizedBox(height: 12),
-                    Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Container(
-                          width: 58,
-                          height: 58,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: LinearGradient(
-                              colors: [
-                                AppTheme.secondaryColor,
-                                AppTheme.primaryColor,
-                              ],
-                            ),
-                          ),
-                          child: const Icon(
-                            Icons.person_rounded,
-                            color: Colors.white,
-                            size: 32,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                driverName,
-                                style: theme.textTheme.titleMedium?.copyWith(
+                            width: 44,
+                            height: 5,
+                            margin: const EdgeInsets.only(bottom: 4),
+                            decoration: BoxDecoration(
+                                color: theme.colorScheme.outlineVariant,
+                                borderRadius: BorderRadius.circular(8))),
+                        TextButton(
+                            onPressed: () => _activeSheetController.animateTo(
+                                _activeSheetController.size > 0.6 ? 0.16 : 0.82,
+                                duration: const Duration(milliseconds: 250),
+                                curve: Curves.easeOut),
+                            child: const Text(
+                                'Детали поездки · развернуть / свернуть')),
+                        if (_pickupDriverPoint == null)
+                          const Text(
+                              'Геопозиция водителя пока недоступна. Ожидаем обновление GPS.',
+                              key: ValueKey(
+                                  'intercity-driver-location-unavailable')),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '$fromText — $toText',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
                                   fontWeight: FontWeight.w900,
+                                  fontSize: 15,
                                 ),
                               ),
-                              const SizedBox(height: 3),
-                              Text(
-                                '$carModel\n$carNumber',
-                                style: TextStyle(
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                  height: 1.25,
+                            ),
+                            const Icon(
+                              Icons.star_rounded,
+                              color: Colors.amber,
+                              size: 18,
+                            ),
+                            Text(
+                              ratingText,
+                              style: TextStyle(
+                                color: theme.colorScheme.onSurface,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(phaseText,
+                            key: const ValueKey('intercity-pickup-progress')),
+                        const SizedBox(height: 10),
+                        LinearProgressIndicator(
+                          minHeight: 5,
+                          value: progress,
+                          borderRadius: BorderRadius.circular(99),
+                          color: AppTheme.primaryColor,
+                          backgroundColor: AppTheme.primaryColor.withValues(
+                            alpha: 0.12,
+                          ),
+                        ),
+                        if (request?['status'] == 'DRIVER_ARRIVED') ...[
+                          const SizedBox(height: 10),
+                          _leavingButton()
+                        ],
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Container(
+                              width: 58,
+                              height: 58,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: LinearGradient(
+                                  colors: [
+                                    AppTheme.secondaryColor,
+                                    AppTheme.primaryColor,
+                                  ],
                                 ),
                               ),
-                            ],
-                          ),
+                              child: const Icon(
+                                Icons.person_rounded,
+                                color: Colors.white,
+                                size: 32,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    driverName,
+                                    style:
+                                        theme.textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    '$carModel\n$carNumber',
+                                    style: TextStyle(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      height: 1.25,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _boardTripMetric('Статус', statusTitle),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                                child: _boardTripMetric('Стоимость',
+                                    '${acceptedOffer?['price'] ?? request?['price'] ?? '—'} ${request?['currency'] == 'RUB' ? 'руб.' : 'тг'}')),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _boardOutlinedAction(
+                                Icons.call_rounded,
+                                'Позвонить',
+                                onPressed: () => _callDriver(phone),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: _boardOutlinedAction(
+                                Icons.chat_bubble_outline_rounded,
+                                'Чат',
+                                onPressed: _openIntercityChat,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (_canRateDriver)
+                          FilledButton.icon(
+                              onPressed: _ratingDialogOpen ? null : _rateDriver,
+                              icon: const Icon(Icons.star_outline),
+                              label: const Text('Оценить водителя')),
+                        if (_request?['driverRating'] != null)
+                          Text(_request?['driverRatingStatus'] == 'PENDING'
+                              ? 'Оценка отправлена на проверку'
+                              : 'Ваша оценка: ${_request?['driverRating']} ★'),
+                        if (!['IN_PROGRESS', 'COMPLETED', 'CANCELLED']
+                            .contains(status))
+                          TextButton.icon(
+                              onPressed: _actionBusy ? null : _cancelRequest,
+                              icon: const Icon(Icons.close),
+                              label: const Text('Отменить заявку')),
+                        if (_actionError != null) Text(_actionError!),
                       ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _boardTripMetric('Статус', statusTitle),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                            child: _boardTripMetric('Стоимость',
-                                '${acceptedOffer?['price'] ?? request?['price'] ?? '—'} ${request?['currency'] == 'RUB' ? 'руб.' : 'тг'}')),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _boardOutlinedAction(
-                            Icons.call_rounded,
-                            'Позвонить',
-                            onPressed: () => _callDriver(phone),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _boardOutlinedAction(
-                            Icons.chat_bubble_outline_rounded,
-                            'Чат',
-                            onPressed: _openIntercityChat,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_canRateDriver)
-                      FilledButton.icon(
-                          onPressed: _ratingDialogOpen ? null : _rateDriver,
-                          icon: const Icon(Icons.star_outline),
-                          label: const Text('Оценить водителя')),
-                    if (_request?['driverRating'] != null)
-                      Text(_request?['driverRatingStatus'] == 'PENDING'
-                          ? 'Оценка отправлена на проверку'
-                          : 'Ваша оценка: ${_request?['driverRating']} ★'),
-                    if (!['IN_PROGRESS', 'COMPLETED', 'CANCELLED']
-                        .contains(status))
-                      TextButton.icon(
-                          onPressed: _actionBusy ? null : _cancelRequest,
-                          icon: const Icon(Icons.close),
-                          label: const Text('Отменить заявку')),
-                    if (_actionError != null) Text(_actionError!),
-                  ],
-                )),
+                    )),
               ),
             ),
           ],

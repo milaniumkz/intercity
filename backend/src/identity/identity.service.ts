@@ -1,3 +1,4 @@
+import {recordDates} from '../admin/customer-records';
 import { normalizePlate } from './vehicle-document';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, OnModuleDestroy, OnModuleInit, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
@@ -110,12 +111,18 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
  }
  async history(q:any={}){
   const take=Math.min(100,Math.max(1,Number.parseInt(q.take)||30)),skip=Math.max(0,Number.parseInt(q.skip)||0);
-  const where:any={};if(q.userId)where.userId=String(q.userId);
+  const where:any={};const dates=recordDates(q);if(dates)where.createdAt=dates;
+  if(q.userId)where.userId=String(q.userId);
   if(q.status&&q.status!=='ALL')where.status=q.status==='FAILURES'?{in:['REJECTED','FAILED','EXPIRED']}:String(q.status);
   if(q.purpose)where.purpose=String(q.purpose);
   if(q.search)where.user={is:{OR:[{name:{contains:String(q.search).slice(0,100),mode:'insensitive'}},{phone:{contains:String(q.search).replace(/\D/g,'').slice(-10)||String(q.search)}}]}};
   const [rows,total]=await Promise.all([this.prisma.biometricChallenge.findMany({where,orderBy:[{createdAt:'desc'},{id:'desc'}],take,skip,select:{id:true,userId:true,purpose:true,status:true,reason:true,createdAt:true,claimedAt:true,reviewedAt:true,actions:true,consentVersion:true,videoPath:true,referencePath:true,secondaryPath:true,user:{select:{id:true,name:true,phone:true,biometricProfile:{select:{referenceVideoPath:true}}}}}}),this.prisma.biometricChallenge.count({where})]);
-  return {items:rows.map(({videoPath,referencePath,secondaryPath,user,...row})=>({...row,user:user?{id:user.id,name:user.name,phone:user.phone}:null,hasVideo:!!videoPath||(row.purpose==='ENROLL'&&row.status==='VERIFIED'&&row.consentVersion===IDENTITY_CONSENT&&!!user?.biometricProfile?.referenceVideoPath),hasCandidate:!!referencePath,hasBack:!!secondaryPath})),total,take,skip,retentionDays:7};
+  return {items:rows.map(({videoPath,referencePath,secondaryPath,user,...row})=>{
+   const primary=!!user?.biometricProfile?.referenceVideoPath;
+   const hasVideo=!!videoPath||(row.purpose==='ENROLL'&&row.status==='VERIFIED'&&row.consentVersion===IDENTITY_CONSENT&&primary);
+   const videoMessage=hasVideo?'Видео сохранено':row.purpose==='ENROLL'&&primary?'Эталон сохранён для восстановления пароля. Просмотр этой старой записи не предусмотрен принятым согласием.':['DRIVER_IDENTITY','VEHICLE'].includes(row.purpose)?'Это сверка документа. Видео первичной идентификации находится в отдельной проверке этого пользователя.':row.status==='CONSUMED'||row.purpose==='RECOVERY'&&row.status==='VERIFIED'?'Успешная повторная запись не сохранялась. Для восстановления используется сохранённый первичный эталон.':['READY','PROCESSING'].includes(row.status)?'Проверка ещё не завершена. Обновите список после обработки.':'Видео этой попытки не сохранялось или срок хранения истёк.';
+   return {...row,user:user?{id:user.id,name:user.name,phone:user.phone}:null,hasVideo,videoMessage,hasCandidate:!!referencePath,hasBack:!!secondaryPath};
+  }),total,take,skip,retentionDays:7};
  }
  async submit(id:string,secret:string,video:Buffer,userId?:string) {
   const c=await this.getChallenge(id,secret);

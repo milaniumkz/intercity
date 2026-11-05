@@ -369,7 +369,7 @@ export class IntercityService {
     });
 
     const route = request.reservedRouteId ? await this.prisma.driverIntercityRoute.findUnique({where:{id:request.reservedRouteId},select:{departureAt:true,departureOffsetMinutes:true,seatsTotal:true,seatsAvailable:true}}) : null;
-    const online = request.selectedDriverId && ['DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'].includes(request.status)
+    const online = request.selectedDriverId && ['ACCEPTED','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'].includes(request.status)
       ? await this.prisma.driverOnline.findFirst({where:{driver:{userId:request.selectedDriverId}},select:{lastLat:true,lastLng:true,lastLocationAt:true,lastAccuracy:true}}) : null;
     const freshLocation = online?.lastAccuracy != null && online.lastAccuracy <= 100 && online.lastLocationAt && online.lastLocationAt.getTime() > Date.now()-120000 && online.lastLat != null && online.lastLng != null ? {lat:online.lastLat,lng:online.lastLng,at:online.lastLocationAt} : null;
     return {
@@ -566,6 +566,7 @@ export class IntercityService {
     this.realtime?.publish?.({type:'intercity.requests.changed',entity:'system',at:new Date().toISOString()});
     if (!('alreadyAccepted' in result)) {
       void this.push?.sendIntercityStatusToPassenger(offer.requestId, 'DRIVER_ASSIGNED').catch(() => false);
+      void this.push?.sendToUser?.(offer.driverId,{title:'Пассажир принял вашу цену',body:'Заказ подтверждён, место забронировано. Откройте принятую заявку.',data:{type:'order_status',status:'INTERCITY_ACCEPTED',isIntercity:true,orderId:offer.requestId,route:'/driver/home?intercityRequestId='+offer.requestId}}).catch(()=>false);
     }
     return result;
   }
@@ -850,7 +851,7 @@ export class IntercityService {
         this.routeKey(item.fromCity) === this.routeKey(request["fromCity"]) &&
         this.routeKey(item.toCity) === this.routeKey(request["toCity"]) && routeMatchesRequestSchedule(item,request),
     );
-    if (!route) throw new BadRequestException("Нет подходящего маршрута на выбранную дату и время отправления");
+    if (!route) throw new BadRequestException("Нет подходящего маршрута на выбранную дату отправления");
     if (route.seatsAvailable < seats) {
       throw new BadRequestException("Недостаточно свободных мест на этом маршруте");
     }
@@ -881,7 +882,7 @@ export class IntercityService {
         this.routeKey(item.fromCity) === this.routeKey(request["fromCity"]) &&
         this.routeKey(item.toCity) === this.routeKey(request["toCity"]) && routeMatchesRequestSchedule(item,request),
     );
-    if (!route) throw new BadRequestException('Нет подходящего маршрута на выбранную дату и время отправления');
+    if (!route) throw new BadRequestException('Нет подходящего маршрута на выбранную дату отправления');
     await tx.$executeRaw`SELECT id FROM "DriverIntercityRoute" WHERE id=${route.id} FOR UPDATE`;
     const freshRoute = await tx.driverIntercityRoute.findUnique({where:{id:route.id}});
     const seatsToReserve = Math.max(

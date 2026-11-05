@@ -1,9 +1,9 @@
-import 'admin_identity_reviews_page.dart';
+import 'admin_attention_page.dart';
+import '../widgets/finance_dashboard.dart';
 import 'dart:async';
 import '../widgets/dashboard_statistics.dart';
 import '../widgets/freight_tariff_dialog.dart';
 import 'admin_trip_reviews_page.dart';
-import '../../../core/utils/csv_export.dart';
 import 'admin_rating_reviews_page.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -2142,186 +2142,13 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
   }
 }
 
-class AdminFinanceAuditPage extends StatefulWidget {
+class AdminFinanceAuditPage extends StatelessWidget {
   const AdminFinanceAuditPage({super.key});
-
   @override
-  State<AdminFinanceAuditPage> createState() => _AdminFinanceAuditPageState();
-}
-
-class _AdminFinanceAuditPageState extends State<AdminFinanceAuditPage> {
-  List<dynamic> _items = [];
-  final _userIdCtrl = TextEditingController();
-  final _typeCtrl = TextEditingController();
-  final _sourceCtrl = TextEditingController();
-  final _takeCtrl = TextEditingController(text: '100');
-  String _message = '';
-  bool _loading = false;
-  bool _exporting = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  @override
-  void dispose() {
-    _userIdCtrl.dispose();
-    _typeCtrl.dispose();
-    _sourceCtrl.dispose();
-    _takeCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _load() async {
-    setState(() => _loading = true);
-    try {
-      final q = <String, dynamic>{
-        'take': int.tryParse(_takeCtrl.text) ?? 100,
-      };
-      if (_userIdCtrl.text.trim().isNotEmpty) {
-        q['userId'] = _userIdCtrl.text.trim();
-      }
-      if (_typeCtrl.text.trim().isNotEmpty) q['type'] = _typeCtrl.text.trim();
-      if (_sourceCtrl.text.trim().isNotEmpty) {
-        q['source'] = _sourceCtrl.text.trim().toUpperCase();
-      }
-      final res = await AdminApiClient.instance
-          .get('/admin/wallet-transactions', query: q);
-      if (!mounted) return;
-      setState(() {
-        _items = List<dynamic>.from(res.data as List);
-        _message = 'Загружено транзакций кошелька: ${_items.length}';
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _message = 'Ошибка загрузки: $e');
-    } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
-    }
-  }
-
-  Future<void> _exportCsv() async {
-    setState(() => _exporting = true);
-    try {
-      final q = <String, dynamic>{};
-      if (_userIdCtrl.text.trim().isNotEmpty) {
-        q['userId'] = _userIdCtrl.text.trim();
-      }
-      if (_typeCtrl.text.trim().isNotEmpty) q['type'] = _typeCtrl.text.trim();
-      if (_sourceCtrl.text.trim().isNotEmpty) {
-        q['source'] = _sourceCtrl.text.trim().toUpperCase();
-      }
-      final res = await AdminApiClient.instance
-          .get('/admin/reports/wallet-transactions/csv', query: q);
-      final map = Map<String, dynamic>.from(res.data as Map);
-      final csv = (map['csv'] ?? '').toString();
-      final downloaded =
-          await exportCsv(csv, filename: 'wallet-transactions.csv');
-      if (!mounted) return;
-      setState(() => _message = downloaded
-          ? 'CSV скачан: wallet-transactions.csv'
-          : 'CSV готов и скопирован в буфер обмена');
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _message = 'Ошибка экспорта CSV: $e');
-    } finally {
-      if (mounted) {
-        setState(() => _exporting = false);
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AdminShell(
+  Widget build(BuildContext context) => const AdminShell(
       title: 'Финансовый аудит',
-      subtitle: 'Фильтрация транзакций кошелька и экспорт CSV.',
-      child: ListView(
-        children: [
-          _StatusBanner(message: _message),
-          const SizedBox(height: 16),
-          _SectionCard(
-            title: 'Фильтры',
-            child: Column(
-              children: [
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    SizedBox(
-                        width: 260,
-                        child: TextField(
-                            controller: _userIdCtrl,
-                            decoration: const InputDecoration(
-                                labelText: 'ID пользователя'))),
-                    SizedBox(
-                        width: 220,
-                        child: TextField(
-                            controller: _typeCtrl,
-                            decoration:
-                                const InputDecoration(labelText: 'Тип'))),
-                    SizedBox(
-                        width: 160,
-                        child: TextField(
-                            controller: _sourceCtrl,
-                            decoration:
-                                const InputDecoration(labelText: 'Источник'))),
-                    SizedBox(
-                        width: 120,
-                        child: TextField(
-                            controller: _takeCtrl,
-                            decoration:
-                                const InputDecoration(labelText: 'Лимит'))),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    FilledButton(
-                        onPressed: _loading ? null : _load,
-                        child: const Text('Обновить')),
-                    OutlinedButton(
-                        onPressed: _exporting ? null : _exportCsv,
-                        child: const Text('Экспорт CSV')),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          _SectionCard(
-            title: 'Транзакции',
-            child: _items.isEmpty
-                ? const Text('Транзакции не загружены.')
-                : Column(
-                    children: _items.map((row) {
-                      final m = row as Map<String, dynamic>;
-                      final wallet = m['wallet'] as Map<String, dynamic>?;
-                      final user = wallet?['user'] as Map<String, dynamic>?;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: ListTile(
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18)),
-                          tileColor: const Color(0xFFF7FAFC),
-                          title: Text(
-                              '${m['type']} • ${m['direction']} ${m['amount']} ${rideCurrencySymbol(m)}'),
-                          subtitle: Text(
-                              '${m['balanceSource']} • ${user?['phone'] ?? '-'} • ${m['createdAt']}'),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
+      subtitle: 'Деньги, бонусы, комиссии и поездки за выбранный период.',
+      child: SingleChildScrollView(child: FinanceDashboard()));
 }
 
 class AdminShell extends StatelessWidget {
@@ -2336,8 +2163,12 @@ class AdminShell extends StatelessWidget {
     ('/dashboard', 'Панель', Icons.grid_view_rounded),
     ('/users', 'Пользователи', Icons.people_alt_outlined),
     ('/drivers', 'Водители', Icons.verified_user_outlined),
-    ('/trip-register','Заказы и поездки',Icons.route_outlined),
-    ('/identity-history','История видеопроверок',Icons.video_library_outlined),
+    ('/trip-register', 'Заказы и поездки', Icons.route_outlined),
+    (
+      '/identity-history',
+      'История видеопроверок',
+      Icons.video_library_outlined
+    ),
     ('/cities', 'Города', Icons.location_city_outlined),
     ('/tariffs', 'Тарифы', Icons.sell_outlined),
     ('/settings', 'Настройки', Icons.tune_rounded),
@@ -2349,6 +2180,7 @@ class AdminShell extends StatelessWidget {
       Icons.face_retouching_natural_outlined
     ),
     ('/notifications', 'Уведомления', Icons.notifications_active_outlined),
+    ('/attention', 'Требуют внимания', Icons.notification_important_outlined),
     ('/finance-audit', 'Финансовый аудит', Icons.receipt_long_outlined),
     ('/tax-self-employed', 'Самозанятые', Icons.person_outline),
     ('/tax-ie', 'ИП', Icons.business_center_outlined),
@@ -2390,7 +2222,7 @@ class AdminShell extends StatelessWidget {
           appBar: AppBar(
             title: Text(title),
             actions: [
-              const AdminIdentityReviewBell(),
+              const AdminAttentionBell(),
               const AdminRatingReviewBell(),
               const AdminTripReviewBell(),
               if (!wide)

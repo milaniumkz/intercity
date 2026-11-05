@@ -24,6 +24,8 @@ export function humanFailure(raw:any){
 export async function userActivity(db:any,q:any,personal:boolean){
  const page=recordPage(q),where:any={stage:{in:['FINISH','ABORTED']},AND:[{OR:[{action:{startsWith:'POST '}},{action:{startsWith:'PATCH '}},{action:{startsWith:'DELETE '}},{action:{startsWith:'screen.'}},{action:{startsWith:'client.'}},{result:'FAILURE'}]},{NOT:{OR:['/technical','/location','/push-token','/heartbeat','/auth/refresh'].map(path=>({action:{contains:path}}))}}]};
  const dates=recordDates(q);if(dates)where.at=dates;else if(q.period!=='all')where.at={gte:new Date(Date.now()-({week:7,month:30}[String(q.period)]||1)*86400000)};
+ if(q.platform)where.client={path:['platform'],equals:String(q.platform)};
+ if(q.result)where.result=String(q.result);
  if(q.userId)where.userId=String(q.userId);
  if(q.failures==='true')where.OR=[{result:'FAILURE'},{status:{gte:400}}];
  const search=String(q.search||'').trim();

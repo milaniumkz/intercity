@@ -205,6 +205,33 @@ test(
                 assert.equal(loginResult.status, 201);
                 jwtA = loginResult.data.accessToken;
             });
+            let videoCheck,videoVault,videoFile;
+            await t.test('technical management: balance ledger, stale edits, filter choices and private video headers',async()=>{
+                const catalog=await request('technical/data',undefined,techHeaders);assert.equal(catalog.status,200);assert(catalog.data.some(m=>m.name==='Wallet'));assert(!JSON.stringify(catalog.data).includes('password'));
+                assert.equal((await request('technical/data/TechAccount',undefined,techHeaders)).status,404);
+                const correction={field:'money',value:1250.50,expected:0,operationId:randomUUID(),reason:'Проверка корректировки',password,confirm:true};
+                assert.equal((await request('technical/users/'+a.user.id+'/wallet-adjustment',{...correction,password:'wrong'},techHeaders)).status,403);
+                const updated=await request('technical/users/'+a.user.id+'/wallet-adjustment',correction,techHeaders);assert.equal(updated.status,201,JSON.stringify(updated.data));
+                assert.equal(Number((await p.wallet.findUnique({where:{userId:a.user.id}})).money),1250.5);
+                assert.equal((await request('technical/users/'+a.user.id+'/wallet-adjustment',correction,techHeaders)).data.repeated,true);
+                assert.equal(await p.walletTransaction.count({where:{idempotencyKey:'technical-adjust:'+correction.operationId}}),1);
+                assert.equal((await request('technical/users/'+a.user.id+'/wallet-adjustment',{...correction,value:999},techHeaders)).status,409);
+                assert.equal((await request('technical/users/'+a.user.id+'/wallet-adjustment',{...correction,operationId:randomUUID(),expected:0,value:20},techHeaders)).status,409);
+                const bonus={...correction,field:'bonusRub',value:200,operationId:randomUUID()};assert.equal((await request('technical/users/'+a.user.id+'/wallet-adjustment',bonus,techHeaders)).status,201);
+                const snapshot=await request('technical/data/User/'+a.user.id,undefined,techHeaders);assert.equal(snapshot.status,200);
+                const edit={fields:{name:'Имя после исправления'},version:snapshot.data.version,reason:'Исправление имени',password,confirm:true};assert.equal((await request('technical/data/User/'+a.user.id,edit,techHeaders)).status,201);
+                assert.equal((await request('technical/data/User/'+a.user.id,edit,techHeaders)).status,409);
+                assert.equal((await request('technical/data/User/'+a.user.id,{...edit,fields:{password:'forbidden'}},techHeaders)).status,403);
+                const filtered=await request('technical/data/WalletTransaction?filters='+encodeURIComponent(JSON.stringify([{field:'currency',op:'eq',value:'RUB'},{field:'amount',op:'gte',value:100}])),undefined,techHeaders);assert.equal(filtered.status,200);assert(filtered.data.items.every(x=>x.currency==='RUB'&&x.amount>=100));
+                const cancellable=await p.order.create({data:{passengerId:a.user.id,fromLat:43,fromLng:76,toLat:44,toLng:77,fromAddress:'Адрес А',toAddress:'Адрес Б',price:500,status:'CREATED'}});assert.equal((await request('technical/data/Order/'+cancellable.id+'/cancel',{reason:'Отмена по обращению',password,confirm:true},techHeaders)).status,201);assert.equal((await p.order.findUnique({where:{id:cancellable.id}})).status,'CANCELLED');
+                const previousRoot=process.env.TECH_STORAGE_DIR;process.env.TECH_STORAGE_DIR=dir;const {IdentityVault}=require('../dist/src/identity/identity-vault');videoVault=new IdentityVault();if(previousRoot===undefined)delete process.env.TECH_STORAGE_DIR;else process.env.TECH_STORAGE_DIR=previousRoot;await videoVault.init();
+                videoFile=await videoVault.write(a.user.id,Buffer.from([0x1a,0x45,0xdf,0xa3,0,0,0,0]));
+                await p.biometricProfile.upsert({where:{userId:a.user.id},create:{userId:a.user.id,model:'fixture',template:'private-fixture',referencePath:videoFile,referenceVideoPath:videoFile,consentVersion:'intercity-face-2026-11-v3'},update:{referenceVideoPath:videoFile}});
+                videoCheck=await p.biometricChallenge.create({data:{userId:a.user.id,authVersion:0,purpose:'ENROLL',status:'VERIFIED',subjectHash:randomUUID(),ipHash:randomUUID(),secretHash:randomUUID(),actions:[],consentVersion:'intercity-face-2026-11-v3',expiresAt:new Date(Date.now()+60000)}});
+                const history=await request('technical/identity-attempts?userId='+a.user.id+'&status=ALL',undefined,techHeaders);assert.equal(history.data.items.find(x=>x.id===videoCheck.id).hasVideo,true);
+                const media=await fetch(base+'/api/technical/identity-attempts/'+videoCheck.id+'/video',{headers:techHeaders});assert.equal(media.status,200);assert.match(media.headers.get('content-type'),/video\/webm/);assert.match(media.headers.get('cache-control'),/no-store/);assert.equal((await media.arrayBuffer()).byteLength,8);
+                const panel=await fetch(base+'/api/technical/panel/');assert.match(panel.headers.get('content-security-policy'),/media-src 'self' blob:/);
+            });
             let accepted, rejected, profile;
             await t.test(
                 'accepted and rejected real photos, safe storage and exact event files',
@@ -801,8 +828,16 @@ test(
                                     exact: true,
                                 })
                                 .waitFor();
+                            await page.goto(base+'/api/technical/panel/#users/'+a.user.id);await page.getByLabel('Какой баланс изменить',{exact:true}).waitFor().catch(async e=>{console.log('UI MANAGEMENT DIAG',errors,await page.locator('body').innerText());throw e;});await page.getByLabel('Какой баланс изменить',{exact:true}).selectOption('bonusRub');await page.getByLabel('Новый итоговый баланс',{exact:true}).fill('250');await page.getByLabel('Причина изменения',{exact:true}).fill('Проверка бонусов в интерфейсе');await page.getByLabel('Ваш технический пароль',{exact:true}).fill(password);await page.getByLabel('Подтверждаю изменение',{exact:true}).check();await page.getByRole('button',{name:'Сохранить новый баланс',exact:true}).click();await page.getByText('Баланс изменён. Корректировка записана в истории операций.',{exact:true}).waitFor();assert.equal(Number((await p.wallet.findUnique({where:{userId:a.user.id}})).bonusRub),250);
+                            await page.goto(base+'/api/technical/panel/#data/User?record='+a.user.id);await page.getByLabel('Изменить: Имя / название',{exact:true}).check();await page.getByLabel('Имя / название',{exact:true}).fill('Имя из технического редактора');await page.getByLabel('Причина изменения',{exact:true}).fill('Проверка редактора');await page.getByLabel('Ваш технический пароль',{exact:true}).fill(password);await page.getByLabel('Подтверждаю изменение',{exact:true}).check();await page.getByRole('button',{name:'Проверить и сохранить',exact:true}).click();await page.getByText('Изменения сохранены и записаны в журнале.',{exact:true}).waitFor();assert.equal((await p.user.findUnique({where:{id:a.user.id}})).name,'Имя из технического редактора');
+                            await page.goto(base+'/api/technical/panel/#issues');await page.getByLabel('Критичность',{exact:true}).selectOption('CRITICAL');await page.getByRole('button',{name:'Применить',exact:true}).click();await page.waitForURL(/severity=CRITICAL/);
+                            const clip=await page.evaluate(async()=>{const canvas=document.createElement('canvas');canvas.width=160;canvas.height=120;const ctx=canvas.getContext('2d');ctx.fillStyle='purple';ctx.fillRect(0,0,160,120);const stream=canvas.captureStream(10),chunks=[];const recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'});recorder.ondataavailable=e=>chunks.push(e.data);const done=new Promise(resolve=>recorder.onstop=resolve);recorder.start();const timer=setInterval(()=>{ctx.fillStyle=Math.random()>.5?'purple':'green';ctx.fillRect(0,0,160,120)},50);await new Promise(r=>setTimeout(r,500));recorder.stop();await done;clearInterval(timer);stream.getTracks().forEach(t=>t.stop());return Array.from(new Uint8Array(await new Blob(chunks).arrayBuffer()));});
+                            const realFile=await videoVault.write(a.user.id,Buffer.from(clip));await p.biometricProfile.update({where:{userId:a.user.id},data:{referenceVideoPath:realFile}});
+                            await page.goto(base+'/api/technical/panel/#identity?userId='+a.user.id+'&status=ALL');await page.getByRole('button',{name:'Посмотреть видео',exact:true}).click();await page.waitForFunction(()=>document.querySelector('dialog video')?.readyState>=2);assert.equal(await page.locator('dialog video').evaluate(v=>v.error),null);await page.locator('dialog video').evaluate(v=>v.play());await page.waitForFunction(()=>document.querySelector('dialog video')?.currentTime>0);await page.getByRole('button',{name:'Закрыть',exact:true}).click();
                             await page.getByText('Для специалиста', {exact:true}).click();
                             for (const name of [
+                                'Данные и управление',
+                                'Требуют внимания',
                                 'Проблемы и ошибки',
                                 'Действия пользователей',
                                 'Пользователи',

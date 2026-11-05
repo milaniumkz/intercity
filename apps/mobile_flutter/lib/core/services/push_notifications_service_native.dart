@@ -27,6 +27,15 @@ void onDidReceiveBackgroundNotificationResponse(NotificationResponse response) {
 }
 
 class PushNotificationsService {
+  final Set<String> _shownTripNotices = {};
+  bool _firstTripNotice(String id, String title) {
+    if (!_shownTripNotices.add('$id:$title')) return false;
+    if (_shownTripNotices.length > 200) {
+      _shownTripNotices.remove(_shownTripNotices.first);
+    }
+    return true;
+  }
+
   PushNotificationsService._();
 
   static final PushNotificationsService instance = PushNotificationsService._();
@@ -158,6 +167,11 @@ class PushNotificationsService {
     _payloadStreamController.add(Map<String, dynamic>.from(message.data));
     final notification = message.notification;
     if (notification == null) return;
+    if (tripId != null &&
+        ['order_status', 'passenger_leaving'].contains(message.data['type']) &&
+        !_firstTripNotice(tripId, notification.title ?? 'INTERCITY')) {
+      return;
+    }
     await _localNotifications.show(
       notification.hashCode,
       notification.title ?? 'INTERCITY',
@@ -235,6 +249,7 @@ class PushNotificationsService {
     int? notificationId,
     Map<String, dynamic>? data,
   }) async {
+    if (!_firstTripNotice(orderId, title)) return;
     await _localNotifications.show(
       notificationId ?? Object.hash(orderId, title),
       title,

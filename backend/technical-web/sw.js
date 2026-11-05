@@ -6,7 +6,7 @@ self.addEventListener('push', (event) => {
     } catch {}
     const url =
         typeof data.url === 'string' &&
-        data.url.startsWith('/api/technical/panel/#issues/')
+        (data.url.startsWith('/api/technical/panel/#issues/')||data.url==='/api/technical/panel/#attention')
             ? data.url
             : '/api/technical/panel/';
     event.waitUntil(

@@ -46,6 +46,7 @@ export async function customerTrips(db:any,q:any){
  if(q.status==='ACTIVE')filter=Prisma.sql`${filter} AND t.status NOT IN ('COMPLETED','CANCELLED','EXPIRED','REJECTED')`;
  else if(q.status==='EXPIRED_GROUP')filter=Prisma.sql`${filter} AND t.status IN ('EXPIRED','REJECTED')`;
  else if(q.status)filter=Prisma.sql`${filter} AND t.status=${String(q.status)}`;
+ if(q.currency)filter=Prisma.sql`${filter} AND t.currency=${String(q.currency)}`;
  if(q.mode)filter=Prisma.sql`${filter} AND t.mode=${String(q.mode)}`;
  const rows=await db.$queryRaw(Prisma.sql`WITH trips AS (
  SELECT o.id,'ORDER' AS source,CASE WHEN o.mode='CARGO' THEN 'CARGO' WHEN o.mode='INTERCITY' THEN 'INTERCITY' WHEN o.mode='DELIVERY' THEN COALESCE(o."requestType",'DELIVERY_CITY') WHEN o."requestType"='CITY_AUCTION' THEN 'CITY_AUCTION' ELSE 'CITY_FIXED' END AS mode,o.status::text,o."createdAt",o."completedAt",o."passengerId",d."userId" AS "driverUserId",o."fromAddress" AS origin,o."toAddress" AS destination,o.price,o.currency,o."scheduledFor" AS departure

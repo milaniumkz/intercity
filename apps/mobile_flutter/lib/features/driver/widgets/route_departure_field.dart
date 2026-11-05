@@ -17,7 +17,7 @@ class RouteDepartureField extends StatelessWidget {
       this.enabled = true,
       this.title = 'Дата и время отправления',
       this.helperText =
-          'Заказы только на выбранный день, до времени отправления. Время по настройкам устройства.'});
+          'Заказы на весь выбранный день, независимо от времени отправления. Время по настройкам устройства.'});
   final DateTime? value;
   final ValueChanged<DateTime> onChanged;
   final bool enabled;

@@ -43,7 +43,7 @@ String recordRole(Map user) => user['role'] == 'ADMIN'
         ? 'Водитель'
         : 'Пассажир';
 String recordTime(dynamic raw) {
-  final d = DateTime.tryParse('$raw')?.toLocal();
+  final d = DateTime.tryParse('$raw')?.toUtc().add(const Duration(hours: 5));
   return d == null
       ? '—'
       : '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
@@ -1175,6 +1175,7 @@ String _transactionName(String type) =>
       'ORDER_COMMISSION_DEBIT': 'Комиссия за поездку',
       'ORDER_BONUS_REFUND': 'Возврат бонусов за отменённый заказ',
       'REFERRAL_BONUS': 'Реферальный бонус',
+      'TECHNICAL_BALANCE_ADJUSTMENT': 'Корректировка баланса администратором',
       'REFERRAL_ORDER_BONUS': 'Реферальный бонус за поездку',
       'TOPUP': 'Пополнение баланса',
       'DEBIT_INTERCITY_ACCEPTED_REQUEST': 'Комиссия за межгород',

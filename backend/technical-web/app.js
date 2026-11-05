@@ -26,9 +26,11 @@ const labels = {
     FINISH: 'Результат',
     ABORTED: 'Соединение закрыто до завершения',
 };
-Object.assign(labels,{PASSENGER:'Пассажир',DRIVER:'Водитель',ADMIN:'Администратор',VERIFIED:'Пройдена',REJECTED:'Отклонена',FAILED:'Ошибка обработки',EXPIRED:'Срок истёк',READY:'Ожидает записи',PROCESSING:'Обрабатывается',ENROLL:'Первичная видеопроверка',RECOVERY:'Восстановление пароля',DRIVER_IDENTITY:'Удостоверение личности',VEHICLE:'Техпаспорт автомобиля',APPROVED:'Одобрен',ACTIVE:'Активен'});
+Object.assign(labels,{selfie:'Фото водителя',passport:'Удостоверение личности',driver_license:'Водительское удостоверение',tech_passport_front:'Техпаспорт, лицевая сторона',tech_passport_back:'Техпаспорт, оборотная сторона','identity-failed':'Отказы видеопроверок','topup-completed':'Завершённые пополнения','trip-review':'Проверка поездок',identity:'Видеопроверки',driver:'Документы водителей',topup:'Пополнения',payout:'Выплаты',complaint:'Обращения',technical:'Технические проблемы',DONE:'Обработано',ALL:'Все',ERROR:'Ошибка сервера',SECURITY:'Вход и доступ',FILE:'Файл или документ',DOMAIN:'Сбой рабочего процесса',INFO:'Информационное',CONSUMED:'Использована для восстановления',CANCELLED:'Отменён',COMPLETED:'Завершён',CREATED:'Создан',OPEN:'Поиск предложений',DRIVER_ASSIGNED:'Водитель выбран',IN_PROGRESS:'В пути',PASSENGER:'Пассажир',DRIVER:'Водитель',ADMIN:'Администратор',VERIFIED:'Пройдена',REJECTED:'Отклонена',FAILED:'Ошибка обработки',EXPIRED:'Срок истёк',READY:'Ожидает записи',PROCESSING:'Обрабатывается',ENROLL:'Первичная видеопроверка',RECOVERY:'Восстановление пароля',DRIVER_IDENTITY:'Удостоверение личности',VEHICLE:'Техпаспорт автомобиля',APPROVED:'Одобрен',ACTIVE:'Активен'});
 const sections = [
     ['overview', 'Главная'],
+    ['data','Данные и управление'],
+    ['attention','Требуют внимания'],
     ['issues', 'Проблемы и ошибки'],
     ['activity','Действия пользователей'],
     ['events', 'Журнал запросов для специалиста'],
@@ -123,6 +125,7 @@ function field(form, label, type = 'text', value = '') {
         i = el(type === 'textarea' ? 'textarea' : 'input');
     if (type !== 'textarea') i.type = type;
     i.value = value;
+    i.setAttribute('aria-label',label);
     l.append(i);
     form.append(l);
     return i;
@@ -136,6 +139,7 @@ function select(form, label, values, value) {
         i.append(o);
     }
     if (value) i.value = value;
+    i.setAttribute('aria-label',label);
     l.append(i);
     form.append(l);
     return i;
@@ -170,45 +174,28 @@ function table(cols, rows) {
     wrap.append(t);
     return wrap;
 }
-function filters(q, keys, render) {
-    const f = el('form', null, 'filters');
-    const inputs = {};
-    for (const [k, t, type] of keys)
-        inputs[k] = field(f, t, type || 'text', q.get(k) || '');
-    f.append(
-        button('Применить', () => {
-            for (const k in inputs) {
-                const v = inputs[k].value;
-                if (v) q.set(k, v);
-                else q.delete(k);
-            }
-            q.set('page', '1');
-            location.hash = render + '?' + q;
-        }),
-    );
-    f.addEventListener('submit', (e) => e.preventDefault());
-    root.append(f);
+function renderFilters(q, keys, route,parent) {
+    const f=el('form',null,'filters'),inputs={};
+    const options={status:(['issues','security','domain'].includes(route)?['NEW','IN_REVIEW','CONFIRMED','NOT_CONFIRMED','RESOLVED']:[]),severity:['CRITICAL','WARNING','INFO'],kind:['ERROR','SECURITY','FILE','DOMAIN'],result:['SUCCESS','FAILURE','PENDING','UNKNOWN'],stage:['START','PROCESSING','FINISH','ABORTED'],verdict:['ACCEPT','REVIEW','REJECT'],role:['PASSENGER','DRIVER','ADMIN'],platform:['android','ios','web'],blocked:['true','false'],acknowledged:['true','false'],pushSent:['true','false'],category:['identity','identity-failed','trip-review','driver','topup','topup-completed','payout','complaint','technical'],state:['OPEN','DONE','ALL'],unread:['true','false'],purpose:['ENROLL','RECOVERY','DRIVER_IDENTITY','VEHICLE']};
+    const extras={issues:[['kind','Тип проблемы'],['severity','Критичность'],['userId','Пользователь'],['platform','Платформа']],security:[['severity','Критичность'],['userId','Пользователь']],domain:[['severity','Критичность']],users:[['role','Роль'],['blocked','Заблокирован'],['platform','Платформа']],events:[['result','Результат'],['stage','Этап'],['platform','Платформа']],activity:[['result','Результат'],['platform','Платформа'],['userId','Пользователь']],identity:[['purpose','Тип проверки'],['userId','Пользователь']],files:[['docType','Тип документа']],notifications:[['severity','Критичность'],['acknowledged','Подтверждено'],['pushSent','Push отправлен']]};
+    const entries=[...keys];for(const entry of extras[route]||[])if(!entries.some(e=>e[0]===entry[0]))entries.push(entry);
+    if(!entries.some(e=>e[0]==='from'))entries.push(['from','Начиная с','datetime-local'],['to','До','datetime-local']);
+    const period=select(f,'Период',[['custom','Выбранные даты / всё время'],['today','Сегодня'],['24h','Последние сутки'],['week','Последние 7 дней'],['month','Последние 30 дней']],q.get('datePreset')||'custom');
+    for(const [k,title,type]of entries){
+      if(k==='userId'&&has('personal')){const wrapper=el('div'),search=field(wrapper,'Найти пользователя по имени или телефону'),picker=select(wrapper,'Пользователь',[['','Все пользователи']]);f.append(wrapper);inputs[k]=picker;let timer,seq=0;const load=async()=>{const generation=++seq;try{const rows=await api('data-lookups/User?search='+encodeURIComponent(search.value));if(generation!==seq)return;picker.replaceChildren();const all=el('option','Все пользователи');all.value='';picker.append(all);for(const row of rows){const option=el('option',row.label);option.value=row.id;picker.append(option);}if(q.get(k)&&!rows.some(r=>r.id===q.get(k))){const option=el('option','Выбранный пользователь из карточки');option.value=q.get(k);picker.append(option);}picker.value=q.get(k)||'';}catch(e){message(e.message)}};search.oninput=()=>{clearTimeout(timer);timer=setTimeout(load,300)};void load();continue;}
+      if(options[k]?.length){inputs[k]=select(f,title,[['','Все'],...options[k].map(v=>[v,v==='true'?'Да':v==='false'?'Нет':dmLabel(v)])],q.get(k)||'');}
+      else {let value=q.get(k)||'';if(type==='datetime-local'&&value){const d=new Date(value);if(Number.isFinite(d.getTime()))value=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}inputs[k]=field(f,title,type||'text',value);}
+      if(['version','docType'].includes(k)){const old=inputs[k],picker=select(f,title,[['','Все']],q.get(k)||'');old.parentElement.remove();inputs[k]=picker;void api('filter-options').then(data=>{for(const value of data[k==='version'?'versions':'docTypes']){const option=el('option',dmLabel(value));option.value=value;picker.append(option);}picker.value=q.get(k)||'';}).catch(e=>message(e.message));}
+    }
+    period.onchange=()=>{if(period.value==='custom')return;const now=new Date(),from=new Date(now);if(period.value==='today')from.setHours(0,0,0,0);else from.setTime(now.getTime()-({week:7,month:30}[period.value]||1)*86400000);for(const [key,d]of [['from',from],['to',now]])inputs[key].value=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);};
+    f.append(button('Применить',()=>{for(const k in inputs){const v=inputs[k].value;if(v)q.set(k,['from','to'].includes(k)?new Date(v).toISOString():v);else q.delete(k);}q.set('datePreset',period.value);q.delete('page');q.delete('skip');location.hash=route+'?'+q;}),button('Сбросить',()=>location.hash=route));
+    f.onsubmit=e=>e.preventDefault();parent.append(f);
 }
-function pager(q, total, route) {
-    const page = Number(q.get('page') || 1),
-        p = el('div', null, 'pager');
-    p.append(
-        button('← Назад', () => {
-            if (page > 1) {
-                q.set('page', String(page - 1));
-                location.hash = route + '?' + q;
-            }
-        }),
-        el('span', `Страница ${page} · записей ${total}`),
-        button('Далее →', () => {
-            if (page * 50 < total) {
-                q.set('page', String(page + 1));
-                location.hash = route + '?' + q;
-            }
-        }),
-    );
-    root.append(p);
+function renderPager(q,total,route,parent){
+ const offsetBased=['identity','activity','attention'].includes(route),size=offsetBased?30:50,page=offsetBased?Math.floor(Number(q.get('skip')||0)/size)+1:Number(q.get('page')||1),p=el('div',null,'pager');
+ for(const [label,next,disabled]of [['← Назад',page-1,page<=1],['Далее →',page+1,page*size>=total]]){const btn=button(label,()=>{if(offsetBased)q.set('skip',String((next-1)*size));else q.set('page',String(next));location.hash=route+'?'+q;});btn.disabled=disabled;p.append(btn);}p.append(el('span',`Страница ${page} · записей ${total}`));parent.append(p);
 }
+
 function login() {
     account = null;
     nav.replaceChildren();
@@ -260,7 +247,7 @@ async function start() {
         )
             continue;
         const item=link(title,id);
-        if(['overview','users','identity','activity','issues','notifications','settings'].includes(id))nav.append(item);else advanced.append(item);
+        if(['overview','data','attention','users','identity','activity','issues','notifications','settings'].includes(id))nav.append(item);else advanced.append(item);
     }
     nav.append(advanced);
     await render();
@@ -293,6 +280,9 @@ function eventColumns() {
 async function render() {
     if (!account) return;
     message('');
+    const root=el('div');document.querySelector('#main').replaceChildren(root);
+    const filters=(q,keys,route)=>renderFilters(q,keys,route,root);
+    const pager=(q,total,route)=>renderPager(q,total,route,root);
     const raw = location.hash.slice(1) || 'overview';
     const [path, query] = raw.split('?');
     const [section, id] = path.split('/');
@@ -306,6 +296,10 @@ async function render() {
     for (const a of nav.querySelectorAll('a'))
         a.classList.toggle('active', a.hash === '#' + section);
     try {
+        if(section==='attention'){
+            filters(q,[['category','Категория'],['severity','Критичность'],['state','Состояние'],['unread','Только непрочитанные']],'attention');const d=await api('attention?'+q);root.append(el('p','Найдено: '+d.total));for(const a of d.items){const box=card(a.title,a.body);if(a.pushError)box.append(el('p',a.pushError,'human-reason'));box.append(el('p',date(a.createdAt)+' · '+name(a.severity)+' · '+(a.resolvedAt?'Обработано':'Требует внимания')),link('Открыть',a.technicalRoute),button(a.read?'Прочитано':'Отметить прочитанным',async()=>{await api('attention/'+a.id+'/read',{});await render();}));root.append(box);}pager(q,d.total,'attention');return;
+        }
+        if(section==='data'){await dmPanel(id,q,root);return;}
         if (['overview', 'services', 'releases'].includes(section)) {
             const d = (latest = await api('overview'));
             if(section==='overview'){
@@ -516,6 +510,8 @@ async function render() {
         if (section === 'issues' && id) {
             const d = await api('issues/' + id),
                 i = d.issue;
+            const why=d.explanation;
+            if(why){root.append(card('Что произошло',why.whatHappened),card('Что делал пользователь',why.action+' · '+why.outcome),card('Подтверждённая причина',why.confirmedCause));if(why.hypothesis)root.append(card('Предположение, требует проверки',why.hypothesis));for(const e of why.evidence){const evidence=card(date(e.at)+' · '+e.title,e.description);evidence.append(link('Открыть событие','events/'+e.id));if(e.userId)evidence.append(link('Пользователь','users/'+e.userId));root.append(evidence);}}
             root.append(
                 card(
                     i.title,
@@ -623,9 +619,9 @@ async function render() {
         }
         if(section==='identity'){
             filters(q,[['search','Имя или телефон']],'identity');
-            const status=select(root,'Показать',[['FAILURES','Неудачные попытки'],['ALL','Все попытки'],['REVIEW','Нужна ручная проверка'],['VERIFIED','Пройденные'],['FAILED','Ошибки обработки']],q.get('status')||'FAILURES');
+            const status=select(root,'Показать',[['FAILURES','Неудачные попытки'],['ALL','Все попытки'],['REVIEW','Нужна ручная проверка'],['VERIFIED','Пройденные'],['FAILED','Ошибки обработки'],['REJECTED','Не пройдены'],['EXPIRED','Срок истёк'],['CONSUMED','Использованы для сброса']],q.get('status')||'ALL');
             status.addEventListener('change',()=>{q.set('status',status.value);q.delete('skip');location.hash='identity?'+q});
-            if(!q.has('status'))q.set('status','FAILURES');
+            if(!q.has('status'))q.set('status','ALL');
             const d=await api('identity-attempts?'+q);
             root.append(el('p','Новые неудачные записи хранятся зашифрованными до 7 дней. Старые отказные видео могли не сохраняться. Просмотр материалов фиксируется в журнале.','muted'));
             for(const row of d.items){
@@ -633,7 +629,7 @@ async function render() {
                 box.append(el('p',name(row.purpose)+' · '+name(row.status)+' · '+date(row.createdAt)),el('p',row.reason||'Ошибки не зафиксированы'));
                 if(row.userId)box.append(link('Открыть пользователя','users/'+row.userId));
                 if(row.hasVideo&&has('originals'))box.append(button('Посмотреть видео',()=>showIdentityVideo(row.id)));
-                else box.append(el('p',row.hasVideo?'Нет разрешения на просмотр оригиналов':'Видео не сохранено или удалено по сроку','muted'));
+                else box.append(el('p',row.hasVideo?'Видео сохранено, но у этого технического аккаунта нет разрешения на просмотр оригиналов':row.videoMessage||'Видео для этой попытки не сохранялось','muted'));
                 root.append(box);
             }
             if(!d.items.length)root.append(el('p','Проверок по выбранным условиям нет.'));
@@ -683,6 +679,8 @@ async function render() {
             );
             const profile=card('Сведения о пользователе');profile.append(el('p','Город: '+(d.user.city?.name||'Не указан')),el('p','Зарегистрирован: '+date(d.user.createdAt)),el('p','Состояние: '+(d.user.blockedAt?'Заблокирован':'Доступен')));root.append(profile);
             try{const trips=await api('users/'+id+'/trips?take=30');const box=card('Заказы и поездки: '+trips.total);box.append(table([['Дата',x=>date(x.createdAt)],['Откуда',x=>x.origin],['Куда',x=>x.destination],['Состояние',x=>name(x.status)],['Стоимость',x=>x.price+' '+(x.currency==='RUB'?'₽':'₸')]],trips.items));if(!trips.items.length)box.append(el('p','Заказов пока нет.'));root.append(box);}catch(e){root.append(el('p','Не удалось загрузить историю заказов: '+e.message));}
+            if(has('users'))await dmWallet(id,root);
+            root.append(link('Все данные пользователя и фильтры','data/User?record='+id));
             if (d.user.driverProfile) {
                 const docs = card(
                     'Текущие документы профиля: не файлы выбранного события',
@@ -837,6 +835,7 @@ async function render() {
             return;
         }
         if (section === 'notifications') {
+            filters(q,[],'notifications');
             const d = await api('notifications?' + q);
             root.append(
                 button('Включить браузерные уведомления', () =>
@@ -1011,7 +1010,7 @@ async function render() {
         }
         root.append(el('p', 'Раздел не найден'));
     } catch (e) {
-        message(e.message);
+        if(root.isConnected)message(e.message);
     }
 }
 function fileList(title, files) {
@@ -1099,6 +1098,9 @@ start().catch(() => login());
 async function showIdentityVideo(id){
  const response=await fetch('/api/technical/identity-attempts/'+encodeURIComponent(id)+'/video',{credentials:'same-origin'});
  if(!response.ok)throw new Error('Запись недоступна: нет права просмотра, файл отсутствует или истёк срок хранения.');
- const url=URL.createObjectURL(await response.blob()),video=el('video');video.controls=true;video.playsInline=true;video.preload='metadata';video.src=url;video.style.width='100%';video.style.maxHeight='70vh';
- const modal=document.querySelector('#modal');document.querySelector('#modal-content').replaceChildren(el('h2','Запись видеопроверки'),video);modal.addEventListener('close',()=>{video.pause();video.removeAttribute('src');video.load();URL.revokeObjectURL(url)},{once:true});modal.showModal();
+ const url=URL.createObjectURL(await response.blob()),video=el('video');video.controls=true;video.playsInline=true;video.preload='auto';video.src=url;video.style.width='100%';video.style.maxHeight='70vh';
+ const modal=document.querySelector('#modal'),status=el('p','Загружаем видеозапись…');status.setAttribute('role','status');video.addEventListener('loadeddata',()=>status.textContent='Видео загружено. Нажмите воспроизведение.');video.addEventListener('error',()=>status.textContent='Браузер не смог воспроизвести эту запись. Попробуйте актуальный Chrome или Safari.');document.querySelector('#modal-content').replaceChildren(el('h2','Запись видеопроверки'),status,video);modal.addEventListener('close',()=>{video.pause();video.removeAttribute('src');video.load();URL.revokeObjectURL(url)},{once:true});modal.showModal();
 }
+
+let attentionLast;
+setInterval(async()=>{if(!account)return;try{const d=await api('attention?unread=true&take=1');let indicator=document.querySelector('#attention-indicator');if(!indicator){indicator=link('','attention');indicator.id='attention-indicator';document.querySelector('header').append(indicator);}indicator.textContent='Требуют внимания: '+d.total;if(attentionLast&&d.items[0]?.id&&d.items[0].id!==attentionLast)message('Новое уведомление: '+d.items[0].title);attentionLast=d.items[0]?.id;}catch(_){}},5000);

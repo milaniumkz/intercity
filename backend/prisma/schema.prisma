@@ -1233,3 +1233,35 @@ model AdminWebPushSubscription {
   subscription Json
   createdAt    DateTime @default(now())
 }
+
+model AdminAttention {
+  id String @id @default(uuid())
+  eventKey String @unique
+  category String
+  severity String
+  title String
+  body String
+  permission String
+  adminRoute String
+  technicalRoute String
+  sourceId String
+  createdAt DateTime @default(now())
+  resolvedAt DateTime?
+  receipts AdminAttentionReceipt[]
+  @@index([resolvedAt, createdAt])
+}
+model AdminAttentionReceipt {
+  id String @id @default(uuid())
+  alertId String
+  alert AdminAttention @relation(fields:[alertId],references:[id],onDelete:Cascade)
+  audience String
+  actorId String
+  deviceId String
+  acknowledgedAt DateTime?
+  pushAt DateTime?
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  lastError String?
+  @@unique([alertId,audience,deviceId])
+  @@index([audience,actorId,acknowledgedAt])
+}

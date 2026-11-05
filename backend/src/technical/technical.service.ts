@@ -1,3 +1,5 @@
+import {AttentionService} from '../attention/attention.service';
+import {dataCatalog,dataList,dataRecord,editDataRecord,adjustWallet} from './data-management';
 import {AccountDeletionService} from '../auth/account-deletion.service';
 import {customerEdit,editDriverRecord} from '../admin/customer-records';
 import {
@@ -42,7 +44,7 @@ export class TechnicalService implements OnModuleInit, OnModuleDestroy {
     private lastPushError: string | null = null;
     readonly startedAt = new Date();
     vapid: { publicKey: string; privateKey: string };
-    constructor(readonly prisma: PrismaService, private readonly deletion:AccountDeletionService) {}
+    constructor(readonly prisma: PrismaService, private readonly deletion:AccountDeletionService,private readonly attention:AttentionService) {}
     async onModuleInit() {
         await fs.mkdir(this.storage, { recursive: true, mode: 0o700 });
         const keyPath = join(this.storage, 'audit.key');
@@ -94,9 +96,11 @@ export class TechnicalService implements OnModuleInit, OnModuleDestroy {
         objectId: string | null,
         data: any = {},
     ) {
+        return this.prisma.$transaction(tx => this.auditInTransaction(tx,actorId,action,objectId,data));
+    }
+    async auditInTransaction(tx:any,actorId:string,action:string,objectId:string|null,data:any={}) {
         const at = new Date();
         data = JSON.parse(JSON.stringify(data));
-        return this.prisma.$transaction(async (tx) => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(77203419)`;
             const last = await tx.techAudit.findFirst({
                 orderBy: { seq: 'desc' },
@@ -121,7 +125,6 @@ export class TechnicalService implements OnModuleInit, OnModuleDestroy {
                     hash,
                 },
             });
-        });
     }
     async verifyAudit() {
         let cursor: bigint | undefined,
@@ -217,6 +220,7 @@ export class TechnicalService implements OnModuleInit, OnModuleDestroy {
         message?: string,
     ) {
         try {
+            this.attention?.schedule();
             if (req.techEvidencePending) await req.techEvidencePending;
             const path = String(
                 req.route?.path || req.techStaticPath || '/unmatched',
@@ -232,21 +236,22 @@ export class TechnicalService implements OnModuleInit, OnModuleDestroy {
                 : null;
             let issueId: string | null = null;
             const fileFailure = path.includes('/docs/upload') && status >= 400;
+            const paymentFailure=/(wallet|payments|cards)/.test(path)&&status>=400;
             if (
                 status >= 500 ||
                 status === 401 ||
                 status === 403 ||
                 status === 413 ||
-                fileFailure
+                fileFailure || paymentFailure
             ) {
                 const kind =
-                    status >= 500 ? 'ERROR' : fileFailure ? 'FILE' : 'SECURITY';
+                    status >= 500 ? 'ERROR' : fileFailure ? 'FILE' : paymentFailure?'DOMAIN':'SECURITY';
                 const title =
                     status >= 500
                         ? 'Ошибка серверной операции'
                         : fileFailure
                           ? 'Отказ при загрузке документа'
-                          : 'Отказ доступа или входа';
+                          : paymentFailure?'Не удалось выполнить платёжную операцию':'Отказ доступа или входа';
                 // No IP-based attribution. Security rules aggregate facts; a rule match is not proof of abuse.
                 let shouldGroup = kind !== 'SECURITY';
                 if (!shouldGroup) {
@@ -914,7 +919,21 @@ export class TechnicalService implements OnModuleInit, OnModuleDestroy {
         });
         return { ok: true };
     }
+    async confirmManagement(actor:any,body:any){this.managementConfirmation(body);await this.reauth(actor,body.password);}
+    async changeData(actor:any,model:string,id:string,body:any) {
+        this.managementConfirmation(body);await this.reauth(actor,body.password);
+        try{return await editDataRecord(this.prisma,model,id,body,(tx,data)=>this.auditInTransaction(tx,actor.id,'data.record.update',id,data));}
+        catch(e:any){if(e.code==='P2002')throw new BadRequestException('Такое значение уже используется другой записью');if(e.code==='P2003')throw new BadRequestException('Связанная запись не найдена');throw e;}
+    }
+    private managementConfirmation(body:any) {
+        if(body.confirm!==true||typeof body.reason!=='string'||body.reason.trim().length<5||body.reason.length>1000)throw new BadRequestException('Подтвердите действие и укажите причину, от 5 до 1000 символов');
+    }
+    async correctWallet(actor:any,userId:string,body:any) {
+        this.managementConfirmation(body);await this.reauth(actor,body.password);
+        return adjustWallet(this.prisma,userId,body,actor.id,(tx,data)=>this.auditInTransaction(tx,actor.id,'wallet.adjustment',body.operationId,data));
+    }
     async maintenance() {
+        this.attention?.schedule();
         if (this.running) return;
         this.running = true;
         try {
@@ -978,7 +997,7 @@ export class TechnicalService implements OnModuleInit, OnModuleDestroy {
                 where: { until: { lt: new Date() } },
             });
             await this.scanDomain();
-            await this.deliverPush();
+            if(!this.attention)await this.deliverPush();
             this.maintenanceAt = new Date();
         } catch {
             this.collectionFailures++;

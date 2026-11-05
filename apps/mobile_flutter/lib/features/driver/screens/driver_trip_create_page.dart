@@ -1,3 +1,5 @@
+import '../../../core/services/trip_status_sound.dart';
+import '../../../core/services/push_notifications_service.dart';
 import '../widgets/route_departure_field.dart';
 import 'dart:async';
 
@@ -38,6 +40,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   DateTime _departureTime = _defaultDepartureTime();
   List<dynamic> _openRequests = [];
   List<Map<String, dynamic>> _activeRequests = [];
+  final Set<String> _acceptedNotices = {};
   String? _loadWarning;
   bool _refreshing = false;
   List<dynamic> _myTrips = [];
@@ -449,7 +452,26 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
           .toList();
-      if (mounted) setState(() => _activeRequests = activeRequests);
+      if (mounted) {
+        for (final request in activeRequests) {
+          final id = '${request['id']}';
+          if (['DRIVER_ASSIGNED', 'ACCEPTED'].contains(request['status']) &&
+              _acceptedNotices.add(id)) {
+            unawaited(TripStatusSound.playOnce(id, 'INTERCITY_ACCEPTED'));
+            unawaited(PushNotificationsService.instance
+                .showOrderStatusNotification(
+                    orderId: id,
+                    title: 'Пассажир принял вашу цену',
+                    body: 'Заказ подтверждён. Откройте принятую заявку.',
+                    data: {
+                  'type': 'order_status',
+                  'status': 'INTERCITY_ACCEPTED',
+                  'route': '/driver/home?intercityRequestId=$id'
+                }));
+          }
+        }
+        setState(() => _activeRequests = activeRequests);
+      }
     } catch (e) {
       warning = 'Не удалось обновить принятые заказы: ${errorMessageRu(e)}';
     }
@@ -863,6 +885,8 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   }
 
   Future<void> _showOfferDialog(Map<String, dynamic> request) async {
+    unawaited(TripStatusSound.prepare());
+    unawaited(PushNotificationsService.instance.enableDriverNotifications());
     _offerCurrencySymbol = rideCurrencySymbol(request);
     final requestType =
         (request['requestType'] ?? requestTypeIntercity).toString();
@@ -2696,6 +2720,8 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   }
 
   Future<void> _submitBoardIntercityOffer(Map<String, dynamic> order) async {
+    unawaited(TripStatusSound.prepare());
+    unawaited(PushNotificationsService.instance.enableDriverNotifications());
     if (_isDemoRequest(order) || _routeStage('commission')) {
       setState(() => _boardStageOverride = 'detail');
       return;

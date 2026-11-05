@@ -1,3 +1,4 @@
+import {AttentionModule} from './attention/attention.module';
 import { TechnicalModule } from './technical/technical.module';
 import { CardPaymentsModule } from './payments/card-payments.module';
 import { Module } from '@nestjs/common';
@@ -22,6 +23,7 @@ import { TaxModule } from './tax/tax.module';
 
 @Module({
     imports: [
+        AttentionModule,
         ConfigModule.forRoot({
             isGlobal: true,
         }),

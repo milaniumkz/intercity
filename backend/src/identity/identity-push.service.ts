@@ -19,7 +19,9 @@ export class IdentityPushService implements OnModuleInit {
   if(url.protocol!=='https:'||url.username||url.password||url.port||!['fcm.googleapis.com','updates.push.services.mozilla.com','web.push.apple.com'].some(host=>url.hostname===host||url.hostname.endsWith('.'+host)) || !/^[A-Za-z0-9_-]{80,200}$/.test(subscription.keys?.p256dh||'')||!/^[A-Za-z0-9_-]{16,100}$/.test(subscription.keys?.auth||''))throw new Error('Некорректная подписка уведомлений');
   await this.prisma.adminWebPushSubscription.upsert({where:{endpoint:url.href},create:{userId,endpoint:url.href,subscription},update:{userId,subscription}});return {success:true};
  }
+ async sendAttention(subscription:any,payload:any){if(!this.keys)throw Error('Push ещё не готов');return webpush.sendNotification(subscription,JSON.stringify(payload),{vapidDetails:{subject:'https://admin.intercity.89-207-255-27.sslip.io',...this.keys},TTL:3600,urgency:'high',timeout:10000});}
  async notifyReviews(){
+  if(process.env.NODE_ENV!=='test')return;
   if(this.running||!this.keys)return;this.running=true;
   try{
    const pending=await this.prisma.biometricChallenge.findMany({where:{status:'REVIEW',notifiedAt:null,pushAttempts:{lt:1440}},select:{id:true},take:10});

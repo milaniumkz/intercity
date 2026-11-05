@@ -1,0 +1,7 @@
+CREATE TABLE "AdminAttention" ("id" TEXT NOT NULL,"eventKey" TEXT NOT NULL,"category" TEXT NOT NULL,"severity" TEXT NOT NULL,"title" TEXT NOT NULL,"body" TEXT NOT NULL,"permission" TEXT NOT NULL,"adminRoute" TEXT NOT NULL,"technicalRoute" TEXT NOT NULL,"sourceId" TEXT NOT NULL,"createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,"resolvedAt" TIMESTAMP(3),CONSTRAINT "AdminAttention_pkey" PRIMARY KEY ("id"));
+CREATE UNIQUE INDEX "AdminAttention_eventKey_key" ON "AdminAttention"("eventKey");
+CREATE INDEX "AdminAttention_resolvedAt_createdAt_idx" ON "AdminAttention"("resolvedAt","createdAt");
+CREATE TABLE "AdminAttentionReceipt" ("id" TEXT NOT NULL,"alertId" TEXT NOT NULL,"audience" TEXT NOT NULL,"actorId" TEXT NOT NULL,"deviceId" TEXT NOT NULL,"acknowledgedAt" TIMESTAMP(3),"pushAt" TIMESTAMP(3),"attempts" INTEGER NOT NULL DEFAULT 0,"nextAttemptAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,"lastError" TEXT,CONSTRAINT "AdminAttentionReceipt_pkey" PRIMARY KEY ("id"));
+CREATE UNIQUE INDEX "AdminAttentionReceipt_alertId_audience_deviceId_key" ON "AdminAttentionReceipt"("alertId","audience","deviceId");
+CREATE INDEX "AdminAttentionReceipt_audience_actorId_acknowledgedAt_idx" ON "AdminAttentionReceipt"("audience","actorId","acknowledgedAt");
+ALTER TABLE "AdminAttentionReceipt" ADD CONSTRAINT "AdminAttentionReceipt_alertId_fkey" FOREIGN KEY ("alertId") REFERENCES "AdminAttention"("id") ON DELETE CASCADE ON UPDATE CASCADE;

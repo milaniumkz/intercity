@@ -206,10 +206,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(_buttonFinder('Обновить'));
     await tester.pumpAndSettle();
+    await tester
+        .ensureVisible(find.widgetWithText(OutlinedButton, 'Экспорт CSV'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'Экспорт CSV'));
     await tester.pumpAndSettle();
     expect(find.textContaining('CSV готов'), findsOneWidget);
-    expect(copiedCsv, 'a,b\n1,2');
+    expect(copiedCsv, contains('Валюта'));
+    expect(api.calls, contains('GET /admin/finance-dashboard'));
 
     await tester.tap(find.text('Заказы').last);
     await tester.pumpAndSettle();
@@ -416,6 +419,16 @@ class _FakeAdminApi implements AdminApi {
           'queuedAt': '2026-03-13T10:00:00Z',
         }
       ]);
+    }
+    if (path == '/admin/finance-dashboard') {
+      return _response(path, {
+        'range': {'from': '2026-11-04T19:00:00Z', 'to': '2026-11-05T19:00:00Z'},
+        'groups': [],
+        'trips': []
+      });
+    }
+    if (path == '/admin/finance-entries' || path == '/admin/attention') {
+      return _response(path, {'items': [], 'total': 0});
     }
     if (path == '/admin/wallet-transactions') {
       return _response(path, [

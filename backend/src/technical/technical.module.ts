@@ -1,3 +1,5 @@
+import {OrdersModule} from '../orders/orders.module';
+import {IntercityModule} from '../intercity/intercity.module';
 import {AccountDeletionModule} from '../auth/account-deletion.module';
 import {IdentityModule} from '../identity/identity.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
@@ -13,7 +15,7 @@ import {
 } from './technical.controller';
 @Global()
 @Module({
-    imports: [PrismaModule, AccountDeletionModule, IdentityModule],
+    imports: [OrdersModule,IntercityModule,PrismaModule, AccountDeletionModule, IdentityModule],
     controllers: [
         TechnicalPublicController,
         TechnicalController,

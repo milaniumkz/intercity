@@ -1,3 +1,6 @@
+import {financeDashboard,financeEntries} from './finance-dashboard';
+import {AttentionService} from '../attention/attention.service';
+import {IdentityPushService} from '../identity/identity-push.service';
 import {Body,Controller,Get,Patch,Post,Param,Query,Request,UseGuards,ForbiddenException,BadRequestException,Header,NotFoundException} from '@nestjs/common';
 import {JwtAuthGuard} from '../auth/jwt-auth.guard';
 import {PrismaService} from '../prisma.service';
@@ -7,8 +10,15 @@ import {IntercityService} from '../intercity/intercity.service';
 import {customerSelect,listCustomers,customerOverview,customerTrips,customerTransactions,customerEdit,editDriverRecord} from './customer-records';
 @Controller('admin') @UseGuards(JwtAuthGuard)
 export class AdminPeopleController {
- constructor(private readonly db:PrismaService,private readonly admin:AdminService,private readonly intercity:IntercityService,private readonly orders:OrdersService){}
+ constructor(private readonly db:PrismaService,private readonly admin:AdminService,private readonly intercity:IntercityService,private readonly orders:OrdersService,private readonly attention:AttentionService,private readonly push:IdentityPushService){}
  private async permit(req:any,key:string){if(!await this.admin.adminHasPermission(req.user.sub,key))throw new ForbiddenException('Нет доступа к этому разделу');}
+ @Get('finance-dashboard') async finance(@Request()req,@Query()q:any){await this.permit(req,'finance.view');return financeDashboard(this.db,q);}
+ @Get('finance-entries') async financeRows(@Request()req,@Query()q:any){await this.permit(req,'finance.view');return financeEntries(this.db,q);}
+ @Get('attention') async attentionRows(@Request()req,@Query()q:any){if(!await this.db.user.count({where:{id:req.user.sub,role:'ADMIN',blockedAt:null}}))throw new ForbiddenException('Требуется доступ администратора');return this.attention.list('ADMIN',req.user.sub,q);}
+ @Get('attention/:id/details') attentionDetails(@Request()req,@Param('id')id:string){return this.attention.details(req.user.sub,id);}
+ @Post('attention/:id/read') async attentionRead(@Request()req,@Param('id')id:string){return this.attention.acknowledge('ADMIN',req.user.sub,id);}
+ @Get('attention/push-key') async attentionKey(@Request()req){if(!await this.db.user.count({where:{id:req.user.sub,role:'ADMIN',blockedAt:null}}))throw new ForbiddenException('Требуется доступ администратора');return{publicKey:this.push.publicKey()};}
+ @Post('attention/push-subscribe') async attentionSubscribe(@Request()req,@Body()body:any){await this.attentionKey(req);try{return await this.push.subscribe(req.user.sub,body);}catch{throw new BadRequestException('Не удалось подключить уведомления');}}
  @Get('people-cities') async cities(@Request()req,@Query('search')search:string){await this.permit(req,'users.manage');return this.db.city.findMany({where:{isActive:true,name:{contains:String(search||'').slice(0,100),mode:'insensitive'}},take:30,select:{id:true,name:true,countryCode:true,region:true},orderBy:{name:'asc'}});}
  @Get('people') @Header('Cache-Control','no-store') async people(@Request()req,@Query()q:any){await this.permit(req,q.kind==='driver'?'drivers.view':'users.view');return listCustomers(this.db,q);}
  @Get('people/:id') @Header('Cache-Control','no-store') async person(@Request()req,@Param('id')id:string){await this.permit(req,'users.view');return customerOverview(this.db,id,await this.admin.adminHasPermission(req.user.sub,'finance.view'));}

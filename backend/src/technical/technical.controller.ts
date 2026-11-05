@@ -1,3 +1,9 @@
+import {OrdersService} from '../orders/orders.service';
+import {IntercityService} from '../intercity/intercity.service';
+import {AttentionService} from '../attention/attention.service';
+import {issueExplanation} from './issue-explanation';
+import {recordDates} from '../admin/customer-records';
+import {dataCatalog,dataList,dataRecord} from './data-management';
 import {userActivity} from './activity-feed';
 import {IdentityService} from '../identity/identity.service';
 import {customerTrips} from '../admin/customer-records';
@@ -116,6 +122,9 @@ function whereEvents(q: any) {
                 where.at[key] = d;
             }
     }
+    if(q.platform)where.AND=[{client:{path:['platform'],equals:String(q.platform)}}];
+    if(q.stage)where.stage=String(q.stage);
+    if(q.statusMin)where.status={gte:Math.max(100,Math.min(599,Number(q.statusMin)||500))};
     if (q.version)
         where.client = {
             path: ['version'],
@@ -136,7 +145,7 @@ export class TechnicalPublicController {
         res.sendFile(join(process.cwd(), 'technical-web', 'index.html'));
     }
     @Get('panel/:asset') asset(@Param('asset') asset: string, @Res() res: any) {
-        if (!['app.js', 'style.css', 'sw.js'].includes(asset))
+        if (!['app.js', 'data-management.js', 'style.css', 'sw.js'].includes(asset))
             throw new BadRequestException();
         this.headers(res);
         if (asset === 'sw.js')
@@ -149,7 +158,7 @@ export class TechnicalPublicController {
         res.setHeader('Referrer-Policy', 'no-referrer');
         res.setHeader(
             'Content-Security-Policy',
-            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
         );
     }
     @Post('login') async login(
@@ -181,7 +190,7 @@ export class TechnicalPublicController {
 @Controller('technical')
 @UseGuards(TechnicalGuard)
 export class TechnicalController {
-    constructor(private tech: TechnicalService, private identity:IdentityService) {}
+    constructor(private tech: TechnicalService, private identity:IdentityService,private readonly attention:AttentionService,private readonly orders:OrdersService,private readonly intercity:IntercityService) {}
     @Get('identity-attempts') async identityHistory(@Req()req:any,@Query()q:any){allow(req,'personal');return this.identity.history(q);}
     @Get('identity-attempts/:id/video') async identityVideo(@Req()req:any,@Param('id')id:string,@Res()res:any){
         allow(req,'personal');allow(req,'originals');
@@ -191,6 +200,21 @@ export class TechnicalController {
     }
     @Get('users/:id/trips') async userTrips(@Req()req:any,@Param('id')id:string,@Query()q:any){allow(req,'personal');return customerTrips(this.tech.prisma,{...q,userId:safeId(id)});}
     @Get('cities') async cities(@Req()req:any,@Query('search')search:string){allow(req,'personal');return this.tech.prisma.city.findMany({where:{isActive:true,name:{contains:String(search||'').slice(0,100),mode:'insensitive'}},take:30,select:{id:true,name:true,countryCode:true,region:true},orderBy:{name:'asc'}});}
+    @Get('data') catalog(@Req()req:any){allow(req,'personal');return dataCatalog();}
+    @Get('data-lookups/:model') async lookups(@Req()req:any,@Param('model')model:string,@Query('search')search:string){
+        allow(req,'personal');const value=String(search||'').slice(0,100);
+        if(model==='User'){const rows=await this.tech.prisma.user.findMany({where:{NOT:{phone:{startsWith:'erased:'}},OR:[{name:{contains:value,mode:'insensitive'}},{phone:{contains:value}}]},take:40,select:{id:true,name:true,phone:true}});return rows.map(r=>({id:r.id,label:r.name+' · '+r.phone}));}
+        if(model==='DriverProfile'){const rows=await this.tech.prisma.driverProfile.findMany({where:{OR:[{carNumber:{contains:value,mode:'insensitive'}},{carModel:{contains:value,mode:'insensitive'}},{user:{is:{OR:[{name:{contains:value,mode:'insensitive'}},{phone:{contains:value}}]}}}]},take:40,select:{id:true,carNumber:true,user:{select:{name:true,phone:true}}}});return rows.map(r=>({id:r.id,label:r.user.name+' · '+r.user.phone+' · '+(r.carNumber||'')}));}
+        if(model==='City'){const rows=await this.tech.prisma.city.findMany({where:{name:{contains:value,mode:'insensitive'}},take:40,select:{id:true,name:true,countryCode:true}});return rows.map(r=>({id:r.id,label:r.name+' · '+r.countryCode}));}
+        if(model==='Wallet'){const rows=await this.tech.prisma.wallet.findMany({where:{user:{is:{OR:[{name:{contains:value,mode:'insensitive'}},{phone:{contains:value}}]}}},take:40,select:{id:true,user:{select:{name:true,phone:true}}}});return rows.map(r=>({id:r.id,label:r.user.name+' · '+r.user.phone}));}
+        throw new BadRequestException('Список выбора недоступен');
+    }
+    @Get('data/:model') records(@Req()req:any,@Param('model')model:string,@Query()q:any){allow(req,'personal');return dataList(this.tech.prisma,model,q);}
+    @Get('data/:model/:id') record(@Req()req:any,@Param('model')model:string,@Param('id')id:string){allow(req,'personal');return dataRecord(this.tech.prisma,model,id);}
+    @Post('data/:model/:id/cancel') async cancelRecord(@Req()req:any,@Param('model')model:string,@Param('id')id:string,@Body()body:any){allow(req,'users');allow(req,'danger');await this.tech.confirmManagement(req.tech,body);if(!['Order','IntercityRequest'].includes(model))throw new BadRequestException('Отмена доступна только для заказов');const record=model==='Order'?await this.tech.prisma.order.findUnique({where:{id},select:{passengerId:true}}):await this.tech.prisma.intercityRequest.findUnique({where:{id},select:{passengerId:true}});if(!record)throw new BadRequestException('Заказ не найден');await this.tech.audit(req.tech.id,'order.cancel.requested',id,{model,reason:body.reason});const result=model==='Order'?await this.orders.cancelOrder(id,record.passengerId):await this.intercity.cancelRequest(record.passengerId,id);await this.tech.audit(req.tech.id,'order.cancel.completed',id,{model,reason:body.reason});return{ok:true,status:result.status};}
+    @Post('data/:model/:id') recordEdit(@Req()req:any,@Param('model')model:string,@Param('id')id:string,@Body()body:any){allow(req,'personal');allow(req,'users');allow(req,'danger');return this.tech.changeData(req.tech,model,id,body);}
+    @Get('users/:id/wallet') async wallet(@Req()req:any,@Param('id')id:string){allow(req,'personal');allow(req,'users');return {wallet:await this.tech.prisma.wallet.findUnique({where:{userId:id},select:{id:true,money:true,bonus:true,moneyRub:true,bonusRub:true,lockedBonus:true,lockedBonusRub:true,referralMoney:true,updatedAt:true}}),transactions:await this.tech.prisma.walletTransaction.findMany({where:{wallet:{userId:id}},orderBy:{createdAt:'desc'},take:30,select:{id:true,type:true,direction:true,amount:true,currency:true,balanceSource:true,note:true,createdAt:true}})};}
+    @Post('users/:id/wallet-adjustment') walletAdjustment(@Req()req:any,@Param('id')id:string,@Body()body:any){allow(req,'personal');allow(req,'users');allow(req,'danger');return this.tech.correctWallet(req.tech,id,body);}
     @Get('me') me(@Req() req: any) {
         return {
             id: req.tech.id,
@@ -237,6 +261,9 @@ export class TechnicalController {
         );
         res.json({ ok: true });
     }
+    @Get('attention') attentionList(@Req()req:any,@Query()q:any){allow(req,'events');return this.attention.list('TECHNICAL',req.tech.id,q);}
+    @Post('attention/:id/read') attentionRead(@Req()req:any,@Param('id')id:string){allow(req,'events');return this.attention.acknowledge('TECHNICAL',req.tech.id,id);}
+    @Get('filter-options') async filterOptions(@Req()req:any){allow(req,'events');const [versions,documents]=await Promise.all([this.tech.prisma.techEvent.findMany({distinct:['client'],take:200,select:{client:true},orderBy:{at:'desc'}}),this.tech.prisma.techFile.findMany({distinct:['docType'],select:{docType:true},take:50})]);return{versions:[...new Set(versions.map((x:any)=>x.client?.version).filter(Boolean))],docTypes:documents.map(x=>x.docType)};}
     @Get('activity') async activity(@Req()req:any,@Query()q:any){allow(req,'events');return userActivity(this.tech.prisma,q,req.tech.permissions.includes('personal'));}
     @Get('overview') overview(@Req() req: any) {
         allow(req, 'events');
@@ -323,6 +350,9 @@ export class TechnicalController {
         allow(req, 'events');
         const where: any = {};
         if (q.kind) where.kind = String(q.kind);
+        if(q.severity)where.severity=String(q.severity);
+        const dates=recordDates(q);if(dates)where.lastAt=dates;
+        if(q.userId||q.platform){const matching=await this.tech.prisma.techEvent.findMany({where:{...(q.userId?{userId:String(q.userId)}:{}),...(q.platform?{client:{path:['platform'],equals:String(q.platform)}}:{})},distinct:['issueId'],select:{issueId:true}});where.id={in:matching.map(e=>e.issueId).filter(Boolean)};}
         if (q.status) where.status = String(q.status);
         if (q.search)
             where.title = {
@@ -355,6 +385,7 @@ export class TechnicalController {
         });
         return {
             issue,
+            explanation:issueExplanation(issue,events),
             affectedUsers: users.map((x) => x.userId),
             events: events.map((e) => this.visibleEvent(req, e)),
             comments: await this.tech.prisma.techComment.findMany({
@@ -430,7 +461,11 @@ export class TechnicalController {
     }
     @Get('users') async users(@Req() req: any, @Query() q: any) {
         allow(req, 'personal');
-        const where: any = {};
+        const where: any = {NOT:{phone:{startsWith:'erased:'}}};
+        const dates=recordDates(q);if(dates)where.createdAt=dates;
+        if(q.role){if(!['PASSENGER','DRIVER','ADMIN'].includes(q.role))throw new BadRequestException('Выберите роль');where.role=q.role;}
+        if(q.blocked)where.blockedAt=q.blocked==='true'?{not:null}:null;
+        if(q.platform)where.pushPlatform=String(q.platform);
         if (q.search)
             where.OR = [
                 {
@@ -587,7 +622,8 @@ export class TechnicalController {
     @Get('files') async files(@Req() req: any, @Query() q: any) {
         allow(req, 'events');
         const where: any = {};
-        for (const k of ['userId', 'objectId', 'requestId', 'verdict'])
+        const dates=recordDates(q);if(dates)where.createdAt=dates;
+        for (const k of ['userId', 'objectId', 'requestId', 'verdict','docType'])
             if (q[k]) where[k] = String(q[k]).slice(0, 120);
         return {
             items: (
@@ -631,7 +667,11 @@ export class TechnicalController {
         @Query() q: any,
     ) {
         allow(req, 'events');
-        const where = { accountId: req.tech.id };
+        const where:any = { accountId: req.tech.id };
+        const dates=recordDates(q);if(dates)where.createdAt=dates;
+        if(q.severity)where.severity=String(q.severity);
+        if(q.acknowledged)where.acknowledgedAt=q.acknowledged==='true'?{not:null}:null;
+        if(q.pushSent)where.pushAt=q.pushSent==='true'?{not:null}:null;
         return {
             items: await this.tech.prisma.techNotification.findMany({
                 where,
@@ -816,6 +856,7 @@ export class TechnicalController {
     @Get('audit')
     async auditRecords(@Req() req: any, @Query() q: any) {
         allow(req, 'settings');
+        allow(req, 'personal');
         return {
             items: (
                 await this.tech.prisma.techAudit.findMany({

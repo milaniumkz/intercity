@@ -79,6 +79,14 @@ void main() {
     expect(find.text('Поездка в пути'), findsNothing);
     expect(find.text('210 км'), findsNothing);
     expect(find.text('2 ч 15 мин'), findsNothing);
+    final sheet = find.byKey(const ValueKey('intercity-active-sheet'));
+    expect(tester.getTopLeft(sheet).dy, greaterThanOrEqualTo(0));
+    final card = find.byKey(const ValueKey('intercity-active-card'));
+    expect(tester.getTopLeft(card).dy, greaterThan(844 * .35));
+    expect(tester.getBottomRight(card).dy, lessThanOrEqualTo(844));
+    await tester.tap(find.text('Детали поездки · развернуть / свернуть'));
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.ensureVisible(find.text('Позвонить'));
     await tester.tap(find.text('Позвонить'));
     await tester.pump();
     expect(
@@ -86,6 +94,7 @@ void main() {
             c.method == 'launch' &&
             (c.arguments as Map)['url'] == 'tel:+77058652235'),
         isTrue);
+    await tester.ensureVisible(find.text('Чат'));
     await tester.tap(find.text('Чат'));
     await tester.pumpAndSettle();
     expect(api.chatReads, greaterThan(0));
