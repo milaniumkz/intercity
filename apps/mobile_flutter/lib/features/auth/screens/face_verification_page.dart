@@ -259,8 +259,9 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
           // Some devices cannot stream and record concurrently. Recording
           // remains available; never simulate a successful position check.
           setState(() => _faceSample = IdentityFaceSample.unavailable);
-          if (!camera.value.isRecordingVideo)
+          if (!camera.value.isRecordingVideo) {
             await camera.startVideoRecording();
+          }
         }
       } else {
         await camera.startVideoRecording();
