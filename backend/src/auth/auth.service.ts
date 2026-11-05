@@ -59,9 +59,12 @@ export class AuthService {
             const referrer = await this.prisma.user.findUnique({
                 where: { refCode: normalizedReferralCode },
             });
-            if (!referrer) throw new BadRequestException('Ссылка приглашения недействительна. Попросите актуальную ссылку у пригласившего');
-            referredBy = referrer.refCode;
-            cityId = referrer.cityId;
+            // A stale invitation must never block a new account. Preserve the
+            // attribution only while its owner still exists.
+            if (referrer && !referrer.phone.startsWith('erased:')) {
+                referredBy = referrer.refCode;
+                cityId = referrer.cityId;
+            }
         }
 
         const user = await this.prisma.$transaction(async tx => {
