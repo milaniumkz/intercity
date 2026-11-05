@@ -132,6 +132,9 @@ JSLIVEMAP
     fi
     if [[ "$TARGET" == "routing-rollout" ]]; then
       printf 'Current release: '; cat "$APP_ROOT/current_commit"
+      for directory in /tmp/intercity-transfer-27aef034d8c78ce626b625944b56e935dc7e7fcc "$APP_ROOT/releases/27aef034d8c78ce626b625944b56e935dc7e7fcc"; do
+        if [[ -d "$directory" ]]; then du -sh "$directory"; find "$directory" -maxdepth 1 -type f -printf '%f %s\n' | head -6; fi
+      done
       if [[ -d "$APP_ROOT/shared/brouter/segments4" ]]; then
         printf 'Completed road segments: '; find "$APP_ROOT/shared/brouter/segments4" -maxdepth 1 -name '*.rd5' -type f | wc -l
         du -sh "$APP_ROOT/shared/brouter/segments4"
