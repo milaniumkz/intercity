@@ -350,9 +350,9 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
 
   Future<void> _reset() async {
     if (_busy) return;
-    if (_newPassword.text.length < 12 || _newPassword.text != _confirm.text) {
+    if (_newPassword.text.length < 6 || _newPassword.text != _confirm.text) {
       setState(() => _message =
-          'Новый пароль должен быть от 12 символов. Повтор пароля должен совпадать.');
+          'Новый пароль должен быть от 6 символов. Повтор пароля должен совпадать.');
       return;
     }
     setState(() => _busy = true);
@@ -490,7 +490,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                   ],
                                   decoration: const InputDecoration(
                                       labelText:
-                                          'Новый пароль, от 12 символов')),
+                                          'Новый пароль, от 6 символов')),
                               const SizedBox(height: 12),
                               TextField(
                                   controller: _confirm,

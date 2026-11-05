@@ -79,9 +79,10 @@ test('private video enrollment, matching, rejection, manual review and one-use r
    await db.biometricChallenge.updateMany({where:{userId:alice.id},data:{createdAt:new Date(Date.now()-2*3600000)}});
    await db.refreshToken.create({data:{userId:alice.id,token:'local-old-session-'+crypto.randomUUID(),expiresAt:new Date(Date.now()+3600000)}});
    const c=await recover(alice,'127.0.0.4'),r=await service.submit(c.challengeId,c.challengeToken,video());assert.equal(r.status,'VERIFIED');assert.equal(r.resetToken.length,64);
-   const outcomes=await Promise.allSettled([service.resetPassword(r.resetToken,'new-password-first'),service.resetPassword(r.resetToken,'new-password-second')]);assert.equal(outcomes.filter(x=>x.status==='fulfilled').length,1);
+   await assert.rejects(service.resetPassword(r.resetToken,'12345'),/от 6 символов/);
+   const outcomes=await Promise.allSettled([service.resetPassword(r.resetToken,'123456'),service.resetPassword(r.resetToken,'654321')]);assert.equal(outcomes.filter(x=>x.status==='fulfilled').length,1);
    const user=await db.user.findUnique({where:{id:alice.id}});assert.equal(user.authVersion,1);assert.equal(await db.refreshToken.count({where:{userId:alice.id}}),0);await assert.rejects(service.resetPassword(r.resetToken,'another-password-qa'),/не разрешено/);
-   assert(await bcrypt.compare(outcomes[0].status==='fulfilled'?'new-password-first':'new-password-second',user.password));
+   assert(await bcrypt.compare(outcomes[0].status==='fulfilled'?'123456':'654321',user.password));
   });
   await t.test('administrators never enroll or recover through passenger face flow',async()=>{
    assert.equal(await service.needsVerification(admin.id,admin.role),false);const c=await recover(admin);assert.equal((await service.submit(c.challengeId,c.challengeToken,video())).status,'REJECTED');

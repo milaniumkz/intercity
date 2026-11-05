@@ -173,7 +173,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   return {status:c.status,message:c.status==='FAILED'?'Обработка прервана. Запишите новое видео.':c.status==='EXPIRED'?'Срок проверки истёк. Запишите новое видео.':c.status==='REVIEW'?(c.reason||'Не удалось уверенно завершить автоматическую проверку.')+' Можно записать новое видео или дождаться решения администратора.':c.status==='VERIFIED'?'Видеопроверка пройдена.':c.status==='REJECTED'?(c.purpose==='ENROLL'?c.reason||'Видеопроверка не пройдена':identityFailure):undefined};
  }
  async resetPassword(proof:string,password:string){
-  if(!proof||proof.length!==64||!password||password.length<12||Buffer.byteLength(password)>72)throw new BadRequestException('Укажите разрешение проверки и новый пароль от 12 символов, не более 72 байт');
+  if(!proof||proof.length!==64||!password||password.length<6||Buffer.byteLength(password)>72)throw new BadRequestException('Укажите разрешение проверки и новый пароль от 6 символов, не более 72 байт');
   const hashed=await bcrypt.hash(password,12);
   await this.prisma.$transaction(async tx=>{
    const c=await tx.biometricChallenge.findUnique({where:{resetHash:hash(proof)}});

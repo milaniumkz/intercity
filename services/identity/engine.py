@@ -23,8 +23,8 @@ PAD=[(cv2.dnn.readNetFromONNX(str(ROOT/name)),scale) for name,scale in [('2.7_80
 CROPPER=CropImage()
 ACTIONS={'TURN_LEFT','TURN_RIGHT','LOOK_UP','OPEN_MOUTH','BLINK'}
 
-def detect(frame):
- h,w=frame.shape[:2];scale=min(1,640/max(w,h));small=cv2.resize(frame,(round(w*scale),round(h*scale)))
+def detect(frame,max_side=640):
+ h,w=frame.shape[:2];scale=min(1,max_side/max(w,h));small=cv2.resize(frame,(round(w*scale),round(h*scale)))
  DETECTOR.setInputSize((small.shape[1],small.shape[0]));_,faces=DETECTOR.detect(small)
  if faces is None or len(faces)!=1:return None
  face=faces[0].copy();face[:14]/=scale
@@ -85,7 +85,7 @@ def verify(path,actions):
  # Validate decoded timestamps, never trust a missing container duration.
  valid_fps=5<=fps<=65
  first_stamp=None;last_frame_time=0;last_delta=.033;fingerprints=[];last_fingerprint=-1
- poses=[[] for _ in actions];neutral=[];vectors=[];neutral_vectors=[];scores=[];sharpness=[];reference=None;seen=0;missing=0;last=-1;started=time.monotonic()
+ poses=[[] for _ in actions];neutral=[];vectors=[];neutral_vectors=[];scores=[];sharpness=[];reference=None;seen=0;missing=0;last=-1;last_vector=-1;started=time.monotonic()
  try:
   with mp.solutions.face_mesh.FaceMesh(static_image_mode=False,max_num_faces=2,refine_landmarks=False,min_detection_confidence=.7,min_tracking_confidence=.7) as mesh:
    index=0
@@ -110,9 +110,13 @@ def verify(path,actions):
     sample_tick=int(t*30+1e-6)
     if sample_tick<=last:continue
     last=sample_tick;seen+=1
-    face=detect(frame)
+    face=detect(frame,512)
     if face is None or min(face[2:4])<90:missing+=1;continue
-    result=mesh.process(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB))
+    # Landmark coordinates are normalized: keep their input bounded while
+    # retaining full-resolution pixels for identity, PAD and stored reference.
+    mh,mw=frame.shape[:2];ms=min(1,640/max(mw,mh))
+    motion_frame=cv2.resize(frame,(round(mw*ms),round(mh*ms))) if ms<1 else frame
+    result=mesh.process(cv2.cvtColor(motion_frame,cv2.COLOR_BGR2RGB))
     if not result.multi_face_landmarks:missing+=1;continue
     if len(result.multi_face_landmarks)!=1:return reject('В кадре должно быть только одно лицо')
     p=pose(result.multi_face_landmarks[0].landmark)
@@ -121,7 +125,8 @@ def verify(path,actions):
      for phase in range(len(actions)):
       if 2+phase*6-.20<=t<=2+phase*6+4.65:poses[phase].append(p)
     neutral_phase=t<2 or (t>=2 and (t-2)%6>=4)
-    if seen%(3 if valid_fps and fps<12 else 7)==0:
+    if t-last_vector>=.35:
+     last_vector=t
      v=vector(frame,face);vectors.append(v)
      if neutral_phase and abs(p['yaw'])<.18:neutral_vectors.append(v)
      if len(vectors)>1 and float(v@vectors[0])<.45:return reject('Лицо изменилось во время записи. Повторите проверку')
