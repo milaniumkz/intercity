@@ -179,6 +179,14 @@ SQLTARIFFAUDIT
       docker logs --since 2h --tail 5000 intercity-backend 2>&1 | grep -E 'Firebase push failed: HTTP [0-9]{3}|Invalid Firebase token removed' | tail -n 30 || true
       exit 0
     fi
+    if [[ "$TARGET" == "identity-oleg-diagnostics" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSOLEGAUDIT'
+const {PrismaClient}=require('@prisma/client');
+(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');const users=await tx.user.findMany({where:{OR:[{name:{contains:'Олег',mode:'insensitive'}},{name:{contains:'Oleg',mode:'insensitive'}}]},select:{id:true,role:true,blockedAt:true,createdAt:true,biometricProfile:{select:{status:true,enrolledAt:true}},driverProfile:{select:{id:true}}},take:10});const report=[];for(const u of users){report.push({account:u.id.slice(0,8),role:u.role,blocked:!!u.blockedAt,createdAt:u.createdAt,driver:!!u.driverProfile,profile:u.biometricProfile,attempts:await tx.biometricChallenge.findMany({where:{userId:u.id},orderBy:{createdAt:'desc'},take:15,select:{purpose:true,status:true,reason:true,createdAt:true,claimedAt:true,attempts:true}})});}console.log(JSON.stringify({matchedAccounts:users.length,accounts:report}));},{timeout:30000});}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSOLEGAUDIT
+      exit 0
+    fi
     if [[ "$TARGET" == "identity-recovery-diagnostics" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-backend node <<'JSRECOVERY'
