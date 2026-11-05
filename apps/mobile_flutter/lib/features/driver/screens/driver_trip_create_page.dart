@@ -457,6 +457,14 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
           final id = '${request['id']}';
           if (['DRIVER_ASSIGNED', 'ACCEPTED'].contains(request['status']) &&
               _acceptedNotices.add(id)) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content:
+                    const Text('Пассажир принял вашу цену. Заказ подтверждён.'),
+                duration: const Duration(seconds: 8),
+                action: SnackBarAction(
+                    label: 'Открыть',
+                    onPressed: () =>
+                        context.go('/driver/home?intercityRequestId=$id'))));
             unawaited(TripStatusSound.playOnce(id, 'INTERCITY_ACCEPTED'));
             unawaited(PushNotificationsService.instance
                 .showOrderStatusNotification(

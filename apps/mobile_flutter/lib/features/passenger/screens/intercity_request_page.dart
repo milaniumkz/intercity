@@ -134,6 +134,11 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
       if (status != _lastNotifiedStatus && notices.containsKey(status)) {
         unawaited(TripStatusSound.playOnce(widget.requestId, status));
         final notice = notices[status]!;
+        if (status == 'DRIVER_ASSIGNED') {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Заказ подтверждён. Ваше место забронировано.'),
+              duration: Duration(seconds: 6)));
+        }
         unawaited(PushNotificationsService.instance.showOrderStatusNotification(
           orderId: widget.requestId,
           title: notice.$1,
@@ -404,16 +409,12 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
       _actionError = null;
     });
     try {
-      final messenger = ScaffoldMessenger.of(context);
       unawaited(TripStatusSound.prepare());
       unawaited(PushNotificationsService.instance.enableDriverNotifications());
       await _api.post('/intercity/offers/$offerId/accept');
       if (!mounted) return;
       await _loadRequest();
       if (!mounted) return;
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Предложение водителя принято')),
-      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _actionError = errorMessageRu(e));
