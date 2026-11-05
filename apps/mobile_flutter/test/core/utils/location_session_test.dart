@@ -6,6 +6,31 @@ import 'package:intercity_mobile/core/utils/location_session.dart';
 import 'package:intercity_mobile/core/utils/browser_location_model.dart';
 
 void main() {
+  test('unexpected device failure does not suppress all following attempts',
+      () async {
+    final session = LocationSession();
+    await expectLater(
+        session.locate(() async => throw StateError('device unavailable')),
+        throwsStateError);
+    final fix = await session.locate(() async =>
+        const BrowserLocation(latitude: 49.9, longitude: 82.6, accuracy: 10));
+    expect(fix?.latitude, 49.9);
+  });
+
+  test('previous browser denial expires when permission can have changed',
+      () async {
+    var now = DateTime(2026, 11, 5);
+    final session = LocationSession(clock: () => now);
+    await expectLater(
+        session.locate(() async => throw const BrowserLocationException(
+            BrowserLocationFailure.permissionDenied)),
+        throwsA(isA<BrowserLocationException>()));
+    now = now.add(const Duration(seconds: 31));
+    final fix = await session.locate(() async =>
+        const BrowserLocation(latitude: 49.9, longitude: 82.6, accuracy: 10));
+    expect(fix?.latitude, 49.9);
+  });
+
   test('concurrent city and pickup lookups share one reverse request',
       () async {
     final session = LocationSession();

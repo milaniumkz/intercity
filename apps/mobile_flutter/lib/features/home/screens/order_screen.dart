@@ -1,4 +1,5 @@
 import '../../../core/widgets/passenger_map_tiles.dart';
+import '../../../core/services/technical_telemetry.dart';
 import '../../driver/widgets/route_departure_field.dart';
 import '../../../core/services/trip_status_sound.dart';
 import '../../../core/services/push_notifications_service.dart';
@@ -405,6 +406,7 @@ class OrderScreen extends StatefulWidget {
 }
 
 class _OrderScreenState extends State<OrderScreen> {
+  AppLifecycleListener? _locationLifecycle;
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   final TextEditingController _fromController = TextEditingController();
   final TextEditingController _toController = TextEditingController();
@@ -655,6 +657,14 @@ class _OrderScreenState extends State<OrderScreen> {
   @override
   void initState() {
     super.initState();
+    _locationLifecycle = AppLifecycleListener(onResume: () {
+      if (mounted &&
+          widget.autoLocateOnStart &&
+          _fromLocation == null &&
+          !_locating) {
+        unawaited(_initMapCenterByLocation(forceCurrentLocation: true));
+      }
+    });
     _cityPreferenceReady = _loadSearchCityPreference();
     _loadCityOptions();
     _loadPassengerRuntimeSettings();
@@ -1435,6 +1445,7 @@ class _OrderScreenState extends State<OrderScreen> {
 
   @override
   void dispose() {
+    _locationLifecycle?.dispose();
     _fromSearchDebounce?.cancel();
     _toSearchDebounce?.cancel();
     _boardDebounce?.cancel();
@@ -12137,6 +12148,7 @@ class _OrderScreenState extends State<OrderScreen> {
     await _cityPreferenceReady;
     if (!mounted || _locating) return;
     final selectedAtStart = _selectedCityPoint;
+    bool positionResolved = false;
     if (_selectedCityPoint != null &&
         !forceCurrentLocation &&
         !_needsAutomaticCityPickup) {
@@ -12183,6 +12195,7 @@ class _OrderScreenState extends State<OrderScreen> {
       final point = LatLng(location.latitude, location.longitude);
       final accuracy = location.accuracy;
       final isPrecise = isReliableCurrentLocation(location);
+      positionResolved = isPrecise;
       if (isPrecise) _locationSession.rememberFix(location);
       if (!mounted ||
           (_selectedCityPoint != selectedAtStart &&
@@ -12254,15 +12267,24 @@ class _OrderScreenState extends State<OrderScreen> {
         _scheduleAutoBoard();
       }
     } catch (e) {
+      unawaited(TechnicalTelemetry.mapEvent(
+          'location.failed',
+          positionResolved
+              ? 'address_lookup'
+              : e is BrowserLocationException
+                  ? e.reason.name
+                  : 'unavailable'));
       if (mounted) {
         final fallback = _currentCityPointFromOptions();
         setState(() {
           if (fallback != null) {
             _mapCenter = fallback;
           }
-          _statusText = e is BrowserLocationException
-              ? e.userMessage
-              : 'Не удалось определить GPS. Введите адрес или выберите точку на карте.';
+          _statusText = positionResolved
+              ? 'Местоположение получено. Не удалось уточнить адрес — выберите точку на карте или введите адрес.'
+              : e is BrowserLocationException
+                  ? e.userMessage
+                  : 'Не удалось получить местоположение. Введите адрес или выберите точку на карте.';
         });
       }
     } finally {

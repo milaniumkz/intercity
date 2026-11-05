@@ -5,7 +5,8 @@ export function technicalMiddleware(tech: TechnicalService) {
         if (
             (!String(req.url).startsWith('/api/') &&
                 !String(req.url).startsWith('/uploads/')) ||
-            String(req.url).startsWith('/api/technical/panel')
+            String(req.url).startsWith('/api/technical/panel') ||
+            /^\/api\/geo\/tiles\/\d+\/\d+\/\d+\.png(?:\?|$)/.test(String(req.url))
         )
             return next();
         const identity = requestIdentity(req),

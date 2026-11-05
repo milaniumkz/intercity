@@ -228,7 +228,7 @@ void main() {
                   latitude: 49.902631, longitude: 82.609936, accuracy: 10);
             })));
     await tester.pumpAndSettle();
-    final message = find.textContaining('GPS отключён');
+    final message = find.textContaining('Браузер не разрешил доступ');
     await tester.ensureVisible(message);
     await tester.pumpAndSettle();
     expect(message, findsOneWidget);

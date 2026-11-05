@@ -1,12 +1,22 @@
-import { Body, Controller, Get, Post, Query, StreamableFile } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Param, Res, StreamableFile } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { KazakhstanAddressIndex } from './kz-address-index';
+import {MapTilesService} from './map-tiles';
 import { GeoService } from './geo.service';
 
 @ApiTags('geo')
 @Controller('geo')
 export class GeoController {
-    constructor(private geoService: GeoService, private kzAddresses: KazakhstanAddressIndex) { }
+    constructor(private geoService: GeoService, private kzAddresses: KazakhstanAddressIndex, private tiles:MapTilesService) { }
+
+    @Get('tiles/:z/:x/:y.png')
+    async mapTile(@Param('z') z:string,@Param('x') x:string,@Param('y') y:string,@Res() res:any) {
+        const tile=await this.tiles.get(z,x,y);
+        res.setHeader('Content-Type','image/png');
+        res.setHeader('Cache-Control',/no-cache|no-store/i.test(tile.cacheControl||'')?tile.cacheControl:`public, max-age=${Math.max(0,Math.floor((tile.expires-Date.now())/1000))}${tile.staleAllowed===false?', must-revalidate':', stale-if-error=86400'}`);
+        res.setHeader('X-Content-Type-Options','nosniff');
+        res.send(tile.body);
+    }
 
     @Get('data/kz/info')
     dataInfo() { return this.kzAddresses.info(); }

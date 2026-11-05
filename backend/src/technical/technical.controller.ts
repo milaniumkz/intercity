@@ -880,7 +880,7 @@ export class TechnicalClientController {
     constructor(private tech: TechnicalService) {}
     @Post('event') async event(@Req() req: any, @Body() b: any) {
         if (
-            !['form.open', 'form.abandon', 'retry', 'screen.open'].includes(
+            !['form.open', 'form.abandon', 'retry', 'screen.open', 'map.load_failed', 'location.failed'].includes(
                 b.action,
             ) ||
             !safeId(b.objectId ?? 'unknown')
@@ -905,7 +905,7 @@ export class TechnicalClientController {
                 stage: 'FINISH',
                 result: 'REPORTED',
                 message:
-                    'Событие сообщено устройством; не подтверждает выполнение серверной операции',
+                    b.action === 'map.load_failed' ? 'Устройство не загрузило видимый участок карты. Источник: '+(b.objectId === 'server' ? 'серверный кэш' : 'прямой доступ к OpenStreetMap') : b.action === 'location.failed' ? 'Устройство не получило геопозицию: '+({permissionDenied:'браузер запретил доступ',unavailable:'позиция недоступна',timeout:'истекло время ожидания',address_lookup:'позиция получена, ошибка уточнения адреса'}[b.objectId]||'причина не определена') : 'Событие сообщено устройством; не подтверждает выполнение серверной операции',
             },
         });
     }

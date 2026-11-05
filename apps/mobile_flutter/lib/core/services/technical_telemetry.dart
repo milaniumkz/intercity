@@ -2,6 +2,23 @@ import '../api/api_client.dart';
 
 /// Optional device-reported navigation events. Business results come from the server.
 class TechnicalTelemetry {
+  static final Map<String, DateTime> _mapEvents = {};
+  static Future<void> mapEvent(String action, String reason) async {
+    final key = '$action:$reason';
+    final last = _mapEvents[key];
+    if (last != null &&
+        DateTime.now().difference(last) < const Duration(minutes: 1)) {
+      return;
+    }
+    _mapEvents[key] = DateTime.now();
+    try {
+      final api = ApiClient();
+      if ((await api.getAccessToken() ?? '').isEmpty) return;
+      await api.post('/technical-client/event',
+          data: {'action': action, 'objectId': reason});
+    } catch (_) {}
+  }
+
   static Future<void> screenOpened(String path) async {
     try {
       final api = ApiClient();

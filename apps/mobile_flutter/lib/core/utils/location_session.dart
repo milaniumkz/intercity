@@ -5,6 +5,10 @@ import 'browser_location_error.dart';
 
 // Confirmed trip context survives screen changes, without treating it as GPS.
 class LocationSession {
+  LocationSession({DateTime Function()? clock})
+      : _clock = clock ?? DateTime.now;
+  final DateTime Function() _clock;
+  DateTime? _deniedAt;
   BrowserLocation? _fix;
   Future<BrowserLocation?>? _pendingFix;
   bool _automaticAttempted = false;
@@ -18,7 +22,14 @@ class LocationSession {
     final cached = freshFix;
     if (!retry && cached != null) return cached;
     if (_pendingFix != null) return _pendingFix;
-    if (!retry && _permissionError != null) throw _permissionError!;
+    if (!retry && _permissionError != null) {
+      if (_deniedAt != null &&
+          _clock().difference(_deniedAt!) < const Duration(seconds: 30)) {
+        throw _permissionError!;
+      }
+      _permissionError = null;
+      _automaticAttempted = false;
+    }
     if (!retry && _automaticAttempted) return null;
     if (retry) _permissionError = null;
     _automaticAttempted = true;
@@ -31,9 +42,13 @@ class LocationSession {
     } on BrowserLocationException catch (error) {
       if (error.reason == BrowserLocationFailure.permissionDenied) {
         _permissionError = error;
+        _deniedAt = _clock();
       } else {
         _automaticAttempted = false;
       }
+      rethrow;
+    } catch (_) {
+      _automaticAttempted = false;
       rethrow;
     } finally {
       if (identical(_pendingFix, request)) _pendingFix = null;
@@ -94,6 +109,7 @@ class LocationSession {
   }
 
   void clear() {
+    _deniedAt = null;
     _fix = null;
     _automaticAttempted = false;
     _permissionError = null;
