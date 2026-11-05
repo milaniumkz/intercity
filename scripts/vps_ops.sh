@@ -130,6 +130,13 @@ JSLIVEMAP
       docker logs --since 90m --tail 3000 intercity-backend 2>&1 | grep -Ei 'MapTiles|tile|Geocoder.*network|ERR|warn' | tail -30 || true
       exit 0
     fi
+    if [[ "$TARGET" == "address-provider-probe" ]]; then
+      docker exec -i intercity-backend node <<'JSPHOTONPROBE'
+(async()=>{const url='https://photon.komoot.io/api/?q=Lenina%2010%20Omsk&lat=54.989&lon=73.368&lang=ru&limit=2';const t=Date.now();try{const r=await fetch(url,{headers:{'User-Agent':'InterCity/1.0 (+https://intercity.89-207-255-27.sslip.io)'},signal:AbortSignal.timeout(15000)});const text=await r.text();console.log(JSON.stringify({status:r.status,seconds:(Date.now()-t)/1000,bytes:text.length,body:text.slice(0,200)}));}catch(e){console.log(JSON.stringify({seconds:(Date.now()-t)/1000,error:e.name,code:e.cause?.code,message:e.cause?.message}));}})();
+JSPHOTONPROBE
+      docker logs --since 5m --tail 500 intercity-backend 2>&1 | grep -E 'Geocoder|GeoService' | tail -8 || true
+      exit 0
+    fi
     if [[ "$TARGET" == "routing-engine-probe" ]]; then
       docker inspect intercity-routing --format 'OOM={{.State.OOMKilled}} restarts={{.RestartCount}}'
       docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}'
