@@ -11,6 +11,32 @@ compose() {
 }
 
 case "$ACTION" in
+  tune-routing-health)
+    [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || exit 1
+    test "$(cat "$APP_ROOT/current_commit")" = "$TARGET"
+    test "$TARGET" = 27aef034d8c78ce626b625944b56e935dc7e7fcc
+    backup="$APP_ROOT/backups/$(date -u +%Y%m%d-%H%M%S)-routing-health"
+    mkdir -p "$backup"; chmod 700 "$backup"
+    docker inspect intercity-routing --format '{{json .Config.Healthcheck}}' > "$backup/previous-health.json"
+    cat > /tmp/intercity-routing-health.yml <<'YAMLROUTEHEALTH'
+services:
+  routing:
+    healthcheck:
+      test: ["CMD", "bash", "-c", "grep -q ':4571 .* 0A ' /proc/net/tcp /proc/net/tcp6"]
+YAMLROUTEHEALTH
+    project="$(docker inspect intercity-routing --format '{{index .Config.Labels "com.docker.compose.project"}}')"
+    cd "$APP_ROOT/current/infra/vps"
+    docker compose -p "$project" -f docker-compose.prod.yml -f /tmp/intercity-routing-health.yml up -d --no-deps --no-build routing
+    for attempt in $(seq 1 15); do
+      health="$(docker inspect intercity-routing --format '{{.State.Health.Status}}')"
+      if [[ "$health" == healthy ]]; then echo 'Private router health check now observes the listening port without opening routing requests'; exit 0; fi
+      sleep 2
+    done
+    docker compose -p "$project" -f docker-compose.prod.yml up -d --no-deps --no-build routing
+    echo 'Router health tuning failed; previous health configuration restored' >&2
+    exit 1
+    ;;
+
   reset-customer-accounts)
     [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || { echo 'Exact expected release SHA required' >&2; exit 1; }
     test "$(cat "$APP_ROOT/current_commit")" = "$TARGET"

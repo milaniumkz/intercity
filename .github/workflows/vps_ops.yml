@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - status
+          - tune-routing-health
           - reset-customer-accounts
           - enable-kz-tax-accounting
           - enable-demo-topups
