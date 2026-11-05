@@ -18,7 +18,7 @@ FILES = {
     'ru_RU-irina-medium.onnx.json': 'c2ec28bb38e2b59e93b959b3e40348c1afebbd272f30fed5d41205d08e98a9d7',
 }
 TEXTS = {
-    'prepare': 'Расположите лицо в овале. Свет должен падать на лицо. Держите телефон неподвижно.',
+    'prepare': 'Поместите лицо в овал. Свет должен падать на лицо. Держите телефон неподвижно.',
     'front': 'Смотрите прямо.',
     'TURN_LEFT': 'Слегка поверните голову налево.',
     'TURN_RIGHT': 'Слегка поверните голову направо.',
@@ -28,11 +28,31 @@ TEXTS = {
     'done': 'Готово. Проверяем запись.',
     'retry': 'Проверка не пройдена. Попробуйте ещё раз.',
     'ready': 'Смотрите прямо в камеру.',
+    'guide_position': 'Поместите лицо в овал.',
+    'guide_closer': 'Поднесите телефон немного ближе.',
+    'error_multiple': 'В кадре должно быть только одно лицо. Уберите лица на заднем плане и повторите запись.',
+    'error_frames': 'Камера записала мало кадров. Закройте другие приложения и повторите запись.',
+    'error_front': 'Смотрите прямо в камеру. После каждого движения возвращайтесь в исходное положение и повторите запись.',
+    'error_position': 'Лицо пропадает из кадра. Поместите лицо в овал, направьте свет на лицо и повторите запись.',
+    'error_blur': 'Изображение размыто. Протрите камеру, держите телефон неподвижно и повторите запись.',
+    'error_blink': 'Моргание не распознано. Запишите новое видео. По команде один раз закройте и откройте глаза.',
+    'error_chin': 'Движение не распознано. Запишите новое видео. По команде слегка поднимите подбородок.',
+    'error_mouth': 'Движение не распознано. Запишите новое видео. По команде откройте рот и снова закройте.',
+    'error_motion': 'Движение не распознано. Запишите новое видео и выполняйте команды после подсказки.',
+    'error_light': 'Не удалось уверенно проверить живое лицо. Уберите блики, направьте свет на лицо и повторите запись.',
+    'error_camera_missing': 'Камера не найдена. Откройте приложение на устройстве с камерой.',
+    'error_camera': 'Не удалось открыть камеру. Разрешите доступ к камере в настройках и попробуйте ещё раз.',
+    'error_replay': 'Эта запись уже использовалась. Запишите новое видео с камеры.',
+    'error_match': 'Не удалось подтвердить личность. Повторите запись при ровном освещении.',
+    'error_network': 'Нет соединения с сервером. Проверьте интернет и повторите попытку.',
+    'error_wait': 'Слишком много попыток. Повторите проверку позже.',
+
 }
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model-dir', required=True, type=Path)
+    parser.add_argument('--only', nargs='+', choices=TEXTS)
     args = parser.parse_args()
     args.model_dir.mkdir(parents=True, exist_ok=True)
     for name, expected in FILES.items():
@@ -47,8 +67,11 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     voice = PiperVoice.load(args.model_dir / 'ru_RU-irina-medium.onnx')
     config = SynthesisConfig(length_scale=.78, noise_scale=.55, noise_w_scale=.6)
-    clips = {}
+    manifest = root / 'docs/identity-voice.json'
+    clips = json.loads(manifest.read_text())['clips'] if args.only and manifest.exists() else {}
     for cue, text in TEXTS.items():
+        if args.only and cue not in args.only:
+            continue
         path = out / (cue + '.wav')
         with wave.open(str(path), 'wb') as wav:
             voice.synthesize_wav(text, wav, config)

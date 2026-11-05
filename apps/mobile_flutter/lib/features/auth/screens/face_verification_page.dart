@@ -1,3 +1,6 @@
+import '../../../core/services/identity_face_monitor.dart';
+import '../../../core/services/identity_face_guide_model.dart';
+import '../../../core/services/identity_error_voice.dart';
 import '../../../core/services/identity_voice.dart';
 import 'identity_camera_frame.dart';
 import '../../../core/services/push_notifications_service.dart';
@@ -42,6 +45,10 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       _confirm = TextEditingController();
   CameraController? _camera;
   final _voice = IdentityVoice();
+  final _faceMonitor = IdentityFaceMonitor();
+  IdentityFaceSample _faceSample = IdentityFaceSample.unavailable;
+  String _lastErrorVoice = '';
+  DateTime _lastGuideVoice = DateTime.fromMillisecondsSinceEpoch(0);
   String _lastCue = '';
   int _countdown = 0;
   Timer? _timer, _poll;
@@ -82,7 +89,10 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
         setState(() => _state = 'READY');
       }
     } catch (e) {
-      if (mounted) setState(() => _message = errorMessageRu(e));
+      if (mounted) {
+        setState(() => _message = errorMessageRu(e));
+        _announceError(_message);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -94,6 +104,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
     _timer?.cancel();
     _poll?.cancel();
     _voice.dispose();
+    unawaited(_faceMonitor.dispose());
     unawaited(_camera?.dispose());
     _newPassword.dispose();
     _confirm.dispose();
@@ -108,6 +119,37 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       _cancelled = true;
       _timer?.cancel();
       unawaited(_stop(discard: true));
+    }
+  }
+
+  void _announceError(String message) {
+    if (message.isEmpty || message == _lastErrorVoice) return;
+    _lastErrorVoice = message;
+    _voice.play(identityErrorCue(message));
+  }
+
+  void _updateFaceGuide(IdentityFaceSample sample) {
+    if (!mounted || _camera == null) return;
+    setState(() => _faceSample = sample);
+    final position = facePosition(sample);
+    final neutral = !_recording || _seconds < 2 || (_seconds - 2) % 6 >= 4;
+    if (!neutral ||
+        _busy ||
+        _countdown > 0 ||
+        DateTime.now().difference(_lastGuideVoice).inSeconds < 7) {
+      return;
+    }
+    final cue = switch (position) {
+      IdentityFacePosition.missing ||
+      IdentityFacePosition.outside =>
+        'guide_position',
+      IdentityFacePosition.small => 'guide_closer',
+      IdentityFacePosition.multiple => 'error_multiple',
+      _ => null,
+    };
+    if (cue != null) {
+      _lastGuideVoice = DateTime.now();
+      _voice.play(cue);
     }
   }
 
@@ -126,6 +168,9 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
 
   Future<void> _start() async {
     if (!_consent || _busy) return;
+    _lastErrorVoice = '';
+    _lastGuideVoice = DateTime.now();
+    _faceSample = IdentityFaceSample.unavailable;
     _voice.play('prepare');
     FocusScope.of(context).unfocus();
     setState(() {
@@ -151,9 +196,13 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
           orElse: () => cameras.first);
       final previous = _camera;
       _camera = null;
+      await _faceMonitor.stop();
       await previous?.dispose();
       final camera = CameraController(device, ResolutionPreset.high,
-          enableAudio: false, fps: 30, videoBitrate: 1500000);
+          enableAudio: false,
+          fps: 30,
+          videoBitrate: 1500000,
+          imageFormatGroup: identityCameraFormat);
       _camera = camera;
       await camera.initialize();
       if (!mounted) {
@@ -161,6 +210,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
         return;
       }
       setState(() => _busy = false);
+      unawaited(_faceMonitor.start(camera, _updateFaceGuide));
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -171,6 +221,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                   : 'Не удалось открыть камеру. Разрешите доступ к камере в настройках браузера или приложения и повторите.')
               : errorMessageRu(error);
         });
+        _announceError(_message);
       }
     }
   }
@@ -200,7 +251,20 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       }
       if (!mounted || _camera != camera) return;
       setState(() => _countdown = 0);
-      await camera.startVideoRecording();
+      await _faceMonitor.beforeRecording(camera);
+      if (_faceMonitor.usesCameraStream) {
+        try {
+          await camera.startVideoRecording(onAvailable: _faceMonitor.process);
+        } on CameraException {
+          // Some devices cannot stream and record concurrently. Recording
+          // remains available; never simulate a successful position check.
+          setState(() => _faceSample = IdentityFaceSample.unavailable);
+          if (!camera.value.isRecordingVideo)
+            await camera.startVideoRecording();
+        }
+      } else {
+        await camera.startVideoRecording();
+      }
       if (!mounted) {
         await camera.dispose();
         return;
@@ -237,6 +301,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
           _busy = false;
           _message = errorMessageRu(e);
         });
+        _announceError(_message);
       }
     }
   }
@@ -252,6 +317,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
     });
     try {
       final camera = _camera!;
+      await _faceMonitor.stop();
       final file = await camera.stopVideoRecording();
       await camera.dispose();
       _camera = null;
@@ -295,6 +361,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
         });
       } else if (mounted) {
         setState(() => _message = errorMessageRu(error));
+        _announceError(_message);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -308,7 +375,9 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       _message = '${result['message'] ?? ''}';
       _resetToken = result['resetToken']?.toString();
     });
-    if (_state == 'REJECTED' || _state == 'FAILED') _voice.play('retry');
+    if (_state == 'REJECTED' || _state == 'FAILED' || _state == 'REVIEW') {
+      _announceError(_message);
+    }
     if (_state == 'VERIFIED' && !_recovery) {
       IdentitySession.required.value = false;
       unawaited(PushNotificationsService.instance.syncTokenIfAuthorized());
@@ -336,7 +405,10 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       });
       if (mounted) _result(Map<String, dynamic>.from(r.data as Map));
     } catch (error) {
-      if (mounted) setState(() => _message = errorMessageRu(error));
+      if (mounted) {
+        setState(() => _message = errorMessageRu(error));
+        _announceError(_message);
+      }
     }
   }
 
@@ -357,7 +429,10 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
           content: Text('Пароль изменён. Войдите с новым паролем.')));
       context.go('/login');
     } catch (error) {
-      if (mounted) setState(() => _message = errorMessageRu(error));
+      if (mounted) {
+        setState(() => _message = errorMessageRu(error));
+        _announceError(_message);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -427,6 +502,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                             if (_recording && _camera != null) ...[
                               IdentityCameraFrame(
                                   camera: _camera!,
+                                  sample: _faceSample,
                                   recording: true,
                                   instruction: _instruction),
                               const SizedBox(height: 16),
@@ -449,13 +525,14 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                 _camera!.value.isInitialized) ...[
                               IdentityCameraFrame(
                                   camera: _camera!,
+                                  sample: _faceSample,
                                   recording: false,
                                   instruction: _countdown > 0
                                       ? 'Смотрите прямо • $_countdown'
-                                      : 'Расположите лицо в овале'),
+                                      : 'Поместите лицо в овал'),
                               const SizedBox(height: 16),
                               Text(
-                                  'Расположите лицо в овале. Свет должен падать на лицо, а не в камеру. Выполняйте голосовые подсказки. После нажатия начнётся запись на $_recordingSeconds секунд. Выполните ${(_challenge?['actions'] as List?)?.length ?? (_recovery ? 3 : 2)} коротких задания.'),
+                                  'Поместите лицо в овал. Свет должен падать на лицо, а не в камеру. Выполняйте голосовые подсказки. После нажатия начнётся запись на $_recordingSeconds секунд. Выполните ${(_challenge?['actions'] as List?)?.length ?? (_recovery ? 3 : 2)} коротких задания.'),
                               const SizedBox(height: 16),
                               FilledButton.icon(
                                   onPressed: _busy ? null : _record,
@@ -467,6 +544,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                       : () async {
                                           final camera = _camera;
                                           _camera = null;
+                                          await _faceMonitor.stop();
                                           await camera?.dispose();
                                           if (mounted) setState(() {});
                                         },

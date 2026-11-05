@@ -1,4 +1,6 @@
 import unittest,tempfile
+from unittest.mock import patch
+from types import SimpleNamespace
 from pathlib import Path
 import numpy as np,cv2
 import engine
@@ -51,4 +53,24 @@ class IdentityEngineTests(unittest.TestCase):
  def test_pad_logits_finite_and_correct_shape(self):
   for model,_ in engine.PAD:
    model.setInput(np.zeros((1,3,80,80),dtype=np.float32));prediction=model.forward();self.assertEqual(prediction.size,3);self.assertTrue(np.isfinite(prediction).all())
+
+ def test_15fps_camera_collects_enough_neutral_pad_samples_for_live_tasks(self):
+  # Actual 14-second video and timestamps; mock the vision models only.
+  # The former every-ninth-frame PAD schedule yielded just 9 samples at 15fps.
+  frame=np.random.default_rng(42).integers(0,256,(480,640,3),dtype=np.uint8)
+  samples=[]
+  for n in range(210):
+   samples.append({'yaw':0,'pitch':.4,'eye':.1 if n in (130,131) else .25,'mouth':.30 if 35<=n<=65 else .03})
+  face=np.array([120,120,180,180]+[0]*11,dtype=np.float32)
+  result=SimpleNamespace(multi_face_landmarks=[SimpleNamespace(landmark=[])])
+  mesh=unittest.mock.MagicMock();mesh.__enter__.return_value.process.return_value=result
+  with tempfile.TemporaryDirectory() as root:
+   path=Path(root)/'15fps.mp4';writer=cv2.VideoWriter(str(path),cv2.VideoWriter_fourcc(*'mp4v'),15,(640,480))
+   for _ in range(210):writer.write(frame)
+   writer.release()
+   with patch.object(engine,'detect',return_value=face),patch.object(engine,'pose',side_effect=samples),patch.object(engine,'vector',return_value=np.ones(128)/np.sqrt(128)),patch.object(engine,'pad',return_value=[1.,1.]) as pad,patch.object(engine.mp.solutions.face_mesh,'FaceMesh',return_value=mesh):
+    checked=engine.verify(path,['OPEN_MOUTH','BLINK'])
+   self.assertEqual(checked['verdict'],'PASS',checked.get('reason'))
+   self.assertGreaterEqual(pad.call_count,10)
+
 if __name__=='__main__':unittest.main()

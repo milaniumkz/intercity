@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+import '../../../core/services/identity_face_guide_model.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
@@ -5,9 +7,11 @@ class IdentityCameraFrame extends StatelessWidget {
   const IdentityCameraFrame(
       {super.key,
       required this.camera,
+      this.sample = IdentityFaceSample.unavailable,
       required this.recording,
       required this.instruction});
   final CameraController camera;
+  final IdentityFaceSample sample;
   final bool recording;
   final String instruction;
   @override
@@ -17,8 +21,14 @@ class IdentityCameraFrame extends StatelessWidget {
           borderRadius: BorderRadius.circular(24),
           child: Stack(fit: StackFit.expand, children: [
             CameraPreview(camera),
-            const IgnorePointer(
-                child: CustomPaint(painter: _FaceGuidePainter())),
+            IgnorePointer(
+                child: CustomPaint(
+                    painter: _FaceGuidePainter(
+                        facePosition(sample) == IdentityFacePosition.centered
+                            ? Colors.greenAccent
+                            : sample.available
+                                ? Colors.redAccent
+                                : Colors.white))),
             Positioned(
                 top: 12,
                 left: 12,
@@ -41,9 +51,7 @@ class IdentityCameraFrame extends StatelessWidget {
                 left: 12,
                 right: 12,
                 child: Text(
-                  recording
-                      ? 'Выполняйте подсказки • телефон неподвижно'
-                      : 'Лицо в овале • свет перед вами',
+                  facePositionText(facePosition(sample)),
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                       color: Colors.white, backgroundColor: Colors.black87),
@@ -53,14 +61,17 @@ class IdentityCameraFrame extends StatelessWidget {
       );
 }
 
+Rect identityFaceOval(Size size) => Rect.fromCenter(
+    center: Offset(size.width / 2, size.height * .54),
+    width: math.min(size.width * .62, size.height * .46),
+    height: size.height * .70);
+
 class _FaceGuidePainter extends CustomPainter {
-  const _FaceGuidePainter();
+  const _FaceGuidePainter(this.color);
+  final Color color;
   @override
   void paint(Canvas canvas, Size size) {
-    final oval = Rect.fromCenter(
-        center: Offset(size.width / 2, size.height * .54),
-        width: size.width * .62,
-        height: size.height * .70);
+    final oval = identityFaceOval(size);
     final mask = Path()
       ..fillType = PathFillType.evenOdd
       ..addRect(Offset.zero & size)
@@ -69,11 +80,12 @@ class _FaceGuidePainter extends CustomPainter {
     canvas.drawOval(
         oval,
         Paint()
-          ..color = Colors.white
+          ..color = color
           ..style = PaintingStyle.stroke
           ..strokeWidth = 3);
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _FaceGuidePainter oldDelegate) =>
+      oldDelegate.color != color;
 }

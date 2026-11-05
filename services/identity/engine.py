@@ -85,7 +85,7 @@ def verify(path,actions):
  # Validate decoded timestamps, never trust a missing container duration.
  valid_fps=5<=fps<=65
  first_stamp=None;last_frame_time=0;last_delta=.033;fingerprints=[];last_fingerprint=-1
- poses=[[] for _ in actions];neutral=[];vectors=[];neutral_vectors=[];scores=[];sharpness=[];reference=None;seen=0;missing=0;last=-1;last_vector=-1;started=time.monotonic()
+ poses=[[] for _ in actions];neutral=[];vectors=[];neutral_vectors=[];scores=[];sharpness=[];reference=None;seen=0;missing=0;last=-1;last_vector=-1;last_pad=-1;started=time.monotonic()
  try:
   with mp.solutions.face_mesh.FaceMesh(static_image_mode=False,max_num_faces=2,refine_landmarks=False,min_detection_confidence=.7,min_tracking_confidence=.7) as mesh:
    index=0
@@ -133,7 +133,8 @@ def verify(path,actions):
     # PAD models are trained on frontal faces; head-turn frames must not
     # be mistaken for a photo attack. All active tasks are still mandatory.
     neutral_phase=t<2 or (t>=2 and (t-2)%6>=4)
-    if seen%(2 if valid_fps and fps<12 else 9)==0 and neutral_phase and abs(p['yaw'])<.18:
+    if t-last_pad>=.30 and neutral_phase and abs(p['yaw'])<.18:
+     last_pad=t
      scores.append(pad(frame,face))
      x,y,w,h=map(int,face[:4]);crop=frame[max(0,y):max(0,y)+h,max(0,x):max(0,x)+w]
      if crop.size:sharpness.append(float(cv2.Laplacian(cv2.cvtColor(crop,cv2.COLOR_BGR2GRAY),cv2.CV_64F).var()))
@@ -145,7 +146,11 @@ def verify(path,actions):
  finally:capture.release()
  duration=last_frame_time+(1/fps if valid_fps else max(.01,min(.2,last_delta)))
  if not expected_duration-1<=duration<=expected_duration+4:return reject('Запишите полное видео с выполнением всех заданий')
- if seen<max(45,int(expected_duration*4.5)) or missing>seen*(.25 if enrollment else .15) or len(neutral)<10 or len(vectors)<(18 if enrollment else 25) or len(scores)<10 or reference is None:return reject('Лицо плохо видно. Улучшите освещение и повторите запись')
+ if seen<max(45,int(expected_duration*4.5)):return reject('Камера записала слишком мало кадров. Закройте другие приложения и повторите запись')
+ if missing>seen*(.25 if enrollment else .15) or reference is None:return reject('Лицо часто пропадает из кадра или слишком далеко. Держите лицо целиком в овале и направьте свет на лицо')
+ if len(neutral)<10:return reject('В начале записи смотрите прямо в камеру и держите лицо неподвижно')
+ if len(vectors)<(18 if enrollment else 25):return reject('Недостаточно чётких кадров лица. Держите телефон устойчиво и повторите запись')
+ if len(scores)<10:return reject('Недостаточно кадров с лицом прямо в камеру. После каждого движения снова смотрите прямо')
  baseline={k:float(np.median([p[k] for p in neutral])) for k in neutral[0]}
  if baseline['mouth']>.40 or baseline['eye']<.09:return reject('В начале смотрите прямо в камеру, с открытыми глазами и закрытым ртом')
  actions_ok=[action_passed(a,s,baseline) for a,s in zip(actions,poses)]
