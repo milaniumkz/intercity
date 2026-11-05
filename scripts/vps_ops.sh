@@ -130,6 +130,14 @@ JSLIVEMAP
       docker logs --since 90m --tail 3000 intercity-backend 2>&1 | grep -Ei 'MapTiles|tile|Geocoder.*network|ERR|warn' | tail -30 || true
       exit 0
     fi
+    if [[ "$TARGET" == "routing-engine-probe" ]]; then
+      docker inspect intercity-routing --format 'OOM={{.State.OOMKilled}} restarts={{.RestartCount}}'
+      docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}'
+      docker exec -i intercity-backend node <<'JSROUTEPROBE'
+(async()=>{const t=Date.now();const r=await fetch('http://routing:17777/brouter?lonlats=37.62,55.75%7C30.314,59.938&profile=car-fast-nocost&alternativeidx=0&format=geojson',{signal:AbortSignal.timeout(25000)});const text=await r.text();if(!r.ok){console.log(JSON.stringify({status:r.status,seconds:(Date.now()-t)/1000,message:text.slice(0,250)}));return;}const f=JSON.parse(text).features[0];console.log(JSON.stringify({status:r.status,seconds:(Date.now()-t)/1000,metres:f.properties['track-length'],vertices:f.geometry.coordinates.length}));})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSROUTEPROBE
+      exit 0
+    fi
     if [[ "$TARGET" == "routing-rollout" ]]; then
       printf 'Current release: '; cat "$APP_ROOT/current_commit"
       for directory in /tmp/intercity-transfer-27aef034d8c78ce626b625944b56e935dc7e7fcc "$APP_ROOT/releases/27aef034d8c78ce626b625944b56e935dc7e7fcc"; do
