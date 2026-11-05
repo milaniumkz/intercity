@@ -122,6 +122,15 @@ const p=new PrismaClient();
 JSENABLEDEMO
     ;;
   status)
+    if [[ "$TARGET" == "deploy-progress" ]]; then
+      cat "$APP_ROOT/current_commit"
+      ps -eo comm,etime,pcpu,pmem | awk 'NR==1 || $1 ~ /^(tar|gzip|docker|scp|node|python3|sshd)$/ {print}'
+      find /tmp -maxdepth 2 -name '*1443464*' -printf '%TY-%Tm-%Td %TH:%TM %s %f\n' 2>/dev/null | head -30
+      for directory in "$APP_ROOT/releases/1443464baf4105970e49dc6ca4dd7486183de339" "$APP_ROOT"/backups/*1443464*; do
+        if [[ -d "$directory" ]]; then du -sh "$directory"; fi
+      done
+      exit 0
+    fi
     if [[ "$TARGET" == "reset-customer-audit" ]]; then
       cat "$APP_ROOT/current_commit"
       compose run --rm -T --no-deps -v /tmp/reset-nonadmin-users.cjs:/tmp/reset-nonadmin-users.cjs:ro backend node /tmp/reset-nonadmin-users.cjs
