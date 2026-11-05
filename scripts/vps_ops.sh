@@ -122,6 +122,13 @@ const p=new PrismaClient();
 JSENABLEDEMO
     ;;
   status)
+    if [[ "$TARGET" == "map-capacity" ]]; then
+      printf 'CPU cores: '; nproc
+      free -m
+      df -h "$APP_ROOT"
+      docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}'
+      exit 0
+    fi
     if [[ "$TARGET" == "map-upstream" ]]; then
       docker exec -i intercity-backend node <<'JSMAPUPSTREAM'
 (async()=>{for(const path of ['0/0/0','16/47806/22234']){try{const r=await fetch('https://tile.openstreetmap.org/'+path+'.png',{headers:{'User-Agent':'InterCity/1.0 (+https://intercity.89-207-255-27.sslip.io)','Accept':'image/png'},signal:AbortSignal.timeout(10000),redirect:'error'});const b=Buffer.from(await r.arrayBuffer());console.log(JSON.stringify({source:'OpenStreetMap',status:r.status,type:r.headers.get('content-type'),bytes:b.length,png:b.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])),cache:r.headers.get('cache-control')}));}catch(e){console.log(JSON.stringify({source:'OpenStreetMap',error:e.name}));process.exitCode=1;}}})();
