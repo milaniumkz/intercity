@@ -122,6 +122,14 @@ const p=new PrismaClient();
 JSENABLEDEMO
     ;;
   status)
+    if [[ "$TARGET" == "map-diagnostics" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSMAPDIAG'
+const {PrismaClient}=require('@prisma/client');(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');const where={at:{gte:new Date(Date.now()-86400000)},OR:[{action:{contains:'geo'}},{action:{contains:'route'}},{action:{contains:'map'}},{message:{contains:'GPS',mode:'insensitive'}},{message:{contains:'tile',mode:'insensitive'}}]};console.log(JSON.stringify({counts:await tx.techEvent.groupBy({by:['action','status','result'],where,_count:true}),failures:await tx.techEvent.findMany({where:{AND:[where,{OR:[{status:{gte:400}},{result:'ERROR'}]}]},orderBy:{at:'desc'},take:40,select:{at:true,action:true,status:true,result:true,message:true}})}));},{timeout:30000});}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSMAPDIAG
+      docker logs --since 4h --tail 5000 intercity-backend 2>&1 | grep -Ei 'map|tile|geocod|geo/|route|gps' | tail -40 || true
+      exit 0
+    fi
     if [[ "$TARGET" == "deploy-progress" ]]; then
       cat "$APP_ROOT/current_commit"
       ps -eo comm,etime,pcpu,pmem | awk 'NR==1 || $1 ~ /^(tar|gzip|docker|scp|node|python3|sshd)$/ {print}'
