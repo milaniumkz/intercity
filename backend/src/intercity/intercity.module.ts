@@ -8,5 +8,6 @@ import { IntercityController } from './intercity.controller';
     imports: [GeoModule, RealtimeModule],
     controllers: [IntercityController],
     providers: [IntercityService],
+    exports: [IntercityService],
 })
 export class IntercityModule { }

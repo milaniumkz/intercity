@@ -836,11 +836,11 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                     'Доход, комиссия и социальные платежи',
                     () => _openAndRefresh('/driver/earnings'),
                   ),
-                  if (PwaSupport.isIosWeb)
+                  if (PwaSupport.isWeb)
                     _boardProfileRow(
                         Icons.add_to_home_screen_rounded,
-                        'Веб-приложение и уведомления',
-                        'Иконка на главном экране iPhone и push',
+                        'Установить приложение',
+                        'Инструкция для Android и iPhone',
                         PwaSupport.showHelp),
                   _boardProfileRow(
                     Icons.receipt_long_outlined,

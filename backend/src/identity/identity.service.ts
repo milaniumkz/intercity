@@ -8,7 +8,8 @@ import { IdentityEngine } from './identity-engine';
 import { IdentityPushService } from './identity-push.service';
 const hash=(s:string|Buffer)=>createHash('sha256').update(s).digest('hex');
 const token=()=>randomBytes(32).toString('base64url');
-export const IDENTITY_CONSENT='intercity-face-2026-11-v2';
+export const IDENTITY_CONSENT='intercity-face-2026-11-v3';
+export const supportedIdentityConsent=(value:string)=>value===IDENTITY_CONSENT||value==='intercity-face-2026-11-v2';
 export const identityFailure='Не удалось подтвердить владельца аккаунта. Восстановление не разрешено.';
 export function similarity(a:number[],b:number[]) {
  if(a.length!==128||b.length!==128||!a.every(Number.isFinite)||!b.every(Number.isFinite))throw new Error('Invalid face template');
@@ -72,7 +73,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   return {driver:!!user.driverProfile||user.role==='DRIVER',pendingEnrollment:false,enabled:await this.enabled(),required:await this.needsVerification(userId,user.role),enrolled:profile?.status==='VERIFIED',driverConsent:profile?.driverConsent??false,engineReady:await this.engine.ready(),consentVersion:IDENTITY_CONSENT};
  }
  async challenge(input:{userId?:string;phone?:string;password?:string;consentVersion:string;driverConsent?:boolean;ip:string}) {
-  if(input.consentVersion!==IDENTITY_CONSENT)throw new BadRequestException('Подтвердите согласие на обработку биометрических данных');
+  if(!supportedIdentityConsent(input.consentVersion))throw new BadRequestException('Подтвердите согласие на обработку биометрических данных');
   if(!await this.enabled()||!await this.engine.ready())throw new ServiceUnavailableException('Видеопроверка временно недоступна. Повторите позже.');
   const enrollment=!!input.userId;
   let user=await this.prisma.user.findUnique({where:enrollment?{id:input.userId}:{phone:input.phone},include:{biometricProfile:true}});
@@ -91,7 +92,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   const pool=['TURN_LEFT','TURN_RIGHT','LOOK_UP','OPEN_MOUTH','BLINK'];
   for(let i=pool.length-1;i>0;i--){const j=randomInt(i+1);[pool[i],pool[j]]=[pool[j],pool[i]];}
   const actions=pool.slice(0,enrollment?2:3),secret=token();
-  const row=await this.prisma.biometricChallenge.create({data:{userId:user?.id||null,subjectHash,ipHash,purpose:enrollment?'ENROLL':'RECOVERY',secretHash:hash(secret),authVersion:user?.authVersion??0,actions,expiresAt:new Date(Date.now()+5*60000),consentVersion:IDENTITY_CONSENT,driverConsent:enrollment&&input.driverConsent===true}});
+  const row=await this.prisma.biometricChallenge.create({data:{userId:user?.id||null,subjectHash,ipHash,purpose:enrollment?'ENROLL':'RECOVERY',secretHash:hash(secret),authVersion:user?.authVersion??0,actions,expiresAt:new Date(Date.now()+5*60000),consentVersion:input.consentVersion,driverConsent:enrollment&&input.driverConsent===true}});
   return {challengeId:row.id,challengeToken:secret,actions,phaseSeconds:4,neutralSeconds:2,recordingSeconds:2+actions.length*6,expiresAt:row.expiresAt,consentVersion:IDENTITY_CONSENT};
  }
  private async getChallenge(id:string,secret:string){
@@ -100,10 +101,26 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   if(!c||c.createdAt.getTime()<Date.now()-86400000)throw new UnauthorizedException(identityFailure);
   return c;
  }
+ private async failedVideo(c:any,video:Buffer,status:string,reason:string){
+  let videoPath:string|null=null;
+  const user=c.userId?await this.prisma.user.findUnique({where:{id:c.userId},select:{blockedAt:true,authVersion:true}}):null;
+  if(user&&!user.blockedAt&&user.authVersion===c.authVersion&&c.consentVersion===IDENTITY_CONSENT)videoPath=await this.vault.write(c.userId,video);
+  try{const changed=await this.prisma.biometricChallenge.updateMany({where:{id:c.id,status:'PROCESSING'},data:{status,reason,videoPath}});if(changed.count!==1&&videoPath)await this.vault.remove(c.userId,videoPath);}
+  catch(e){if(videoPath)await this.vault.remove(c.userId,videoPath);throw e;}
+ }
+ async history(q:any={}){
+  const take=Math.min(100,Math.max(1,Number.parseInt(q.take)||30)),skip=Math.max(0,Number.parseInt(q.skip)||0);
+  const where:any={};if(q.userId)where.userId=String(q.userId);
+  if(q.status&&q.status!=='ALL')where.status=q.status==='FAILURES'?{in:['REJECTED','FAILED','EXPIRED']}:String(q.status);
+  if(q.purpose)where.purpose=String(q.purpose);
+  if(q.search)where.user={is:{OR:[{name:{contains:String(q.search).slice(0,100),mode:'insensitive'}},{phone:{contains:String(q.search).replace(/\D/g,'').slice(-10)||String(q.search)}}]}};
+  const [rows,total]=await Promise.all([this.prisma.biometricChallenge.findMany({where,orderBy:[{createdAt:'desc'},{id:'desc'}],take,skip,select:{id:true,userId:true,purpose:true,status:true,reason:true,createdAt:true,claimedAt:true,reviewedAt:true,actions:true,consentVersion:true,videoPath:true,referencePath:true,secondaryPath:true,user:{select:{id:true,name:true,phone:true,biometricProfile:{select:{referenceVideoPath:true}}}}}}),this.prisma.biometricChallenge.count({where})]);
+  return {items:rows.map(({videoPath,referencePath,secondaryPath,user,...row})=>({...row,user:user?{id:user.id,name:user.name,phone:user.phone}:null,hasVideo:!!videoPath||(row.purpose==='ENROLL'&&row.status==='VERIFIED'&&row.consentVersion===IDENTITY_CONSENT&&!!user?.biometricProfile?.referenceVideoPath),hasCandidate:!!referencePath,hasBack:!!secondaryPath})),total,take,skip,retentionDays:7};
+ }
  async submit(id:string,secret:string,video:Buffer,userId?:string) {
   const c=await this.getChallenge(id,secret);
   if(c.purpose==='ENROLL'&&c.userId!==userId)throw new UnauthorizedException();
-  if(c.purpose==='ENROLL'&&c.consentVersion!==IDENTITY_CONSENT)throw new BadRequestException('Условия хранения первичной записи обновлены. Начните новую проверку и подтвердите согласие.');
+  if(c.purpose==='ENROLL'&&!supportedIdentityConsent(c.consentVersion))throw new BadRequestException('Условия хранения первичной записи обновлены. Начните новую проверку и подтвердите согласие.');
   if(c.expiresAt<new Date()||c.status!=='READY')throw new ConflictException('Проверка истекла или уже использована. Начните новую запись.');
   if(!video||video.length<10000||video.length>16*1024*1024)throw new BadRequestException('Запишите видео с камеры, не более 16 МБ');
   let claimed;
@@ -111,15 +128,15 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   } catch(error:any) { if(error.code==='P2002')throw new ForbiddenException('Эта запись уже использовалась. Снимите новое видео.');throw error; }
   if(claimed.count!==1)throw new ConflictException('Эта запись уже обрабатывается');
   let result;
-  try{result=await this.engine.verify(video,c.actions as string[]);}catch(error){await this.prisma.biometricChallenge.update({where:{id},data:{status:'FAILED',reason:'Сервис проверки недоступен'}});throw error;}
+  try{result=await this.engine.verify(video,c.actions as string[]);}catch(error){await this.failedVideo(c,video,'FAILED','Сервис проверки недоступен');throw error;}
   const user=c.userId?await this.prisma.user.findUnique({where:{id:c.userId},include:{biometricProfile:true}}):null;
   if(!user||user.blockedAt||user.authVersion!==c.authVersion||result.verdict==='REJECT'){
-   await this.prisma.biometricChallenge.update({where:{id},data:{status:'REJECTED',reason:!user?'Проверка недоступна для аккаунта':result.reason}});return {status:'REJECTED',message:c.purpose==='ENROLL'&&user?result.reason:identityFailure};
+   await this.failedVideo(c,video,'REJECTED',!user?'Проверка недоступна для аккаунта':user.blockedAt||user.authVersion!==c.authVersion?'Доступ к аккаунту изменился':result.reason);return {status:'REJECTED',message:c.purpose==='ENROLL'&&user?result.reason:identityFailure};
   }
   if(result.videoSignature){
    const previous=await this.prisma.biometricChallenge.findMany({where:{userId:user.id,id:{not:id},videoSignature:{not:null},createdAt:{gte:new Date(Date.now()-7*86400000)}},select:{videoSignature:true},take:100});
    if(previous.some(p=>repeatedVideo(result.videoSignature!,JSON.parse(this.vault.open(Buffer.from(p.videoSignature!,'base64'),user.id).toString())))){
-    await this.prisma.biometricChallenge.update({where:{id},data:{status:'REJECTED',reason:'Повтор ранее использованной записи'}});return {status:'REJECTED',message:c.purpose==='ENROLL'?'Эта запись уже использовалась. Запишите новое видео.':identityFailure};
+    await this.failedVideo(c,video,'REJECTED','Повтор ранее использованной записи');return {status:'REJECTED',message:c.purpose==='ENROLL'?'Эта запись уже использовалась. Запишите новое видео.':identityFailure};
    }
   }
   let verdict=result.verdict;let reviewReason=result.reason||'';
@@ -129,7 +146,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
    else{
     const reference=JSON.parse(this.vault.open(Buffer.from(profile.template,'base64'),user.id).toString()) as number[];
     const score=similarity(reference,result.embedding!);
-    if(score<0.45){await this.prisma.biometricChallenge.update({where:{id},data:{status:'REJECTED',reason:'Лицо не совпадает с эталоном'}});return {status:'REJECTED',message:identityFailure};}
+    if(score<0.45){await this.failedVideo(c,video,'REJECTED','Лицо не совпадает с эталоном');return {status:'REJECTED',message:identityFailure};}
     if(score<0.60){verdict='REVIEW';reviewReason='Сходство с эталоном недостаточно уверенное. Смотрите прямо в камеру и повторите запись при ровном освещении.';}
     else if(confidentRecoveryMotion(result,score)){verdict='PASS';}
     else if(verdict==='REVIEW'){reviewReason='Лицо совпало с эталоном. '+(result.reason||'Не удалось уверенно проверить качество видеозаписи.');}
@@ -137,7 +154,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   }
   if(c.purpose==='ENROLL'&&verdict==='REVIEW'){
    const reason=(result.reason||'Не удалось уверенно выполнить проверку')+'. Повторите запись: лицо в овале, ровный свет, выполняйте голосовые подсказки.';
-   await this.prisma.biometricChallenge.update({where:{id},data:{status:'REJECTED',reason}});
+   await this.failedVideo(c,video,'REJECTED',reason);
    return {status:'REJECTED',message:reason,retryAllowed:true};
   }
   const referencePath=await this.vault.write(user.id,Buffer.from(result.reference!,'base64'));
@@ -194,8 +211,8 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
  async reviews(){return this.prisma.biometricChallenge.findMany({where:{status:'REVIEW',purpose:{not:'ENROLL'}},select:{id:true,purpose:true,reason:true,createdAt:true,actions:true,documentInfo:true,driverConsent:true,user:{select:{id:true,name:true,phone:true}}},orderBy:{createdAt:'asc'},take:100});}
  async reviewPurpose(id:string){return (await this.prisma.biometricChallenge.findUnique({where:{id},select:{purpose:true}}))?.purpose;}
  async reviewMedia(id:string,kind:string){
-  const c=await this.prisma.biometricChallenge.findUnique({where:{id}});if(!c?.userId||c.status!=='REVIEW')throw new BadRequestException('Проверка не найдена');
-  const file=kind==='video'?c.videoPath:kind==='back'?c.secondaryPath:kind==='candidate'?c.referencePath:(await this.prisma.biometricProfile.findUnique({where:{userId:c.userId}}))?.referencePath;
+  const c=await this.prisma.biometricChallenge.findUnique({where:{id}});if(!c?.userId||!['REVIEW','REJECTED','FAILED','EXPIRED','VERIFIED'].includes(c.status))throw new BadRequestException('Проверка не найдена');
+  const file=kind==='video'?(c.videoPath||(c.purpose==='ENROLL'&&c.status==='VERIFIED'&&c.consentVersion===IDENTITY_CONSENT?(await this.prisma.biometricProfile.findUnique({where:{userId:c.userId}}))?.referenceVideoPath:null)):kind==='back'?c.secondaryPath:kind==='candidate'?c.referencePath:(await this.prisma.biometricProfile.findUnique({where:{userId:c.userId}}))?.referencePath;
   if(!file)throw new BadRequestException('Эталон недоступен');
   return this.vault.read(c.userId,file);
  }

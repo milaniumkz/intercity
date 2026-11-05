@@ -124,31 +124,57 @@ class _DashboardStatisticsState extends State<DashboardStatistics> {
             const SizedBox(height: 14),
             ...children
           ])));
-  Widget _metric(String label, dynamic value) => SizedBox(
-      width: 185,
-      child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-              color:
-                  Theme.of(context).colorScheme.primary.withValues(alpha: .06),
-              borderRadius: BorderRadius.circular(12)),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('$value', style: Theme.of(context).textTheme.headlineMedium),
-            const SizedBox(height: 4),
-            Text(label)
-          ])));
+  Map<String, dynamic> get _rangeQuery =>
+      {'from': _data?['range']?['from'], 'to': _data?['range']?['to']};
+  void _open(String route, Map<String, dynamic> query) => Navigator.pushNamed(
+      context,
+      Uri(path: route, queryParameters: query.map((k, v) => MapEntry(k, '$v')))
+          .toString());
+  Widget _metric(String label, dynamic value,
+          {String? route, Map<String, dynamic> query = const {}}) =>
+      InkWell(
+          onTap: route == null ? null : () => _open(route, query),
+          borderRadius: BorderRadius.circular(12),
+          child: SizedBox(
+              width: 185,
+              child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withValues(alpha: .06),
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('$value',
+                            style: Theme.of(context).textTheme.headlineMedium),
+                        const SizedBox(height: 4),
+                        Text(label)
+                      ]))));
   List<dynamic> _list(String key) => (_data?[key] as List?) ?? [];
-  Widget _table(List<String> headers, List<List<String>> rows) => rows.isEmpty
-      ? const Text('За выбранный период данных нет.')
-      : SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: DataTable(
-              columns: headers.map((h) => DataColumn(label: Text(h))).toList(),
-              rows: rows
-                  .map((r) =>
-                      DataRow(cells: r.map((c) => DataCell(Text(c))).toList()))
-                  .toList()));
+  Widget _table(List<String> headers, List<List<String>> rows,
+          {void Function(int)? onRowTap}) =>
+      rows.isEmpty
+          ? const Text('За выбранный период данных нет.')
+          : SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                  columns:
+                      headers.map((h) => DataColumn(label: Text(h))).toList(),
+                  showCheckboxColumn: false,
+                  rows: rows
+                      .asMap()
+                      .entries
+                      .map((entry) => DataRow(
+                          onSelectChanged: onRowTap == null
+                              ? null
+                              : (_) => onRowTap(entry.key),
+                          cells: entry.value
+                              .map((c) => DataCell(Text(c)))
+                              .toList()))
+                      .toList()));
   String _money(dynamic v) => (v is num ? v : 0).toStringAsFixed(2);
   @override
   Widget build(BuildContext context) {
@@ -226,10 +252,15 @@ class _DashboardStatisticsState extends State<DashboardStatistics> {
       if (_data != null) ...[
         _section('Новые пользователи за период', [
           Wrap(spacing: 12, runSpacing: 12, children: [
-            _metric('Всего регистраций', users['newTotal'] ?? 0),
-            _metric('Пассажиры', users['newPassengers'] ?? 0),
-            _metric('Водители', users['newDrivers'] ?? 0),
-            _metric('Новые анкеты водителей', drivers['newProfiles'] ?? 0)
+            _metric('Всего регистраций', users['newTotal'] ?? 0,
+                route: '/users', query: _rangeQuery),
+            _metric('Пассажиры', users['newPassengers'] ?? 0,
+                route: '/users', query: {..._rangeQuery, 'kind': 'passenger'}),
+            _metric('Водители', users['newDrivers'] ?? 0,
+                route: '/drivers', query: _rangeQuery),
+            _metric('Новые анкеты водителей', drivers['newProfiles'] ?? 0,
+                route: '/drivers',
+                query: {..._rangeQuery, 'profileCreated': 'true'})
           ]),
           const SizedBox(height: 10),
           const Text(
@@ -237,14 +268,26 @@ class _DashboardStatisticsState extends State<DashboardStatistics> {
         ]),
         _section('Заказы и поездки за период', [
           Wrap(spacing: 12, runSpacing: 12, children: [
-            _metric('Создано заказов', orders['total'] ?? 0),
-            _metric('Завершено из этих заказов', orders['completed'] ?? 0),
-            _metric('Поездок завершено за период',
-                _data!['completedInPeriod'] ?? 0),
-            _metric('Отменено', orders['cancelled'] ?? 0),
-            _metric('Активных из периода', orders['active'] ?? 0),
-            _metric('Истекло / отклонено', orders['expired'] ?? 0),
-            _metric('Заказавших пассажиров', orders['uniquePassengers'] ?? 0)
+            _metric('Создано заказов', orders['total'] ?? 0,
+                route: '/trip-register', query: _rangeQuery),
+            _metric('Завершено из этих заказов', orders['completed'] ?? 0,
+                route: '/trip-register',
+                query: {..._rangeQuery, 'status': 'COMPLETED'}),
+            _metric(
+                'Поездок завершено за период', _data!['completedInPeriod'] ?? 0,
+                route: '/trip-register',
+                query: {..._rangeQuery, 'completedInPeriod': 'true'}),
+            _metric('Отменено', orders['cancelled'] ?? 0,
+                route: '/trip-register',
+                query: {..._rangeQuery, 'status': 'CANCELLED'}),
+            _metric('Активных из периода', orders['active'] ?? 0,
+                route: '/trip-register',
+                query: {..._rangeQuery, 'status': 'ACTIVE'}),
+            _metric('Истекло / отклонено', orders['expired'] ?? 0,
+                route: '/trip-register',
+                query: {..._rangeQuery, 'status': 'EXPIRED_GROUP'}),
+            _metric('Заказавших пассажиров', orders['uniquePassengers'] ?? 0,
+                route: '/users', query: {..._rangeQuery, 'hasOrders': 'true'})
           ]),
           const SizedBox(height: 16),
           _table([
@@ -264,7 +307,9 @@ class _DashboardStatisticsState extends State<DashboardStatistics> {
                 '${row['active']}',
                 '${row['expired']}'
               ]
-          ]),
+          ],
+              onRowTap: (i) => _open('/trip-register',
+                  {..._rangeQuery, 'mode': modeRows[i]['mode']})),
         ]),
         _section('Суммы по валютам', [
           if ((_data!['missingCompletionDates'] as num? ?? 0) > 0)
@@ -296,13 +341,20 @@ class _DashboardStatisticsState extends State<DashboardStatistics> {
         ]),
         _section('Пользовательская база и водители сейчас', [
           Wrap(spacing: 12, runSpacing: 12, children: [
-            _metric('Активных заказов сейчас', _data!['activeOrdersNow'] ?? 0),
-            _metric('Всего пользователей', users['total'] ?? 0),
-            _metric('Всего пассажиров', users['passengers'] ?? 0),
-            _metric('Всего водителей', users['drivers'] ?? 0),
-            _metric('Водители онлайн', drivers['online'] ?? 0),
-            _metric('Анкеты одобрены', drivers['approved'] ?? 0),
-            _metric('Анкеты на проверке', drivers['pending'] ?? 0)
+            _metric('Активных заказов сейчас', _data!['activeOrdersNow'] ?? 0,
+                route: '/trip-register', query: {'status': 'ACTIVE'}),
+            _metric('Всего пользователей', users['total'] ?? 0,
+                route: '/users'),
+            _metric('Всего пассажиров', users['passengers'] ?? 0,
+                route: '/users', query: {'kind': 'passenger'}),
+            _metric('Всего водителей', users['drivers'] ?? 0,
+                route: '/drivers'),
+            _metric('Водители онлайн', drivers['online'] ?? 0,
+                route: '/drivers', query: {'online': 'true'}),
+            _metric('Анкеты одобрены', drivers['approved'] ?? 0,
+                route: '/drivers', query: {'approved': 'true'}),
+            _metric('Анкеты на проверке', drivers['pending'] ?? 0,
+                route: '/drivers', query: {'driverStatus': 'PENDING'})
           ]),
           const SizedBox(height: 10),
           const Text(
@@ -376,7 +428,9 @@ class _DashboardStatisticsState extends State<DashboardStatistics> {
                 _statuses[row['status']] ?? '${row['status']}',
                 '${_money(row['price'])} ${row['currency']}'
               ]
-          ])
+          ],
+              onRowTap: (i) => _open(
+                  '/trip-register', {'id': _list('recentOrders')[i]['id']}))
         ]),
         _section('Последние 10 регистраций выбранного периода', [
           _table([
@@ -392,7 +446,9 @@ class _DashboardStatisticsState extends State<DashboardStatistics> {
                 '${row['phone']}',
                 row['driver'] == true ? 'Водитель' : 'Пассажир'
               ]
-          ])
+          ],
+              onRowTap: (i) => Navigator.pushNamed(
+                  context, '/person/${_list('recentUsers')[i]['id']}'))
         ]),
       ],
     ]);

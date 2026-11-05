@@ -11,10 +11,10 @@ const hash=(s:string)=>createHash('sha256').update(s).digest('hex');
 @Injectable()
 export class DriverDocumentService {
  constructor(private readonly prisma:PrismaService,private readonly identity:IdentityService,private readonly engine:IdentityEngine,private readonly technical:TechnicalService,private readonly push:IdentityPushService){}
- async consent(userId:string,password:string){
+ async consent(userId:string,password:string,consentVersion=IDENTITY_CONSENT){
   const bcrypt=await import('bcrypt');const user=await this.prisma.user.findUnique({where:{id:userId}});
   if(!user||user.blockedAt||!await bcrypt.compare(password,user.password))throw new BadRequestException('Неверный пароль');
-  await this.prisma.biometricProfile.update({where:{userId},data:{driverConsent:true,consentVersion:IDENTITY_CONSENT}});return {success:true};
+  await this.prisma.biometricProfile.update({where:{userId},data:{driverConsent:true,consentVersion}});return {success:true};
  }
  private async source(userId:string,url:string|null|undefined){
   const id=/^\/api\/driver\/docs\/files\/([a-f0-9]{32})$/.exec(url||'')?.[1];

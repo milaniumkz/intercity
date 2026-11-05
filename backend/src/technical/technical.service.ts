@@ -1,3 +1,5 @@
+import {AccountDeletionService} from '../auth/account-deletion.service';
+import {customerEdit,editDriverRecord} from '../admin/customer-records';
 import {
     BadRequestException,
     ForbiddenException,
@@ -40,7 +42,7 @@ export class TechnicalService implements OnModuleInit, OnModuleDestroy {
     private lastPushError: string | null = null;
     readonly startedAt = new Date();
     vapid: { publicKey: string; privateKey: string };
-    constructor(readonly prisma: PrismaService) {}
+    constructor(readonly prisma: PrismaService, private readonly deletion:AccountDeletionService) {}
     async onModuleInit() {
         await fs.mkdir(this.storage, { recursive: true, mode: 0o700 });
         const keyPath = join(this.storage, 'audit.key');
@@ -578,6 +580,7 @@ export class TechnicalService implements OnModuleInit, OnModuleDestroy {
             reports: any = [];
         if (db.status === 'available') {
             counts = {
+                failedIdentity:await this.prisma.biometricChallenge.count({where:{createdAt:{gte:since},status:{in:['FAILED','REJECTED']}}}).catch(()=>null),
                 errors: await this.prisma.techEvent.count({
                     where: { at: { gte: since }, status: { gte: 500 } },
                 }),
@@ -852,14 +855,30 @@ export class TechnicalService implements OnModuleInit, OnModuleDestroy {
             where: { id },
             select: {
                 id: true,
+                role:true,name:true,phone:true,cityId:true,
                 blockedAt: true,
                 authVersion: true,
                 mustChangePassword: true,
             },
         });
         if (!before) throw new BadRequestException('Пользователь не найден');
+        if(before.role==='ADMIN')throw new ForbiddenException('Учётная запись администратора защищена от действий над пользователями');
+        if(action==='edit-driver'){
+            await this.audit(actor.id,'driver.profile.update.requested',id,{reason:safeMessage(body.reason)});
+            const result=await this.prisma.$transaction(tx=>editDriverRecord(tx,id,body));
+            await this.audit(actor.id,'driver.profile.update.completed',id,{reason:result.reason,carChanged:result.carChanged});
+            return {ok:true,carChanged:result.carChanged};
+        }
+        if(action==='delete-account'){
+            await this.audit(actor.id,'user.delete.requested',id,{reason:safeMessage(body.reason)});
+            const result=await this.deletion.deleteBySupport(id);
+            this.closeConnections(id);
+            await this.audit(actor.id,'user.delete.completed',id,{reason:safeMessage(body.reason),...result});
+            return result;
+        }
         const data: any = { authVersion: { increment: 1 } };
-        if (action === 'block') data.blockedAt = new Date();
+        if(action==='edit-profile')Object.assign(data,customerEdit(body).data);
+        else if (action === 'block') data.blockedAt = new Date();
         else if (action === 'unblock') data.blockedAt = null;
         else if (action === 'temporary-password') {
             if (

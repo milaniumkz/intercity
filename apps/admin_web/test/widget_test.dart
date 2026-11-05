@@ -84,39 +84,44 @@ void main() {
 
     await tester.tap(find.text('Пользователи').last);
     await tester.pumpAndSettle();
-    await tester.enterText(find.widgetWithText(TextField, 'Поиск'), '+700');
-    await tester.enterText(find.widgetWithText(TextField, 'Роль'), 'ADMIN');
-    await tester.tap(_buttonFinder('Загрузить пользователей'));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Загружено'), findsOneWidget);
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Выбрать').first);
-    await tester.pumpAndSettle();
     await tester.enterText(
-      find.widgetWithText(TextField, 'Причина удаления'),
-      'Тестовое удаление',
-    );
-    await tester.tap(find.widgetWithText(FilledButton, 'Удалить пользователя'));
+        find.widgetWithText(TextField, 'Имя или телефон'), '+700');
+    await tester.pump(const Duration(milliseconds: 450));
     await tester.pumpAndSettle();
-
+    await tester.tap(find.widgetWithText(ListTile, 'Пассажир'));
+    await tester.pumpAndSettle();
+    expect(find.text('Карточка пользователя'), findsNothing);
+    await tester.tap(find.text('Изменить данные'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Причина изменения'),
+        'Исправление данных');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Сохранить'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Водители').last);
     await tester.pumpAndSettle();
-    await tester.tap(_buttonFinder('Подтвердить').first);
+    expect(find.widgetWithText(TextField, 'ID водителя'), findsNothing);
+    await tester.tap(find.widgetWithText(ListTile, 'Олег'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Отклонить').first);
+    final settings = find.text('Настройки водителя');
+    await tester.ensureVisible(settings);
+    await tester.tap(settings);
     await tester.pumpAndSettle();
-    await tester.tap(_buttonFinder('Сохранить флаги'));
+    await tester.tap(find.widgetWithText(SwitchListTile, 'Есть шашки'));
+    await tester.enterText(find.widgetWithText(TextField, 'Причина изменения'),
+        'Проверка автомобиля');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Сохранить'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Для этого действия нужен ID водителя'),
-        findsOneWidget);
+    final fuel = find.text('Топливный бонус на 24 часа');
+    await tester.ensureVisible(fuel);
+    await tester.tap(fuel);
+    await tester.pumpAndSettle();
     await tester.enterText(
-        find.widgetWithText(TextField, 'ID водителя'), 'driver-1');
-    await tester.tap(_buttonFinder('Сохранить флаги'));
+        find.widgetWithText(TextField, 'Причина действия'), 'Тестовый бонус');
+    await tester.pump();
+    await tester.tap(find.text('Подтвердить'));
     await tester.pumpAndSettle();
-    await tester.tap(_buttonFinder('Топливо +24ч'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Получить приоритет'));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Приоритет:'), findsOneWidget);
 
     await tester.tap(find.text('Города').last);
     await tester.pumpAndSettle();
@@ -220,14 +225,9 @@ void main() {
     await tester.tap(find.text('COMPLETED').last);
     await tester.pumpAndSettle();
 
-    expect(api.calls, contains('POST /admin/drivers/driver-1/flags'));
-    expect(api.calls, contains('GET /admin/users'));
-    expect(
-      api.calls,
-      contains(
-        'DELETE /admin/users/user-1?reason=%D0%A2%D0%B5%D1%81%D1%82%D0%BE%D0%B2%D0%BE%D0%B5+%D1%83%D0%B4%D0%B0%D0%BB%D0%B5%D0%BD%D0%B8%D0%B5',
-      ),
-    );
+    expect(api.calls, contains('GET /admin/people'));
+    expect(api.calls, contains('PATCH /admin/people/user-1'));
+    expect(api.calls, contains('PATCH /admin/people/user-driver/driver'));
     expect(api.calls, contains('POST /admin/drivers/driver-1/fuel-bonus'));
     expect(api.calls, contains('POST /admin/cities'));
     expect(api.calls, contains('PATCH /admin/cities/city-1'));
@@ -242,6 +242,30 @@ void main() {
 
 class _FakeAdminApi implements AdminApi {
   final List<String> calls = [];
+  Map<String, dynamic> _person(bool driver) => {
+        'id': driver ? 'user-driver' : 'user-1',
+        'name': driver ? 'Олег' : 'Пассажир',
+        'phone': '+70000000003',
+        'role': driver ? 'DRIVER' : 'PASSENGER',
+        'cityId': 'city-1',
+        'city': {'id': 'city-1', 'name': 'Алматы'},
+        'createdAt': '2026-11-05T00:00:00Z',
+        'blockedAt': null,
+        'driverProfile': driver
+            ? {
+                'id': 'driver-1',
+                'status': 'ACTIVE',
+                'carModel': 'ГАЗ Газель',
+                'carNumber': 'A123BC77',
+                'acceptCityFixed': true,
+                'acceptCityAuction': true,
+                'acceptDelivery': true,
+                'acceptIntercity': true,
+                'acceptCargo': false,
+                'priorityFlags': {'hasCheckers': false, 'hasBranding': false}
+              }
+            : null
+      };
 
   @override
   Future<Response<dynamic>> delete(String path) async {
@@ -253,6 +277,30 @@ class _FakeAdminApi implements AdminApi {
   Future<Response<dynamic>> get(String path,
       {Map<String, dynamic>? query}) async {
     calls.add('GET $path');
+    if (path == '/admin/people') {
+      return _response(path, {
+        'items': [_person(query?['kind'] == 'driver')],
+        'total': 1,
+        'take': 30,
+        'skip': 0
+      });
+    }
+    if (path == '/admin/people-cities') return _response(path, []);
+    if (path == '/admin/people/user-1' || path == '/admin/people/user-driver') {
+      return _response(path, {
+        'user': _person(path.endsWith('user-driver')),
+        'wallet': null,
+        'vehicles': [],
+        'referrals': {'code': 'REF123', 'invited': 0, 'referrer': null},
+        'permissions': {'finance': false}
+      });
+    }
+    if (path.startsWith('/admin/people/') &&
+        (path.endsWith('/trips') ||
+            path.endsWith('/referrals') ||
+            path.endsWith('/transactions'))) {
+      return _response(path, {'items': [], 'total': 0, 'take': 20, 'skip': 0});
+    }
     if (path == '/admin/drivers/pending') {
       return _response(path, [
         {

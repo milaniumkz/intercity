@@ -1,3 +1,4 @@
+import '../../../core/services/pwa_support.dart';
 import '../../../core/utils/referral_code.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -449,7 +450,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   SizedBox(width: 10),
                                   Expanded(
                                       child: Text(
-                                          'Приглашение сохранено. Оно применится автоматически при регистрации.')),
+                                          'Приглашение сохранено. Оно применится автоматически, если ссылка действительна. Недействительное приглашение не мешает регистрации.')),
                                 ]),
                               ],
                             ],
@@ -466,6 +467,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     icon: Icons.arrow_forward_rounded,
                   ),
                   const SizedBox(height: 14),
+                  if (PwaSupport.isWeb)
+                    TextButton.icon(
+                        onPressed: PwaSupport.showHelp,
+                        icon: const Icon(Icons.add_to_home_screen),
+                        label: const Text('Установить приложение')),
                   ICPremiumTextButton(
                     label: 'Уже есть аккаунт? Войти',
                     icon: Icons.login_rounded,

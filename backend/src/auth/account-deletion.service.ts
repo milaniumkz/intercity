@@ -17,6 +17,16 @@ export class AccountDeletionService implements OnModuleInit, OnModuleDestroy {
         const original = await this.prisma.user.findUnique({where: {id: userId}});
         if (!original) throw new UnauthorizedException('Аккаунт не найден');
         if (!await bcrypt.compare(password, original.password)) throw new BadRequestException('Неверный пароль');
+        return this.eraseAccount(original);
+    }
+    // Only guarded, audited support controllers may call this entry point.
+    async deleteBySupport(userId:string) {
+        const original=await this.prisma.user.findUnique({where:{id:userId}});
+        if(!original)throw new BadRequestException('Пользователь не найден');
+        return this.eraseAccount(original);
+    }
+    private async eraseAccount(original:any) {
+        const userId=original.id;
         if (original.role === 'ADMIN') throw new BadRequestException('Удаление административного аккаунта недоступно в приложении');
         const cleanupDirectory = await this.prisma.$transaction(async tx => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302091)`;

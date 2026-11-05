@@ -1,3 +1,6 @@
+import {userActivity} from './activity-feed';
+import {IdentityService} from '../identity/identity.service';
+import {customerTrips} from '../admin/customer-records';
 import {
     Body,
     CanActivate,
@@ -178,7 +181,16 @@ export class TechnicalPublicController {
 @Controller('technical')
 @UseGuards(TechnicalGuard)
 export class TechnicalController {
-    constructor(private tech: TechnicalService) {}
+    constructor(private tech: TechnicalService, private identity:IdentityService) {}
+    @Get('identity-attempts') async identityHistory(@Req()req:any,@Query()q:any){allow(req,'personal');return this.identity.history(q);}
+    @Get('identity-attempts/:id/video') async identityVideo(@Req()req:any,@Param('id')id:string,@Res()res:any){
+        allow(req,'personal');allow(req,'originals');
+        const bytes=await this.identity.reviewMedia(safeId(id),'video');
+        await this.tech.audit(req.tech.id,'identity.video.read',id,{});
+        res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.type(bytes[0]===0x1a?'video/webm':'video/mp4');res.send(bytes);
+    }
+    @Get('users/:id/trips') async userTrips(@Req()req:any,@Param('id')id:string,@Query()q:any){allow(req,'personal');return customerTrips(this.tech.prisma,{...q,userId:safeId(id)});}
+    @Get('cities') async cities(@Req()req:any,@Query('search')search:string){allow(req,'personal');return this.tech.prisma.city.findMany({where:{isActive:true,name:{contains:String(search||'').slice(0,100),mode:'insensitive'}},take:30,select:{id:true,name:true,countryCode:true,region:true},orderBy:{name:'asc'}});}
     @Get('me') me(@Req() req: any) {
         return {
             id: req.tech.id,
@@ -225,6 +237,7 @@ export class TechnicalController {
         );
         res.json({ ok: true });
     }
+    @Get('activity') async activity(@Req()req:any,@Query()q:any){allow(req,'events');return userActivity(this.tech.prisma,q,req.tech.permissions.includes('personal'));}
     @Get('overview') overview(@Req() req: any) {
         allow(req, 'events');
         return this.tech.overview();
@@ -463,12 +476,14 @@ export class TechnicalController {
                 role: true,
                 blockedAt: true,
                 mustChangePassword: true,
+                cityId:true,
                 createdAt: true,
                 city: { select: { name: true } },
                 driverProfile: {
                     select: {
                         id: true,
                         status: true,
+                        carModel:true,carNumber:true,acceptCityFixed:true,acceptCityAuction:true,acceptIntercity:true,acceptDelivery:true,acceptCargo:true,
                         selfieUrl: true,
                         passportUrl: true,
                         driverLicenseUrl: true,

@@ -34,6 +34,7 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
   String _iosMode = 'web';
   bool _accountReady = false;
   bool _invitationConfirmed = false;
+  bool _hasInvitation = false;
   String? _accountError;
   bool get _isIos => defaultTargetPlatform == TargetPlatform.iOS;
   String? _googlePlayUrl;
@@ -98,6 +99,8 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
       }
       setState(() {
         _accountReady = true;
+        _hasInvitation =
+            (response.data['referredBy'] ?? '').toString().isNotEmpty;
         _invitationConfirmed = response.data['referredBy'] == _code;
       });
     } catch (_) {
@@ -222,7 +225,7 @@ class _ReferralLandingPageState extends State<ReferralLandingPage> {
                         widget.downloadOnly
                             ? (_accountReady
                                 ? (!_invitationConfirmed
-                                    ? 'У вас уже есть аккаунт. Ранее закреплённое приглашение сохраняется. Новая ссылка не меняет пригласившего. После установки войдите с тем же номером телефона и паролем.'
+                                    ? (_hasInvitation ? 'У вас уже есть аккаунт. Ранее закреплённое приглашение сохраняется. Новая ссылка не меняет пригласившего. После установки войдите с тем же номером телефона и паролем.' : 'Аккаунт создан без приглашения. Вы можете пользоваться InterCity.')
                                     : _isIos && _iosMode == 'web'
                                         ? 'Пользуйтесь веб-версией на iPhone. При переходе в приложение позже войдите в тот же аккаунт — приглашение сохранится.'
                                         : 'Установите приложение и войдите с тем же номером телефона и паролем. Приглашение хранится в аккаунте и не потеряется при установке.')

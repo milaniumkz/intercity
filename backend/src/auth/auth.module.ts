@@ -1,5 +1,5 @@
+import {AccountDeletionModule} from './account-deletion.module';
 import { IdentityModule } from '../identity/identity.module';
-import { AccountDeletionService } from './account-deletion.service';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -14,6 +14,7 @@ import { GeoModule } from '../geo/geo.module';
 @Module({
     imports: [
         IdentityModule,
+        AccountDeletionModule,
         PassportModule.register({ defaultStrategy: 'jwt' }),
         JwtModule.registerAsync({
             imports: [ConfigModule],
@@ -27,7 +28,7 @@ import { GeoModule } from '../geo/geo.module';
         GeoModule,
     ],
     controllers: [AuthController, MeController],
-    providers: [AuthService, JwtStrategy, AccountDeletionService],
+    providers: [AuthService, JwtStrategy],
     exports: [AuthService],
 })
 export class AuthModule { }

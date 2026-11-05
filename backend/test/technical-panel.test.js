@@ -797,14 +797,16 @@ test(
                                 .click();
                             await page
                                 .getByRole('heading', {
-                                    name: 'Обзор системы',
+                                    name: 'Главная',
                                     exact: true,
                                 })
                                 .waitFor();
+                            await page.getByText('Для специалиста', {exact:true}).click();
                             for (const name of [
                                 'Проблемы и ошибки',
                                 'Действия пользователей',
-                                'Пользователи и организации',
+                                'Пользователи',
+                                'Видеопроверки и отказы',
                                 'Безопасность',
                                 'Отклонения процессов',
                                 'Файлы и фотографии',
@@ -857,7 +859,7 @@ test(
                             );
                             await page
                                 .getByRole('heading', {
-                                    name: 'Обзор системы',
+                                    name: 'Главная',
                                     exact: true,
                                 })
                                 .waitFor();

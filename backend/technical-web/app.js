@@ -26,11 +26,14 @@ const labels = {
     FINISH: 'Результат',
     ABORTED: 'Соединение закрыто до завершения',
 };
+Object.assign(labels,{PASSENGER:'Пассажир',DRIVER:'Водитель',ADMIN:'Администратор',VERIFIED:'Пройдена',REJECTED:'Отклонена',FAILED:'Ошибка обработки',EXPIRED:'Срок истёк',READY:'Ожидает записи',PROCESSING:'Обрабатывается',ENROLL:'Первичная видеопроверка',RECOVERY:'Восстановление пароля',DRIVER_IDENTITY:'Удостоверение личности',VEHICLE:'Техпаспорт автомобиля',APPROVED:'Одобрен',ACTIVE:'Активен'});
 const sections = [
-    ['overview', 'Обзор системы'],
+    ['overview', 'Главная'],
     ['issues', 'Проблемы и ошибки'],
-    ['events', 'Действия пользователей'],
-    ['users', 'Пользователи и организации'],
+    ['activity','Действия пользователей'],
+    ['events', 'Журнал запросов для специалиста'],
+    ['users', 'Пользователи'],
+    ['identity', 'Видеопроверки и отказы'],
     ['security', 'Безопасность'],
     ['domain', 'Отклонения процессов'],
     ['files', 'Файлы и фотографии'],
@@ -249,14 +252,17 @@ async function start() {
     document.querySelector('#identity').textContent = account.login;
     document.querySelector('#logout').hidden = false;
     nav.replaceChildren();
+    const advanced=el('details');advanced.className='advanced-navigation';advanced.append(el('summary','Для специалиста'));
     for (const [id, title] of sections) {
         if (
-            (id === 'users' && !has('personal')) ||
+            (['users','identity'].includes(id) && !has('personal')) ||
             (id === 'settings' && !has('settings'))
         )
             continue;
-        nav.append(link(title, id));
+        const item=link(title,id);
+        if(['overview','users','identity','activity','issues','notifications','settings'].includes(id))nav.append(item);else advanced.append(item);
     }
+    nav.append(advanced);
     await render();
 }
 function eventColumns() {
@@ -297,11 +303,16 @@ async function render() {
             sections.find((x) => x[0] === section)?.[1] || 'Техническая панель',
         ),
     );
-    for (const a of nav.children)
+    for (const a of nav.querySelectorAll('a'))
         a.classList.toggle('active', a.hash === '#' + section);
     try {
         if (['overview', 'services', 'releases'].includes(section)) {
             const d = (latest = await api('overview'));
+            if(section==='overview'){
+                root.append(el('p','Найдите человека, посмотрите его проверки и действия. Служебные запросы находятся в разделе «Для специалиста».','muted'));
+                const shortcuts=el('div',null,'quick-grid');
+                for(const [title,text,target]of [['Пользователи','Найти по имени или телефону, открыть данные и действия','users'],['Видеопроверки','Посмотреть записи и понятные причины отказов','identity'],['Действия пользователей','Что сделал человек и чем закончилось действие','activity'],['Ошибки','Что требует внимания администратора','issues']]){const a=link('',target);a.className='quick-link';a.append(el('strong',title),el('span',text));shortcuts.append(a);}root.append(shortcuts);
+            }
             root.append(el('p', 'Проверено: ' + date(d.checkedAt), 'muted'));
             if (section === 'releases') {
                 root.append(
@@ -349,12 +360,13 @@ async function render() {
                         [
                             [
                                 'За последние 24 часа / текущее состояние',
-                                (x) => x[0],
+                                (x) => link(x[0],x[0].includes('видеопроверки')?'identity':x[0].includes('ошибки')?'events?statusMin=500':'issues'),
                             ],
                             ['Количество', (x) => x[1]],
                         ],
                         Object.entries(d.counts).map(([k, v]) => [
                             {
+                                failedIdentity:'Неудачные видеопроверки за 24 часа',
                                 errors: 'Серверные ошибки за 24 часа',
                                 affectedUsers:
                                     'Пользователи с отказами за 24 часа',
@@ -595,16 +607,47 @@ async function render() {
             );
             return;
         }
+        if(section==='activity'){
+            filters(q,[['search','Имя или телефон']],'activity');
+            const period=select(root,'Период',[['24h','Последние сутки'],['week','Последние 7 дней'],['month','Последние 30 дней'],['all','Вся доступная история']],q.get('period')||'24h');
+            period.addEventListener('change',()=>{q.set('period',period.value);q.delete('skip');location.hash='activity?'+q});
+            const d=await api('activity?'+q);root.append(el('p','Найдено действий: '+d.total,'muted'));
+            if(q.has('userId'))root.append(link('Показать всех пользователей','activity'));
+            for(const row of d.items){const box=card(row.title);box.classList.add('activity-card');const badge=el('span',row.resultLabel,row.failed?'badge danger':'badge success');box.append(badge,el('p',date(row.at)+' · '+row.platform));
+                if(row.user)box.append(link(row.user.name+' · '+row.user.phone,'users/'+row.user.id));else box.append(el('p','Пользователь не установлен или персональные данные недоступны','muted'));
+                if(row.reason)box.append(el('p',row.reason,'human-reason'));
+                const technical=el('details');technical.append(el('summary','Служебные подробности'),link('Открыть запись журнала','events/'+row.id));box.append(technical);root.append(box);
+            }
+            if(!d.items.length)root.append(el('p','За выбранный период действий не найдено. Попробуйте другой период или уберите поиск.'));
+            root.append(el('p','Показываются действия, которые приложение передало на сервер. Работа без соединения может не отобразиться.','muted'));pager(q,d.total,'activity');return;
+        }
+        if(section==='identity'){
+            filters(q,[['search','Имя или телефон']],'identity');
+            const status=select(root,'Показать',[['FAILURES','Неудачные попытки'],['ALL','Все попытки'],['REVIEW','Нужна ручная проверка'],['VERIFIED','Пройденные'],['FAILED','Ошибки обработки']],q.get('status')||'FAILURES');
+            status.addEventListener('change',()=>{q.set('status',status.value);q.delete('skip');location.hash='identity?'+q});
+            if(!q.has('status'))q.set('status','FAILURES');
+            const d=await api('identity-attempts?'+q);
+            root.append(el('p','Новые неудачные записи хранятся зашифрованными до 7 дней. Старые отказные видео могли не сохраняться. Просмотр материалов фиксируется в журнале.','muted'));
+            for(const row of d.items){
+                const box=card((row.user?.name||'Аккаунт не определён')+' · '+(row.user?.phone||''));
+                box.append(el('p',name(row.purpose)+' · '+name(row.status)+' · '+date(row.createdAt)),el('p',row.reason||'Ошибки не зафиксированы'));
+                if(row.userId)box.append(link('Открыть пользователя','users/'+row.userId));
+                if(row.hasVideo&&has('originals'))box.append(button('Посмотреть видео',()=>showIdentityVideo(row.id)));
+                else box.append(el('p',row.hasVideo?'Нет разрешения на просмотр оригиналов':'Видео не сохранено или удалено по сроку','muted'));
+                root.append(box);
+            }
+            if(!d.items.length)root.append(el('p','Проверок по выбранным условиям нет.'));
+            pager(q,d.total,'identity');return;
+        }
         if (section === 'users' && !id) {
             filters(q, [['search', 'Имя, телефон или ID']], 'users');
             const d = await api('users?' + q);
             root.append(
-                el('p', d.organizations, 'muted'),
                 table(
                     [
                         ['Пользователь', (x) => link(x.name, 'users/' + x.id)],
                         ['Телефон', (x) => x.phone],
-                        ['Роль', (x) => x.role],
+                        ['Роль', (x) => name(x.role)],
                         ['Город', (x) => x.city?.name],
                         [
                             'Состояние',
@@ -625,18 +668,21 @@ async function render() {
         if (section === 'users' && id) {
             const d = await api('users/' + id);
             root.append(
-                card(d.user.name, d.user.phone + ' · ' + d.user.role),
-                details(d.user, 'Состояние аккаунта и профиля'),
+                card(d.user.name, d.user.phone + ' · ' + name(d.user.role)),
+                details(d.user, 'Служебные сведения об аккаунте'),
+                link('Видеопроверки пользователя','identity?userId='+id+'&status=ALL'),
                 link(
                     'Порядок действий пользователя',
-                    'events?userId=' + id + '&order=asc',
+                    'activity?userId=' + id + '&period=all',
                 ),
                 el(
                     'p',
                     `Записей обновления токенов: ${d.sessions}. ${d.sessionLimitation}`,
                 ),
-                table(eventColumns(), d.events),
+                link('Все действия этого пользователя','activity?userId='+id+'&period=all'),
             );
+            const profile=card('Сведения о пользователе');profile.append(el('p','Город: '+(d.user.city?.name||'Не указан')),el('p','Зарегистрирован: '+date(d.user.createdAt)),el('p','Состояние: '+(d.user.blockedAt?'Заблокирован':'Доступен')));root.append(profile);
+            try{const trips=await api('users/'+id+'/trips?take=30');const box=card('Заказы и поездки: '+trips.total);box.append(table([['Дата',x=>date(x.createdAt)],['Откуда',x=>x.origin],['Куда',x=>x.destination],['Состояние',x=>name(x.status)],['Стоимость',x=>x.price+' '+(x.currency==='RUB'?'₽':'₸')]],trips.items));if(!trips.items.length)box.append(el('p','Заказов пока нет.'));root.append(box);}catch(e){root.append(el('p','Не удалось загрузить историю заказов: '+e.message));}
             if (d.user.driverProfile) {
                 const docs = card(
                     'Текущие документы профиля: не файлы выбранного события',
@@ -653,12 +699,12 @@ async function render() {
                     if (!url) continue;
                     if (url.startsWith('/api/driver/docs/files/'))
                         docs.append(
-                            link(type, 'files/' + url.split('/').pop()),
+                            link(({selfieUrl:'Фото водителя',passportUrl:'Удостоверение личности',driverLicenseUrl:'Водительское удостоверение',techPassportFrontUrl:'Техпаспорт — лицевая сторона',techPassportBackUrl:'Техпаспорт — оборотная сторона'})[type], 'files/' + url.split('/').pop()),
                             el('br'),
                         );
                     else if (has('originals'))
                         docs.append(
-                            button('Открыть ' + type, () =>
+                            button('Открыть ' + ({selfieUrl:'фото водителя',passportUrl:'удостоверение личности',driverLicenseUrl:'водительское удостоверение',techPassportFrontUrl:'техпаспорт — лицевая сторона',techPassportBackUrl:'техпаспорт — оборотная сторона'})[type], () =>
                                 showOriginal(
                                     null,
                                     '/api/technical/users/' +
@@ -673,10 +719,12 @@ async function render() {
             }
             if (has('users') && has('danger')) {
                 const f = el('form');
-                f.append(el('h2', 'Операция поддержки'));
-                const op = select(f, 'Действие', [
-                        ['revoke-sessions', 'Завершить сеансы'],
-                        ['block', 'Заблокировать'],
+                f.append(el('h2', 'Действия с аккаунтом'));
+                const op = select(f, 'Что сделать', [
+                        ['revoke-sessions', 'Выйти из аккаунта на всех устройствах'],
+                        ['edit-profile','Изменить имя и телефон'],
+                    ['delete-account','Удалить аккаунт'],
+                    ['block', 'Заблокировать'],
                         ['unblock', 'Разблокировать'],
                         ['temporary-password', 'Установить временный пароль'],
                     ]),
@@ -696,6 +744,10 @@ async function render() {
                         'Подтверждаю выполнение операции',
                         'checkbox',
                     );
+                const editName=field(f,'Имя пользователя','text',d.user.name),editPhone=field(f,'Телефон пользователя','tel',d.user.phone);
+                const updateFields=()=>{temp.parentElement.hidden=op.value!=='temporary-password';editName.parentElement.hidden=editPhone.parentElement.hidden=op.value!=='edit-profile';};
+                op.addEventListener('change',updateFields);updateFields();
+                f.append(el('p','Удаление очищает персональные данные и файлы. Активные поездки и незавершённые выплаты нужно сначала урегулировать.','muted'));
                 f.append(
                     button('Выполнить', async () => {
                         await api('users/' + id + '/' + op.value, {
@@ -703,12 +755,13 @@ async function render() {
                             confirm: check.checked,
                             password: pw.value,
                             temporaryPassword: temp.value,
+                            ...(op.value==='edit-profile'?{fields:{name:editName.value,phone:editPhone.value}}:{}),
                         });
                         pw.value = '';
                         temp.value = '';
-                        await render();
+                        if(op.value==='delete-account')location.hash='users';else await render();
                         message(
-                            'Операция выполнена, ранее выданные токены отозваны.',
+                            op.value==='delete-account'?'Аккаунт удалён. Персональные файлы очищаются автоматически.':'Изменения сохранены.',
                         );
                     }),
                 );
@@ -1042,3 +1095,10 @@ setInterval(() => {
         void render();
 }, 30000);
 start().catch(() => login());
+
+async function showIdentityVideo(id){
+ const response=await fetch('/api/technical/identity-attempts/'+encodeURIComponent(id)+'/video',{credentials:'same-origin'});
+ if(!response.ok)throw new Error('Запись недоступна: нет права просмотра, файл отсутствует или истёк срок хранения.');
+ const url=URL.createObjectURL(await response.blob()),video=el('video');video.controls=true;video.playsInline=true;video.preload='metadata';video.src=url;video.style.width='100%';video.style.maxHeight='70vh';
+ const modal=document.querySelector('#modal');document.querySelector('#modal-content').replaceChildren(el('h2','Запись видеопроверки'),video);modal.addEventListener('close',()=>{video.pause();video.removeAttribute('src');video.load();URL.revokeObjectURL(url)},{once:true});modal.showModal();
+}

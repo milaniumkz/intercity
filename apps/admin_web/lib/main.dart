@@ -1,3 +1,5 @@
+import 'features/admin/screens/admin_identity_history_page.dart';
+import 'features/admin/screens/admin_people_page.dart';
 import 'features/admin/screens/admin_identity_reviews_page.dart';
 import 'features/admin/screens/admin_tax_registry_page.dart';
 import 'features/admin/screens/admin_trip_reviews_page.dart';
@@ -88,17 +90,50 @@ class _IntercityAdminAppState extends State<IntercityAdminApp> {
           ),
         ),
       ),
-      initialRoute: '/login',
+      initialRoute:
+          Uri.base.fragment.startsWith('/') ? Uri.base.fragment : '/login',
+      onGenerateRoute: (settings) {
+        final uri = Uri.tryParse(settings.name ?? '');
+        if (uri == null) return null;
+        Widget? page;
+        if (uri.pathSegments.length == 2 &&
+            uri.pathSegments.first == 'person') {
+          page = AdminPersonPage(userId: uri.pathSegments.last);
+        }
+        if (uri.query.isNotEmpty) {
+          page = switch (uri.path) {
+            '/users' => const AdminPeoplePage(),
+            '/drivers' => const AdminPeoplePage(drivers: true),
+            '/trip-register' => const AdminTripRegisterPage(),
+            '/identity-history' => const AdminIdentityHistoryPage(),
+            _ => page
+          };
+        }
+        if (page == null) return null;
+        return MaterialPageRoute(
+            settings: RouteSettings(name: settings.name, arguments: {
+              ...uri.queryParameters,
+              ...(settings.arguments is Map ? (settings.arguments as Map) : {})
+            }),
+            builder: (_) => page!);
+      },
       routes: {
         '/login': (context) => const AdminLoginPage(),
         '/dashboard': (context) => const AdminDashboardPage(),
-        '/users': (context) => const AdminUsersPage(),
-        '/drivers': (context) => const AdminDriversPage(),
+        '/users': (context) => const AdminPeoplePage(),
+        '/person': (context) => ModalRoute.of(context)?.settings.arguments
+                is String
+            ? AdminPersonPage(
+                userId: ModalRoute.of(context)!.settings.arguments as String)
+            : const AdminPeoplePage(),
+        '/trip-register': (context) => const AdminTripRegisterPage(),
+        '/drivers': (context) => const AdminPeoplePage(drivers: true),
         '/cities': (context) => const AdminCitiesPage(),
         '/tariffs': (context) => const AdminTariffsPage(),
         '/settings': (context) => const AdminSettingsPage(),
         '/topups': (context) => const AdminTopupsPage(),
         '/payouts': (context) => const AdminPayoutsPage(),
+        '/identity-history': (context) => const AdminIdentityHistoryPage(),
         '/identity-reviews': (context) => const _IdentityReviewAccess(),
         '/notifications': (context) => const AdminNotificationsPage(),
         '/finance-audit': (context) => const AdminFinanceAuditPage(),

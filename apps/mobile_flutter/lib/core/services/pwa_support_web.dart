@@ -5,6 +5,7 @@ import 'package:web/web.dart' as web;
 external JSFunction? get _showHelp;
 
 class PwaSupport {
+  static bool get isWeb => true;
   static bool get isIosWeb =>
       RegExp(r'iPad|iPhone|iPod').hasMatch(web.window.navigator.userAgent) ||
       (web.window.navigator.platform == 'MacIntel' &&

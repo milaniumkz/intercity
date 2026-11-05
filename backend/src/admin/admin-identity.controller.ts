@@ -1,5 +1,5 @@
 import { DriverDocumentService } from '../identity/driver-document.service';
-import { BadRequestException, Body, Controller, ForbiddenException, Get, Header, Param, Post, Request, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Header, Param, Post, Query, Request, Res, UseGuards } from '@nestjs/common';
 import { IsBoolean, IsOptional, IsObject, IsString, MaxLength, MinLength } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { IdentityService } from '../identity/identity.service';
@@ -10,6 +10,7 @@ class DecisionDto { @IsOptional() @IsObject() vehicle?:object; @IsBoolean() appr
 export class AdminIdentityController {
  constructor(private readonly identity:IdentityService,private readonly push:IdentityPushService,private readonly admin:AdminService,private readonly documents:DriverDocumentService){}
  private async permit(req:any){if(!await this.admin.adminHasPermission(req.user.sub,'identity.review',true))throw new ForbiddenException('Нет доступа к проверкам личности');}
+ @Get('history') @Header('Cache-Control','no-store') async history(@Request()req,@Query()q:any){await this.permit(req);return this.identity.history(q);}
  @Get('reviews') @Header('Cache-Control','no-store') async reviews(@Request() req){await this.permit(req);return this.identity.reviews();}
  @Get('reviews/:id/:kind') @Header('Cache-Control','no-store') async media(@Request() req,@Param('id') id:string,@Param('kind') kind:string,@Res() res:any){
   await this.permit(req);if(!['reference','candidate','video','back'].includes(kind))throw new BadRequestException();

@@ -4,7 +4,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { IsBoolean, IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength } from 'class-validator';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { IdentityService, IDENTITY_CONSENT } from './identity.service';
+import { IdentityService, IDENTITY_CONSENT, supportedIdentityConsent } from './identity.service';
 class ConsentDto { @IsString() @MaxLength(60) consentVersion:string; }
 class EnrollDto extends ConsentDto { @IsOptional() @IsString() @MinLength(1) @MaxLength(72) password?:string; @IsOptional() @IsBoolean() driverConsent?:boolean; }
 class DriverConsentDto extends ConsentDto { @IsString() @MinLength(1) @MaxLength(72) password:string; @IsBoolean() driverConsent:boolean; }
@@ -17,7 +17,7 @@ class ResetDto { @Matches(/^[a-f0-9]{64}$/) resetToken:string; @IsString() @MinL
 export class IdentityController {
  constructor(private readonly identity:IdentityService,private readonly documents:DriverDocumentService){}
  @Get('status') @UseGuards(JwtAuthGuard) status(@Request() req){return this.identity.status(req.user.sub);}
- @Post('driver-consent') @UseGuards(JwtAuthGuard) @Throttle({default:{limit:5,ttl:60000}}) driverConsent(@Request() req,@Body() b:DriverConsentDto){if(b.consentVersion!==IDENTITY_CONSENT||b.driverConsent!==true)throw new BadRequestException('Подтвердите согласие');return this.documents.consent(req.user.sub,b.password);}
+ @Post('driver-consent') @UseGuards(JwtAuthGuard) @Throttle({default:{limit:5,ttl:60000}}) driverConsent(@Request() req,@Body() b:DriverConsentDto){if(!supportedIdentityConsent(b.consentVersion)||b.driverConsent!==true)throw new BadRequestException('Подтвердите согласие');return this.documents.consent(req.user.sub,b.password,b.consentVersion);}
  @Post('enroll') @UseGuards(JwtAuthGuard) @Throttle({default:{limit:20,ttl:60000}})
  enroll(@Request() req,@Body() b:EnrollDto){return this.identity.challenge({...b,userId:req.user.sub,ip:req.ip});}
  @Post('recovery') @Throttle({default:{limit:5,ttl:60000}})

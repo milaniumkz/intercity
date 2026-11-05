@@ -1,3 +1,4 @@
+import {AccountDeletionService} from '../auth/account-deletion.service';
 import { Controller, Get, Post, Body, Param, Patch, Delete, UseGuards, Request, ForbiddenException, Query, BadRequestException, Header } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
@@ -10,7 +11,7 @@ import { MonthlyBasisDto, RemittanceDto, TaxSettingsDto, VerifyTaxProfileDto } f
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class AdminController {
-    constructor(private adminService: AdminService, private taxService: TaxService) { }
+    constructor(private adminService: AdminService, private taxService: TaxService, private accountDeletion:AccountDeletionService) { }
 
     @Get('tax/registry')
     async taxRegistry(@Request() req, @Query('period') period: string, @Query('kind') kind?: string) {
@@ -181,10 +182,11 @@ export class AdminController {
 
     @Post('drivers/:id/fuel-bonus')
     @ApiOperation({ summary: 'Set driver fuel bonus' })
-    async setFuelBonus(@Request() req, @Param('id') id: string, @Body() body: { hours: number }) {
+    async setFuelBonus(@Request() req, @Param('id') id: string, @Body() body: { hours: number; reason?: string }) {
         await this.ensurePermission(req, 'drivers.manage');
         await this.trackAction(req, 'driver.fuelBonus.set', `DriverProfile:${id}`, {
             hours: body.hours,
+            reason:body.reason,
         });
         return this.adminService.setFuelBonus(id, body.hours);
     }
@@ -700,7 +702,7 @@ export class AdminController {
             'user.delete.safe',
             id,
             { reason: requiredReason },
-            () => this.adminService.deleteUserSafely(id),
+            () => this.accountDeletion.deleteBySupport(id),
         );
     }
 

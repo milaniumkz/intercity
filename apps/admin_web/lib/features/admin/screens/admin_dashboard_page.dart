@@ -2336,6 +2336,8 @@ class AdminShell extends StatelessWidget {
     ('/dashboard', 'Панель', Icons.grid_view_rounded),
     ('/users', 'Пользователи', Icons.people_alt_outlined),
     ('/drivers', 'Водители', Icons.verified_user_outlined),
+    ('/trip-register','Заказы и поездки',Icons.route_outlined),
+    ('/identity-history','История видеопроверок',Icons.video_library_outlined),
     ('/cities', 'Города', Icons.location_city_outlined),
     ('/tariffs', 'Тарифы', Icons.sell_outlined),
     ('/settings', 'Настройки', Icons.tune_rounded),

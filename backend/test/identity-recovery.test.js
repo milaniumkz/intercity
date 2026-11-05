@@ -44,6 +44,13 @@ test('private video enrollment, matching, rejection, manual review and one-use r
    await service.maintenance();assert.deepEqual(await service.vault.read(alice.id,p.referenceVideoPath),recording);
    await assert.rejects(enroll(alice),/нельзя заменить/);
   });
+  await t.test('v2 clients remain usable but failed recordings are not retained without v3 consent',async()=>{
+   result.verdict='REJECT';result.reason='Legacy sample rejected';
+   const c=await enroll(bob,{consentVersion:'intercity-face-2026-11-v2'});
+   assert.equal((await service.submit(c.challengeId,c.challengeToken,video(),bob.id)).status,'REJECTED');
+   const row=await db.biometricChallenge.findUnique({where:{id:c.challengeId}});assert.equal(row.consentVersion,'intercity-face-2026-11-v2');assert.equal(row.videoPath,null);
+   result.verdict='PASS';result.reason='';
+  });
   await t.test('unknown or unenrolled recovery cannot create a reference or reset permission',async()=>{
    const c=await recover(bob);const r=await service.submit(c.challengeId,c.challengeToken,video());assert.equal(r.status,'REJECTED');assert.equal(r.resetToken,undefined);assert.equal(await db.biometricProfile.count({where:{userId:bob.id}}),0);
    const stored=await db.biometricChallenge.findUnique({where:{id:c.challengeId}});assert.equal(stored.userId,null);assert.equal(stored.resetHash,null);
@@ -53,10 +60,11 @@ test('private video enrollment, matching, rejection, manual review and one-use r
    await assert.rejects(service.review(c.challengeId,admin.id,true,'Do not bypass a rejected mismatch'),/недоступна/);
    result={...result,embedding:a,verdict:'REJECT',reason:'photo rejected'};c=await recover(alice);assert.equal((await service.submit(c.challengeId,c.challengeToken,video())).status,'REJECTED');result.verdict='PASS';
   });
-  await t.test('uncertain enrollment is retryable without manual review, storage or a total attempt limit',async()=>{
-   result.verdict='REVIEW';result.reason='uncertain PAD';const before=notifications,c=await enroll(bob);
-   assert.equal((await service.submit(c.challengeId,c.challengeToken,video(),bob.id)).status,'REJECTED');assert.equal(await service.needsVerification(bob.id,bob.role),true);assert.equal(notifications,before);
-   const stored=await db.biometricChallenge.findUnique({where:{id:c.challengeId}});assert.equal(stored.candidate,null);assert.equal(stored.referencePath,null);assert.equal(stored.videoPath,null);
+  await t.test('uncertain enrollment is retryable, retains encrypted failure video and never permits manual approval',async()=>{
+   result.verdict='REVIEW';result.reason='uncertain PAD';const before=notifications,c=await enroll(bob),recording=video();
+   assert.equal((await service.submit(c.challengeId,c.challengeToken,recording,bob.id)).status,'REJECTED');assert.equal(await service.needsVerification(bob.id,bob.role),true);assert.equal(notifications,before);
+   const stored=await db.biometricChallenge.findUnique({where:{id:c.challengeId}});assert.equal(stored.candidate,null);assert.equal(stored.referencePath,null);assert(stored.videoPath);assert.deepEqual(await service.vault.read(bob.id,stored.videoPath),recording);assert.deepEqual(await service.reviewMedia(c.challengeId,'video'),recording);
+   const history=await service.history({userId:bob.id,status:'FAILURES'});assert(history.items.some(x=>x.id===c.challengeId&&x.hasVideo));assert(!JSON.stringify(history).includes(stored.videoPath));
    await assert.rejects(service.review(c.challengeId,admin.id,true,'No manual initial enrollment approval'),/автоматически/);
    for(let i=0;i<20;i++)await enroll(bob);
    result.verdict='PASS';const next=await enroll(bob);assert.equal((await service.submit(next.challengeId,next.challengeToken,video(),bob.id)).status,'VERIFIED');
@@ -104,4 +112,9 @@ test('missed-gesture fallback never bypasses low face confidence, PAD, blur or i
  assert.equal(confidentRecoveryMotion(result,.777),true);
  assert.equal(confidentRecoveryMotion(result,.65),false);
  for(const change of [{passedActions:1},{passedActions:3},{oneFace:false},{issues:['ACTIONS','PAD']},{padMedian:[.8,.99]},{padLower:[.3,.96]},{sharpness:20},{continuity:.5},{padLower:undefined}])assert.equal(confidentRecoveryMotion({...result,checks:{...result.checks,...change}},.777),false);
+});
+test('previous enrollment consent remains compatible but cannot authorize failed-video retention',()=>{
+ const {supportedIdentityConsent}=require('../dist/src/identity/identity.service');
+ assert.equal(supportedIdentityConsent('intercity-face-2026-11-v2'),true);
+ assert.equal(supportedIdentityConsent('intercity-face-2026-11-v1'),false);
 });

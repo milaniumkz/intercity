@@ -1,3 +1,4 @@
+import '../../../core/services/pwa_support.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -309,6 +310,11 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                               ),
                               const Spacer(flex: 3),
+                              if (PwaSupport.isWeb)
+                                TextButton.icon(
+                                    onPressed: PwaSupport.showHelp,
+                                    icon: const Icon(Icons.add_to_home_screen),
+                                    label: const Text('Установить приложение')),
                               ICPremiumTextButton(
                                 label: 'Создать аккаунт',
                                 icon: Icons.person_add_alt_1_rounded,

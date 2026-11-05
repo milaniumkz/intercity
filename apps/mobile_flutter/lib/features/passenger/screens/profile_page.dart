@@ -1753,12 +1753,12 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
                           ),
                           onTap: _openSupportInfo,
                         ),
-                        if (PwaSupport.isIosWeb)
+                        if (PwaSupport.isWeb)
                           _profileActionTile(
                               icon: Icons.add_to_home_screen_rounded,
-                              title: 'Веб-приложение и уведомления',
+                              title: 'Установить приложение',
                               subtitle:
-                                  'Главный экран iPhone и push-уведомления',
+                                  'Главный экран и уведомления — Android и iPhone',
                               onTap: PwaSupport.showHelp),
                         _profileActionTile(
                           icon: Icons.info_outline_rounded,
