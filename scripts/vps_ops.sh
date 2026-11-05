@@ -185,6 +185,13 @@ const {PrismaClient}=require('@prisma/client');(async()=>{const p=new PrismaClie
 JSREGCHECK
       exit 0
     fi
+    if [[ "$TARGET" == "intercity-live-offers" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSLIVEOFFERS'
+const {PrismaClient}=require('@prisma/client');(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');const people=await tx.user.findMany({where:{OR:[{name:{contains:'Олег',mode:'insensitive'}},{name:{contains:'Анастас',mode:'insensitive'}}]},select:{id:true,name:true,role:true,driverProfile:{select:{id:true,status:true,acceptIntercity:true,intercityRoutes:{select:{fromCity:true,toCity:true,departureAt:true,departureOffsetMinutes:true,isActive:true,seatsAvailable:true}}}}}});const ids=people.map(x=>x.id);const requests=await tx.intercityRequest.findMany({where:{OR:[{passengerId:{in:ids}},{offers:{some:{driverId:{in:ids}}}}]},orderBy:{createdAt:'desc'},take:12,select:{id:true,passengerId:true,createdAt:true,updatedAt:true,requestType:true,status:true,fromCity:true,toCity:true,date:true,seats:true,selectedDriverId:true,offers:{select:{id:true,driverId:true,status:true,price:true,seats:true,createdAt:true,updatedAt:true}}}});const events=await tx.techEvent.findMany({where:{userId:{in:ids},at:{gte:new Date(Date.now()-7200000)},OR:[{action:{contains:'intercity'}},{action:{contains:'offers'}}]},orderBy:{at:'desc'},take:50,select:{at:true,userId:true,action:true,status:true,result:true,message:true,objectId:true}});console.log(JSON.stringify({people,requests,events}));},{timeout:30000});}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSLIVEOFFERS
+      exit 0
+    fi
     if [[ "$TARGET" == "identity-video-storage" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-backend node <<'JSVIDEOSTORAGE'
