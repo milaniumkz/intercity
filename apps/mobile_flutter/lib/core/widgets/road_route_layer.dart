@@ -1,3 +1,5 @@
+import 'dart:async';
+import '../utils/network_recovery.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -92,12 +94,14 @@ class RoadRouteLayer extends StatefulWidget {
       this.fitCamera = true,
       this.fitPadding = const EdgeInsets.all(36),
       this.onDurationResolved,
-      this.repository});
+      this.repository,
+      this.networkEvents});
   final LatLng from;
   final LatLng to;
   final Color color;
   final double strokeWidth;
   final RoadRouteRepository? repository;
+  final Stream<void>? networkEvents;
   final bool fitCamera;
   final EdgeInsets fitPadding;
   final ValueChanged<double?>? onDurationResolved;
@@ -109,9 +113,18 @@ class _RoadRouteLayerState extends State<RoadRouteLayer> {
   List<LatLng> _points = const [];
   bool _failed = false;
   int _request = 0;
+  StreamSubscription<void>? _network;
+  AppLifecycleListener? _lifecycle;
   @override
   void initState() {
     super.initState();
+    void restored() {
+      if (mounted && _failed) unawaited(_load());
+    }
+
+    _network = (widget.networkEvents ?? networkRecoveryEvents())
+        .listen((_) => restored());
+    _lifecycle = AppLifecycleListener(onResume: restored);
     _load();
   }
 
@@ -152,6 +165,13 @@ class _RoadRouteLayerState extends State<RoadRouteLayer> {
         widget.onDurationResolved?.call(null);
       }
     }
+  }
+
+  @override
+  void dispose() {
+    _network?.cancel();
+    _lifecycle?.dispose();
+    super.dispose();
   }
 
   @override

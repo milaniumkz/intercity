@@ -40,7 +40,7 @@ git merge-base --is-ancestor "$BASE_COMMIT_SHA" HEAD || {
 }
 
 echo "==> Backend build"
-(cd "$ROOT_DIR/backend" && npm ci && npm run build)
+(cd "$ROOT_DIR/backend" && npm ci && npx prisma generate && npm run build)
 (cd "$ROOT_DIR/backend" && node --test test/*.test.js)
 
 echo "==> Mobile web build"
@@ -125,6 +125,9 @@ for raw in changed:
         if original.returncode == 0:
             target.write_bytes(original.stdout)
 PYSOURCE
+
+# Pinned, checksum-verified MIT runtime. No road data or secrets in the bundle.
+python3 "$ROOT_DIR/scripts/prepare_brouter_runtime.py" "$STAGE_DIR/intercity/services/routing/runtime"
 
 python3 "$ROOT_DIR/scripts/vps_release_manifest.py" create \
   "$BASE_COMMIT_SHA" "$STAGE_DIR/intercity/.release-manifest.json"

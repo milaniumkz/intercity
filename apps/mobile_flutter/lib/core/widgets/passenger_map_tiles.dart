@@ -2,12 +2,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import '../constants/app_constants.dart';
+import '../utils/network_recovery.dart';
 import '../services/technical_telemetry.dart';
 
 /// GPS permission and raster-map loading are independent. Never leave a blank
 /// surface when the tile network fails, and evict failed images before retry.
 class PassengerMapTiles extends StatefulWidget {
-  const PassengerMapTiles({super.key, this.tileProvider});
+  const PassengerMapTiles({super.key, this.tileProvider, this.networkEvents});
+  final Stream<void>? networkEvents;
   final TileProvider? tileProvider;
   @override
   State<PassengerMapTiles> createState() => _PassengerMapTilesState();
@@ -18,6 +20,8 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
   int _attempt = 0;
   final Map<TileImage, VoidCallback> _observed = {};
   Timer? _timeout, _monitor, _automaticRetry;
+  StreamSubscription<void>? _network;
+  AppLifecycleListener? _lifecycle;
   MapCamera? _camera;
   String _viewport = '';
   bool _viewExpired = false;
@@ -42,6 +46,13 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
   @override
   void initState() {
     super.initState();
+    void restored() {
+      if (mounted && _failed) unawaited(_retry());
+    }
+
+    _network = (widget.networkEvents ?? networkRecoveryEvents())
+        .listen((_) => restored());
+    _lifecycle = AppLifecycleListener(onResume: restored);
     _startTimeout();
     _monitor = Timer.periodic(const Duration(seconds: 2), (_) => _health());
   }
@@ -152,6 +163,8 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
 
   @override
   void dispose() {
+    _network?.cancel();
+    _lifecycle?.dispose();
     _timeout?.cancel();
     _monitor?.cancel();
     _automaticRetry?.cancel();

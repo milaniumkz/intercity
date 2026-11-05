@@ -62,6 +62,45 @@ void main() {
     PaintingBinding.instance.imageCache.clearLiveImages();
   });
 
+  testWidgets(
+      'connectivity recovery reloads a failed map and disposes listener',
+      (tester) async {
+    final events = StreamController<void>.broadcast();
+    final provider = PendingTiles();
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: FlutterMap(
+      options: const MapOptions(
+          initialCenter: LatLng(49.97, 82.61), initialZoom: 14),
+      children: [
+        PassengerMapTiles(tileProvider: provider, networkEvents: events.stream)
+      ],
+    ))));
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pump();
+    expect(find.text('Повторить загрузку карты'), findsOneWidget);
+    // Exhaust the three automatic retries using the test clock, then verify
+    // that time alone does not start another download.
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(seconds: 15));
+      await tester.pump();
+    }
+    final exhausted = PendingImage.loads;
+    await tester.pump(const Duration(minutes: 2));
+    await tester.pump();
+    expect(PendingImage.loads, exhausted);
+    final before = PendingImage.loads;
+    events.add(null);
+    await tester.pump();
+    await tester.pump();
+    expect(PendingImage.loads, greaterThan(before));
+    expect(find.text('Повторить загрузку карты'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    expect(events.hasListener, isFalse);
+    await events.close();
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+  });
   testWidgets('map timeout offers a tappable retry that reloads tiles',
       (tester) async {
     final provider = PendingTiles();

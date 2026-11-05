@@ -1,5 +1,6 @@
 import '../../../core/widgets/passenger_map_tiles.dart';
 import '../../../core/services/technical_telemetry.dart';
+import '../../../core/utils/network_recovery.dart';
 import '../../driver/widgets/route_departure_field.dart';
 import '../../../core/services/trip_status_sound.dart';
 import '../../../core/services/push_notifications_service.dart';
@@ -11,7 +12,6 @@ import '../../../core/utils/browser_location_error.dart';
 import '../../../core/utils/location_session.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -406,6 +406,24 @@ class OrderScreen extends StatefulWidget {
 
 class _OrderScreenState extends State<OrderScreen> {
   AppLifecycleListener? _locationLifecycle;
+  StreamSubscription<void>? _searchNetwork;
+  String? _failedFromSearch, _failedToSearch;
+  void _recoverAddressSearch() {
+    if (!mounted) return;
+    if (_failedFromSearch != null &&
+        _fromController.text.trim() == _failedFromSearch) {
+      final query = _failedFromSearch!;
+      _failedFromSearch = null;
+      unawaited(_loadAddressSuggestions(query, isFrom: true));
+    }
+    if (_failedToSearch != null &&
+        _toController.text.trim() == _failedToSearch) {
+      final query = _failedToSearch!;
+      _failedToSearch = null;
+      unawaited(_loadAddressSuggestions(query, isFrom: false));
+    }
+  }
+
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   final TextEditingController _fromController = TextEditingController();
   final TextEditingController _toController = TextEditingController();
@@ -656,7 +674,10 @@ class _OrderScreenState extends State<OrderScreen> {
   @override
   void initState() {
     super.initState();
+    _searchNetwork =
+        networkRecoveryEvents().listen((_) => _recoverAddressSearch());
     _locationLifecycle = AppLifecycleListener(onResume: () {
+      _recoverAddressSearch();
       if (mounted &&
           widget.autoLocateOnStart &&
           _fromLocation == null &&
@@ -1444,6 +1465,7 @@ class _OrderScreenState extends State<OrderScreen> {
 
   @override
   void dispose() {
+    _searchNetwork?.cancel();
     _locationLifecycle?.dispose();
     _fromSearchDebounce?.cancel();
     _toSearchDebounce?.cancel();
@@ -12740,8 +12762,10 @@ class _OrderScreenState extends State<OrderScreen> {
       if (currentText != query || latestRequestId != requestId) return;
       setState(() {
         if (isFrom) {
+          _failedFromSearch = null;
           _fromSuggestions = filtered;
         } else {
+          _failedToSearch = null;
           _toSuggestions = filtered;
         }
         if (filtered.isEmpty) {
@@ -12756,13 +12780,23 @@ class _OrderScreenState extends State<OrderScreen> {
         }
       });
     } catch (_) {
-      if (!mounted) return;
+      final latest = isFrom ? _fromSuggestionRequestId : _toSuggestionRequestId;
+      final current =
+          (isFrom ? _fromController.text : _toController.text).trim();
+      if (!mounted || latest != requestId || current != query) return;
+      if (isFrom) {
+        _failedFromSearch = query;
+      } else {
+        _failedToSearch = query;
+      }
       setState(() {
         _statusText =
             'Не удалось выполнить поиск адреса. Нажмите «Найти» или выберите точку на карте.';
       });
     } finally {
-      if (mounted) {
+      if (mounted &&
+          (isFrom ? _fromSuggestionRequestId : _toSuggestionRequestId) ==
+              requestId) {
         setState(() {
           if (isFrom) {
             _fromAddressSearching = false;
@@ -12889,12 +12923,6 @@ class _OrderScreenState extends State<OrderScreen> {
     String? cityIdOverride,
     bool allowGlobalFallback = true,
   }) async {
-    if (_shouldRestrictSearchToCurrentCity &&
-        _currentCityId == null &&
-        anchor != null) {
-      await _syncSearchCityFromCoords(anchor);
-    }
-
     if (anchor == null) {
       return _fetchAddressSearchResults(
         query,
@@ -12903,27 +12931,17 @@ class _OrderScreenState extends State<OrderScreen> {
       );
     }
 
-    var localFailed = false;
-    List<Map<String, dynamic>> anchored;
-    try {
-      anchored = await _fetchAddressSearchResults(
-        query,
-        anchor: anchor,
-        cityIdOverride: cityIdOverride,
-      ).timeout(const Duration(seconds: 12));
-    } catch (_) {
-      localFailed = true;
-      anchored = const [];
-    }
+    final anchored = await _fetchAddressSearchResults(query,
+            anchor: anchor, cityIdOverride: cityIdOverride)
+        .timeout(const Duration(seconds: 12));
 
-    if (!localFailed &&
-        !_shouldRestrictSearchToCurrentCity &&
+    if (!_shouldRestrictSearchToCurrentCity &&
         shouldUseNearestAnchoredAddressResult(query: query, local: anchored)) {
       return [anchored.first];
     }
 
     if (!shouldFallbackToGlobalAddressSearch(
-      localFailed: localFailed,
+      localFailed: false,
       query: query,
       local: anchored,
       allowGlobalFallback: allowGlobalFallback &&
@@ -12938,7 +12956,7 @@ class _OrderScreenState extends State<OrderScreen> {
       anchor: null,
       cityIdOverride: cityIdOverride ?? '',
     );
-    final combined = _shouldPreferGlobalResults(query) || localFailed
+    final combined = _shouldPreferGlobalResults(query)
         ? [...global, ...anchored]
         : [...anchored, ...global];
     return _dedupeAddressResults(combined);
@@ -12949,75 +12967,14 @@ class _OrderScreenState extends State<OrderScreen> {
     required LatLng? anchor,
     String? cityIdOverride,
   }) async {
-    try {
-      final res = await _api.get(
-        '/geo/search',
-        queryParameters: _buildGeoSearchParams(
-          query,
-          anchor: anchor,
-          cityIdOverride: cityIdOverride,
-        ),
-      );
-      final results = _filterSuggestionsByRadius(
-        List<dynamic>.from(res.data as List),
-        anchor: anchor,
-      );
-      if (results.isNotEmpty) return results;
-    } catch (_) {}
-    return _fetchOsmAddressSearchResults(query, anchor: anchor);
-  }
-
-  Future<List<Map<String, dynamic>>> _fetchOsmAddressSearchResults(
-    String query, {
-    required LatLng? anchor,
-  }) async {
-    final normalized = query.trim();
-    if (normalized.length < 3) return const [];
-    try {
-      final params = <String, dynamic>{
-        'q': normalized,
-        'format': 'jsonv2',
-        'addressdetails': 1,
-        'limit': 8,
-        'countrycodes': (_rideCurrency == 'RUB' ? 'ru' : 'kz'),
-        'accept-language': 'ru',
-      };
-      if (anchor != null) {
-        params['lat'] = anchor.latitude;
-        params['lon'] = anchor.longitude;
-        final radiusKm = _maxSuggestionRadiusMeters() / 1000;
-        final latDelta = radiusKm / 111;
-        final lngDelta = radiusKm / (111 * _safeCosLatitude(anchor.latitude));
-        params['viewbox'] =
-            '${anchor.longitude - lngDelta},${anchor.latitude + latDelta},'
-            '${anchor.longitude + lngDelta},${anchor.latitude - latDelta}';
-        params['bounded'] = 1;
-      }
-      final res = await Dio().get<dynamic>(
-        'https://nominatim.openstreetmap.org/search',
-        queryParameters: params,
-        options: Options(headers: const {'Accept': 'application/json'}),
-      );
-      final raw = res.data is List ? List<dynamic>.from(res.data as List) : [];
-      final parsed = raw
-          .whereType<Map>()
-          .map((item) {
-            final lat = double.tryParse((item['lat'] ?? '').toString());
-            final lng = double.tryParse((item['lon'] ?? '').toString());
-            if (lat == null || lng == null) return null;
-            return <String, dynamic>{
-              'displayName': (item['display_name'] ?? '').toString(),
-              'lat': lat,
-              'lng': lng,
-              'source': 'osm',
-            };
-          })
-          .whereType<Map<String, dynamic>>()
-          .toList();
-      return _filterSuggestionsByRadius(parsed, anchor: anchor);
-    } catch (_) {
-      return const [];
+    final res = await _api.get('/geo/search',
+        queryParameters: _buildGeoSearchParams(query,
+            anchor: anchor, cityIdOverride: cityIdOverride));
+    if (res.data is! List) {
+      throw const FormatException('Некорректный ответ поиска адресов');
     }
+    return _filterSuggestionsByRadius(List<dynamic>.from(res.data as List),
+        anchor: anchor);
   }
 
   Future<List<Map<String, dynamic>>> _searchCitiesInDatabase(
@@ -13448,11 +13405,6 @@ class _OrderScreenState extends State<OrderScreen> {
     }
 
     return useful.join(', ');
-  }
-
-  double _safeCosLatitude(double latitude) {
-    final cos = math.cos(latitude * math.pi / 180).abs();
-    return cos < 0.25 ? 0.25 : cos;
   }
 
   bool _isCurrentCityAddressPart(String part) {

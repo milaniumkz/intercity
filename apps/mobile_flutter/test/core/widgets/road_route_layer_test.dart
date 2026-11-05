@@ -40,7 +40,8 @@ Response<dynamic> _response({double lng = 82.62}) =>
       }
     });
 Widget _map(RoadRouteRepository repository,
-        {LatLng from = const LatLng(49.95, 82.61)}) =>
+        {LatLng from = const LatLng(49.95, 82.61),
+        Stream<void>? networkEvents}) =>
     MaterialApp(
       home: Scaffold(
           body: FlutterMap(
@@ -51,7 +52,8 @@ Widget _map(RoadRouteRepository repository,
               from: from,
               to: const LatLng(49.90, 82.609),
               color: Colors.purple,
-              repository: repository)
+              repository: repository,
+              networkEvents: networkEvents)
         ],
       )),
     );
@@ -85,6 +87,27 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(PolylineLayer), findsOneWidget);
     expect(api.calls, 2);
+  });
+  testWidgets(
+      'connectivity recovery retries a failed route once and unsubscribes',
+      (tester) async {
+    final events = StreamController<void>.broadcast();
+    final api = _RouteApi()..fail = true;
+    await tester.pumpWidget(
+        _map(RoadRouteRepository(api), networkEvents: events.stream));
+    await tester.pumpAndSettle();
+    expect(api.calls, 1);
+    api.fail = false;
+    events.add(null);
+    await tester.pumpAndSettle();
+    expect(find.byType(PolylineLayer), findsOneWidget);
+    expect(api.calls, 2);
+    events.add(null);
+    await tester.pumpAndSettle();
+    expect(api.calls, 2);
+    await tester.pumpWidget(const SizedBox());
+    expect(events.hasListener, isFalse);
+    await events.close();
   });
   testWidgets('late geometry for old coordinates cannot overwrite new route',
       (tester) async {

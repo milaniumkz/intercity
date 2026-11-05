@@ -1,4 +1,6 @@
+import { brouterRoadResponse } from './brouter';
 import { BadRequestException, Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
+import {GeoProviderGate,publicNominatim,routeProviderAllowed} from './provider-policy';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma.service';
 import { KazakhstanAddressIndex } from './kz-address-index';
@@ -63,9 +65,11 @@ export class GeoService {
 
     private readonly logger = new Logger(GeoService.name);
 
+    private readonly providerGate = new GeoProviderGate();
+
     private async fetchGeo(input: string, options: RequestInit = {}, timeoutMs = 4000) {
         try {
-            const response = await fetch(input, { ...options, signal: AbortSignal.timeout(timeoutMs) });
+            const response = await this.providerGate.run(input, () => fetch(input, { ...options, headers: {...options.headers, 'User-Agent':'InterCity/1.0 (+https://intercity.89-207-255-27.sslip.io)', 'Referer':'https://intercity.89-207-255-27.sslip.io/'}, signal: AbortSignal.timeout(timeoutMs) }));
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return response;
         } catch (error) {
@@ -86,23 +90,39 @@ export class GeoService {
         @Optional() private kzAddresses?: KazakhstanAddressIndex,
     ) {
         this.nominatimUrl = this.configService.get('NOMINATIM_URL') || 'https://nominatim.openstreetmap.org';
-        this.osrmUrl = (this.configService.get('OSRM_URL') || 'https://router.project-osrm.org').replace(/^http:/, 'https:');
+        this.osrmUrl = (this.configService.get('OSRM_URL') || 'https://router.project-osrm.org').replace(/\/$/, '');
         this.yandexGeocoderApiKey =
             this.configService.get<string>('YANDEX_GEOCODER_API_KEY')?.trim() || undefined;
     }
 
-    async reverseGeocode(lat: number, lng: number) {
+    private readonly reverseCache = new Map<string,{expires:number;data:any}>();
+    private readonly reverseRequests = new Map<string,Promise<any>>();
+    async reverseGeocode(lat:number,lng:number) {
+        if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180)throw new BadRequestException('Некорректные координаты');
+        const key=lat+':'+lng,cached=this.reverseCache.get(key);
+        if(cached&&cached.expires>Date.now())return cached.data;
+        if(this.reverseRequests.has(key))return this.reverseRequests.get(key);
+        const request=this.reverseGeocodeUncached(lat,lng).then(data=>{
+            if(this.reverseCache.size>=500)this.reverseCache.delete(this.reverseCache.keys().next().value);
+            this.reverseCache.set(key,{expires:Date.now()+(data.addressResolved?300000:5000),data});return data;
+        }).finally(()=>this.reverseRequests.delete(key));
+        this.reverseRequests.set(key,request);return request;
+    }
+    private async reverseData(lat:number,lng:number) {
+        if(!publicNominatim(this.nominatimUrl))return (await this.fetchGeo(`${this.nominatimUrl}/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1&accept-language=ru`)).json();
+        const url=new URL(`${this.configService.get('PHOTON_URL')||'https://photon.komoot.io'}/reverse`);
+        url.searchParams.set('lat',String(lat));url.searchParams.set('lon',String(lng));url.searchParams.set('lang','ru');url.searchParams.set('limit','1');
+        const data=await (await this.fetchGeo(url.toString())).json();
+        if(data.address)return data; // compatible owner-controlled reverse services
+        const p=data.features?.[0]?.properties;
+        if(!p)throw new Error('Reverse address not found');
+        return {address:{city:p.city,town:p.town,village:p.village,state:p.state,country_code:p.countrycode,road:p.street,house_number:p.housenumber},display_name:[p.street,p.housenumber,p.city,p.country].filter(Boolean).join(', ')};
+    }
+    private yandexEnabled() { return this.configService.get('YANDEX_GEOCODER_FALLBACK_ENABLED')==='true' && Boolean(this.yandexGeocoderApiKey); }
+    private async reverseGeocodeUncached(lat: number, lng: number) {
         const nearestCity = await this.findNearestCity(lat, lng);
         try {
-            const response = await this.fetchGeo(
-                `${this.nominatimUrl}/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1&accept-language=ru`,
-                {
-                    headers: {
-                        'User-Agent': 'INTERCITY/1.0',
-                    },
-                }
-            );
-            const data = await response.json();
+            const data = await this.reverseData(lat,lng);
             const addressParts = data?.address || {};
             const rawCity = this.extractCity(addressParts);
             const reportedCountry = (addressParts.country_code || '').toUpperCase();
@@ -314,6 +334,7 @@ export class GeoService {
     private readonly addressRequests = new Map<string, Promise<Array<{displayName: string; lat: number; lng: number}>>>();
 
     async searchLocations(query: string, nearLat?: number, nearLng?: number, cityId?: string) {
+        if((query||'').trim().length<3)return [];
         const key = JSON.stringify([this.normalizeCityToken(query || ''), nearLat, nearLng, cityId]);
         const cached = this.addressCache.get(key);
         if (cached && cached.expires > Date.now()) return cached.results;
@@ -371,10 +392,9 @@ export class GeoService {
                 this.combineQuery(query, cityContext?.name || context?.city),
                 this.combineQuery(query.replace(/[,\s]+\d+[\p{L}\d\/\-]*\s*$/u, ''), cityContext?.name || context?.city),
             ].filter((value, index, arr): value is string => Boolean(value?.trim()) && arr.indexOf(value) === index);
-            const photonRequest = cityContext
-                ? this.fetchPhotonSearchResults(query, cityContext).catch(() => [])
-                : Promise.resolve([]);
-            const yandexRequest = cityContext && this.yandexGeocoderApiKey
+            let providerFailed=false;
+            const photonRequest = this.fetchPhotonSearchResults(query, cityContext || undefined).catch(() => {providerFailed=true;return [];});
+            const yandexRequest = cityContext && this.yandexEnabled()
                 ? this.fetchYandexSearchResults(queries[0], cityContext).catch(() => [])
                 : Promise.resolve([]);
 
@@ -422,6 +442,7 @@ export class GeoService {
                 return number === house ? 0 : number.startsWith(house) && !/^\d/.test(number.slice(house.length)) && item.road ? 1 : item.road && !number ? 2 : 3;
             };
             const items = collected;
+            if(!items.length && providerFailed)throw new ServiceUnavailableException({code:'ADDRESS_SEARCH_UNAVAILABLE',message:'Поиск адресов временно недоступен. Повторите поиск или выберите точку на карте.'});
             if (Number.isFinite(nearLat) && Number.isFinite(nearLng)) {
                 return items
                     .map((item: any) => ({
@@ -434,11 +455,13 @@ export class GeoService {
             }
             return items.sort((a,b) => addressRank(a)-addressRank(b)).slice(0, 10);
         } catch (error) {
+            if(error instanceof ServiceUnavailableException)throw error;
             return [];
         }
     }
 
     private async fetchCitySearchResults(query: string) {
+        if(publicNominatim(this.nominatimUrl))return [];
         const url = new URL(`${this.nominatimUrl}/search`);
         url.searchParams.set('q', query);
         url.searchParams.set('format', 'json');
@@ -473,7 +496,7 @@ export class GeoService {
     }
 
     private async fetchYandexCitySearchResults(query: string) {
-        if (!this.yandexGeocoderApiKey) return [];
+        if (!this.yandexEnabled()) return [];
         const url = new URL('https://geocode-maps.yandex.ru/v1');
         url.searchParams.set('apikey', this.yandexGeocoderApiKey);
         url.searchParams.set('geocode', query);
@@ -530,7 +553,8 @@ export class GeoService {
         countryCode?: string,
         cityContext?: { id: string; name: string; region: string | null; lat: number; lng: number },
     ) {
-        if (Date.now() < this.nominatimSearchRetryAt) return [];
+        // The public endpoint explicitly forbids autocomplete, including backend proxies.
+        if (publicNominatim(this.nominatimUrl) || Date.now() < this.nominatimSearchRetryAt) return [];
         const url = new URL(`${this.nominatimUrl}/search`);
         url.searchParams.set('q', query);
         url.searchParams.set('format', 'json');
@@ -562,25 +586,27 @@ export class GeoService {
         return data.filter((item: any) => this.belongsToCityContext(item, cityContext));
     }
 
-    private async fetchPhotonSearchResults(query: string, city: {name: string; countryCode?: string; lat: number; lng: number}) {
+    private async fetchPhotonSearchResults(query: string, city?: {name: string; countryCode?: string; lat: number; lng: number}) {
         const url = new URL(`${this.configService.get('PHOTON_URL') || 'https://photon.komoot.io'}/api/`);
         url.searchParams.set('q', query.trim());
         url.searchParams.set('limit', '15');
-        url.searchParams.set('lat', String(city.lat));
-        url.searchParams.set('lon', String(city.lng));
-        const box = this.buildCityViewBox(city);
-        url.searchParams.set('bbox', `${box.west},${box.south},${box.east},${box.north}`);
+        url.searchParams.set('lang','ru');
+        if(city){
+          url.searchParams.set('lat', String(city.lat));url.searchParams.set('lon', String(city.lng));
+          const box=this.buildCityViewBox(city);url.searchParams.set('bbox',`${box.west},${box.south},${box.east},${box.north}`);
+        }
         const response = await this.fetchGeo(url.toString());
         const data = await response.json();
-        return (Array.isArray(data.features) ? data.features : []).flatMap((feature: any) => {
+        if(!Array.isArray(data.features))throw new Error('Invalid address provider response');
+        return data.features.flatMap((feature: any) => {
             const p = feature.properties || {};
             const c = feature.geometry?.coordinates;
             if (!Array.isArray(c) || !Number.isFinite(c[0]) || !Number.isFinite(c[1])) return [];
-            if (city.countryCode && p.countrycode?.toUpperCase() !== city.countryCode.toUpperCase()) return [];
+            if (!['KZ','RU'].includes(p.countrycode?.toUpperCase()) || (city?.countryCode && p.countrycode?.toUpperCase() !== city.countryCode.toUpperCase())) return [];
             const displayName = [...new Set([p.name, p.street, p.housenumber, p.city, p.country].filter(Boolean))].join(', ');
             const item = {display_name: displayName, address: {city:p.city, town:p.town, road:p.street, country_code:p.countrycode}};
-            if (!this.belongsToCityContext(item, city)) return [];
-            if (this.haversine(city.lat, city.lng, c[1], c[0]) > this.addressSearchRadiusKm) return [];
+            if (city && !this.belongsToCityContext(item, city)) return [];
+            if (city && this.haversine(city.lat, city.lng, c[1], c[0]) > this.addressSearchRadiusKm) return [];
             return [{displayName, lat:c[1], lng:c[0], houseNumber:p.housenumber || null,
                 road:p.street || (p.osm_key === 'highway' ? p.name : null), source:'photon'}];
         });
@@ -609,7 +635,7 @@ export class GeoService {
         query: string,
         cityContext: { id: string; name: string; region: string | null; lat: number; lng: number },
     ): Promise<Array<{ displayName: string; lat: number; lng: number }>> {
-        if (!this.yandexGeocoderApiKey) {
+        if (!this.yandexEnabled()) {
             return [];
         }
 
@@ -789,28 +815,10 @@ export class GeoService {
             .replace(/[‐‑–—-]+/g, ' ').replace(/\s+/g, ' ');
     }
 
-    private async getSearchContext(lat: number, lng: number) {
-        try {
-            const response = await this.fetchGeo(
-                `${this.nominatimUrl}/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1&accept-language=ru`,
-                {
-                    headers: {
-                        'User-Agent': 'INTERCITY/1.0',
-                    },
-                }
-            );
-            const data = await response.json();
-            const address = data?.address || {};
-            return {
-                city: address.city || address.town || address.village || address.county || null,
-                region: address.state || address.region || null,
-                countryCode: typeof address.country_code === 'string'
-                    ? address.country_code.toLowerCase()
-                    : undefined,
-            };
-        } catch (_) {
-            return null;
-        }
+    private async getSearchContext(lat:number,lng:number) {
+        // Never reverse-geocode through public Nominatim on each keystroke.
+        const city=await this.findNearestCity(lat,lng);
+        return city?{city:city.name,region:city.region,countryCode:city.countryCode.toLowerCase()}:null;
     }
 
     private combineQuery(query: string, city?: string | null, region?: string | null) {
@@ -841,13 +849,21 @@ export class GeoService {
     }
 
     private async loadRoadRoute(fromLat: number, fromLng: number, toLat: number, toLng: number) {
-        const providers = [...new Set([this.osrmUrl, this.configService.get('OSRM_FALLBACK_URL') || 'https://routing.openstreetmap.de/routed-car'])];
-        for (const provider of providers) {
+        const brouter = this.configService.get<string>('BROUTER_URL');
+        const privateBrouter = brouter && routeProviderAllowed(brouter, 'false');
+        const providers=privateBrouter ? [brouter, this.osrmUrl] : [this.osrmUrl];
+        const fallback=this.configService.get<string>('OSRM_FALLBACK_URL');
+        if(fallback && this.configService.get('OSRM_FALLBACK_ENABLED')==='true')providers.push(fallback);
+        const allowed=[...new Set(providers)].filter(url=>url===brouter && privateBrouter || routeProviderAllowed(url,this.configService.get(url===this.osrmUrl?'OSRM_USAGE_ALLOWED':'OSRM_FALLBACK_USAGE_ALLOWED'),this.configService.get('OSRM_FOSSGIS_PERMISSION_REFERENCE')));
+        for (const provider of allowed) {
           try {
-            const response = await this.fetchGeo(
-                `${provider.replace(/\/$/, '')}/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson&steps=true&alternatives=false`, {}, 8000
-            );
-            const data = await response.json();
+            const isBrouter = provider === brouter;
+            const url = isBrouter
+                ? `${provider.replace(/\/$/, '')}/brouter?lonlats=${fromLng},${fromLat}%7C${toLng},${toLat}&profile=car-fast-nocost&alternativeidx=0&format=geojson`
+                : `${provider.replace(/\/$/, '')}/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson&steps=true&alternatives=false`;
+            const response = await this.fetchGeo(url, {}, isBrouter ? 22000 : 8000);
+            const raw = await response.json();
+            const data = isBrouter ? brouterRoadResponse(raw) : raw;
             if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
                 const route = data.routes[0];
                 const coords = route.geometry?.coordinates;
@@ -884,7 +900,7 @@ export class GeoService {
             }
           } catch (_) { /* Try the independent road router. Never estimate a road fare by air distance. */ }
         }
-        throw new ServiceUnavailableException({code:'ROAD_ROUTE_UNAVAILABLE', message:'Не удалось построить маршрут по дорогам. Повторите попытку.'});
+        throw new ServiceUnavailableException({code:'ROAD_ROUTE_UNAVAILABLE', reason:allowed.length?'PROVIDER_UNAVAILABLE':'PROVIDER_POLICY',message:allowed.length?'Не удалось построить маршрут по дорогам. Повторите попытку.':'Дорожная маршрутизация не настроена: требуется разрешённый источник маршрутов.'});
     }
 
     haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {

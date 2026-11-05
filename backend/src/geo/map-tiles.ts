@@ -14,7 +14,8 @@ export class MapTileCache {
     private pending=new Map<string,Promise<Entry>>();
     private active=0;
     private writes=0;
-    constructor(private root:string, private request:typeof fetch=fetch) {}
+    private blockedUntil=0;
+    constructor(private root:string, private request:typeof fetch=fetch, private clock=()=>Date.now()) {}
     async get(z:string,x:string,y:string):Promise<Entry> {
         const key=tileKey(z,x,y);
         if(this.pending.has(key)) return this.pending.get(key)!;
@@ -28,15 +29,29 @@ export class MapTileCache {
         let cached:Entry|undefined;
         try {const data=JSON.parse(await fs.readFile(file,'utf8'));const body=Buffer.from(data.body,'base64');if(body.subarray(0,8).equals(PNG))cached={...data,body};}catch{}
         if(cached && cached.expires>Date.now()) return cached;
+        if(this.blockedUntil>this.clock()) {
+            if(cached && cached.staleAllowed!==false && cached.expires>Date.now()-86400000)return cached;
+            throw new ServiceUnavailableException('Сервис карты временно недоступен. Повторите позже.');
+        }
         // Bound concurrent upstream requests without speculative tile prefetch.
         for(let n=0;this.active>=8 && n<100;n++)await new Promise(r=>setTimeout(r,50));
         if(this.active>=8)throw new ServiceUnavailableException('Сервис карты занят');
+        // A queued request may have waited while another request received 429.
+        if(this.blockedUntil>this.clock()) {
+            if(cached && cached.staleAllowed!==false && cached.expires>Date.now()-86400000)return cached;
+            throw new ServiceUnavailableException('Сервис карты временно недоступен. Повторите позже.');
+        }
         this.active++;
         try {
             const headers:Record<string,string>={'User-Agent':'InterCity/1.0 (+https://intercity.89-207-255-27.sslip.io)','Accept':'image/png'};
             if(cached?.etag)headers['If-None-Match']=cached.etag;
             if(cached?.modified)headers['If-Modified-Since']=cached.modified;
             const response=await this.request(`https://tile.openstreetmap.org/${Number(z)}/${Number(x)}/${Number(y)}.png`,{headers,signal:AbortSignal.timeout(6000),redirect:'error'});
+            if(response.status===429||response.status===403) {
+                const retry=response.headers.get('retry-after')||'';
+                const seconds=/^\d+$/.test(retry)?Number(retry):Math.ceil((Date.parse(retry)-this.clock())/1000);
+                this.blockedUntil=this.clock()+1000*Math.max(60,Math.min(Number.isFinite(seconds)?seconds:0,600));
+            }
             if(!response.ok && response.status!==304)throw new Error(`upstream HTTP ${response.status}`);
             const policy=response.headers.get('cache-control')||cached?.cacheControl||'';
             const explicitAge=/(?:^|,)\s*max-age=(\d+)/i.exec(policy)?.[1];
@@ -46,11 +61,14 @@ export class MapTileCache {
             if(body.length>512*1024 || !body.subarray(0,8).equals(PNG))throw new Error('invalid map image');
             const entry:Entry={body,expires:Date.now()+ttl*1000,etag:response.headers.get('etag')||cached?.etag,modified:response.headers.get('last-modified')||cached?.modified,cacheControl:policy,staleAllowed:!/no-cache|no-store|must-revalidate/i.test(policy)};
             if(/no-store/i.test(policy)){await fs.unlink(file).catch(()=>{});return entry;}
-            await fs.mkdir(this.root,{recursive:true});
-            const temp=file+'.tmp';
-            await fs.writeFile(temp,JSON.stringify({...entry,body:body.toString('base64')}));
-            await fs.rename(temp,file);
-            if(++this.writes%64===0)void this.prune().catch(()=>{});
+            // A full/read-only cache must not discard an already downloaded image.
+            try {
+                await fs.mkdir(this.root,{recursive:true});
+                const temp=file+'.tmp';
+                await fs.writeFile(temp,JSON.stringify({...entry,body:body.toString('base64')}));
+                await fs.rename(temp,file);
+                if(++this.writes%64===0)void this.prune().catch(()=>{});
+            } catch { /* Cache is optional; upstream policy still controls browser caching. */ }
             return entry;
         }catch(error){
             // Previously fetched imagery remains useful during a short outage.

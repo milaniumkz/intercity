@@ -39,3 +39,25 @@ test('upstream no-store is respected and stale cache is used only when permitted
   const strict=new MapTileCache(root,async()=>new Response(png,{headers:{'cache-control':'no-cache, must-revalidate'}}));await strict.get('1','1','0');await assert.rejects(offline.get('1','1','0'),/offline/);
  }finally{await fs.rm(root,{recursive:true,force:true})}
 });
+
+test('an unwritable cache does not discard successfully downloaded imagery',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'map-cache-full-'));
+ try {
+  const file=path.join(root,'not-a-directory');await fs.writeFile(file,'occupied');
+  const cache=new MapTileCache(file,async()=>new Response(png,{headers:{'cache-control':'max-age=600'}}));
+  assert((await cache.get('1','0','0')).body.equals(png));
+ }finally{await fs.rm(root,{recursive:true,force:true})}
+});
+
+test('tile rate limits stop new upstream requests until Retry-After expires',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'map-cache-limit-'));
+ try {
+  let now=1000,calls=0;
+  const cache=new MapTileCache(root,async()=>{calls++;return calls===1?new Response(null,{status:429,headers:{'retry-after':'120'}}):new Response(png);},()=>now);
+  await assert.rejects(cache.get('1','0','0'),/429/);
+  await assert.rejects(cache.get('1','1','0'),/недоступен/);
+  assert.equal(calls,1);
+  now+=120001;
+  assert((await cache.get('1','1','0')).body.equals(png));assert.equal(calls,2);
+ }finally{await fs.rm(root,{recursive:true,force:true})}
+});

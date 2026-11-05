@@ -109,3 +109,22 @@ docker compose -f docker-compose.prod.yml exec postgres pg_dump -U intercity int
 ```bash
 cat intercity_backup.sql | docker compose -f docker-compose.prod.yml exec -T postgres psql -U intercity intercity
 ```
+
+### Private road routing (existing VPS)
+
+The release bundles checksum-pinned BRouter 1.7.10 (MIT) and the car-fast-nocost
+profile. The installer verifies `services/routing/segments-manifest.json`, free
+RAM and disk reserve, then downloads about 1.53 GB of preprocessed OSM graph
+segments sequentially into `shared/brouter/segments4`. No public demo router is
+used. Do not delete this shared directory when retiring application releases.
+
+The internal `routing` container has no published port, 640 MiB memory and one
+CPU limit. Backend uses `BROUTER_URL=http://routing:17777`. Public OSRM fallbacks
+remain disabled unless separately permitted. Deployment verifies a real car
+route before accepting the release. Maps/addresses still use OSM tiles/Photon.
+
+To update the road snapshot, regenerate and review the segment sizes and hashes
+from the official download source, test the pinned runtime with the new files,
+then deploy. Do not bypass checksum failures or overwrite the manifest on the
+server. Very long routes, disconnected roads and high concurrency can exceed the
+bounded CPU/time budget; no straight-line fare fallback is allowed.

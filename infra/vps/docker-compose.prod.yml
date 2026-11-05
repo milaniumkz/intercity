@@ -39,8 +39,31 @@ services:
       retries: 12
       start_period: 30s
 
+  routing:
+    build:
+      context: ../../services/routing
+    image: intercity-routing:prod
+    container_name: intercity-routing
+    restart: unless-stopped
+    mem_limit: 640m
+    cpus: '1.0'
+    pids_limit: 96
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=32m,uid=1000,gid=1000']
+    volumes:
+      - ../../routing-data:/segments4:ro
+    networks: [routing_internal]
+    healthcheck:
+      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/17777']
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+
   backend:
-    networks: [default, identity_internal]
+    networks: [default, identity_internal, routing_internal]
     build:
       context: ../../backend
       dockerfile: Dockerfile
@@ -50,6 +73,8 @@ services:
     env_file:
       - .env
     depends_on:
+      routing:
+        condition: service_healthy
       identity:
         condition: service_healthy
       postgres:
@@ -58,6 +83,7 @@ services:
       - ../../uploads:/app/uploads
       - ../../technical-data:/app/technical-data
     environment:
+      BROUTER_URL: http://routing:17777
       IDENTITY_ENGINE_URL: http://identity:8080
       TECH_STORAGE_DIR: /app/technical-data
       TECH_TRUST_PROXY: "1"
@@ -89,5 +115,7 @@ volumes:
   caddy_config:
 
 networks:
+  routing_internal:
+    internal: true
   identity_internal:
     internal: true

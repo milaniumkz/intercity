@@ -18,6 +18,7 @@ PROJECT_NAME="$(docker inspect --format '{{ index .Config.Labels "com.docker.com
 [[ -n "$PROJECT_NAME" ]] || { echo 'Cannot identify the existing database Compose project' >&2; exit 1; }
 PREVIOUS_IMAGE="$(docker inspect --format '{{.Image}}' intercity-backend)"
 PREVIOUS_IDENTITY_IMAGE="$(docker inspect --format '{{.Image}}' intercity-identity 2>/dev/null || true)"
+PREVIOUS_ROUTING_IMAGE="$(docker inspect --format '{{.Image}}' intercity-routing 2>/dev/null || true)"
 
 mkdir -p "$RELEASE_DIR"
 tar -xzf "$BUNDLE_PATH" -C "$RELEASE_DIR" --strip-components=1
@@ -67,6 +68,11 @@ rollback_on_failure() {
     echo 'Release health check failed; restoring the previous application release' >&2
     docker tag "$PREVIOUS_IMAGE" intercity-backend:prod
     if [[ -n "$PREVIOUS_IDENTITY_IMAGE" ]]; then docker tag "$PREVIOUS_IDENTITY_IMAGE" intercity-identity:prod; fi
+    if [[ -n "$PREVIOUS_ROUTING_IMAGE" ]]; then
+      docker tag "$PREVIOUS_ROUTING_IMAGE" intercity-routing:prod
+    else
+      docker stop intercity-routing >/dev/null 2>&1 || true
+    fi
     cd "$PREVIOUS_RELEASE/infra/vps"
     compose up -d --no-build backend caddy
     ln -sfn "$PREVIOUS_RELEASE" "$APP_ROOT/current"
@@ -114,11 +120,27 @@ printf '\nRELEASE_SHA=%s\n' "$COMMIT_SHA" >> "$RELEASE_DIR/infra/vps/.env"
 cd "$RELEASE_DIR/infra/vps"
 # Build while the previous backend continues running. Additive migrations run
 # before the new application starts; never fall back to an unrestricted db push.
-compose build backend identity
+compose build backend identity routing
 compose run --rm --no-deps backend npx prisma migrate deploy
 compose run --rm --no-deps backend node dist/src/geo/import-city-catalog.js
+# Downloads run while the previous application is still serving traffic.
+python3 "$RELEASE_DIR/scripts/prepare_brouter_data.py" "$RELEASE_DIR/services/routing/segments-manifest.json" "$SHARED_DIR/brouter/segments4"
+ln -s "$SHARED_DIR/brouter/segments4" "$RELEASE_DIR/routing-data"
 switch_started=1
-compose up -d --no-build identity backend caddy
+compose up -d --no-build identity routing backend caddy
+
+# Verify a real private car route before accepting the new release.
+docker exec -i intercity-backend node <<'JSROUTING'
+(async()=>{
+ for (const [name,points,minMetres] of [['KZ','82.6279,49.9489%7C83.5129,50.3444',80000],['RU','37.6034,55.7663%7C37.6385,55.7602',1000]]) {
+  const r=await fetch('http://routing:17777/brouter?lonlats='+points+'&profile=car-fast-nocost&alternativeidx=0&format=geojson',{signal:AbortSignal.timeout(25000)});
+  if(!r.ok)throw Error('Private routing HTTP '+r.status);
+  const f=(await r.json()).features?.[0];
+  if(!f || f.geometry?.coordinates?.length<10 || Number(f.properties?.['track-length'])<minMetres)throw Error('Invalid private road route');
+  console.log('Private car route '+name+' verified: '+f.properties['track-length']+' metres');
+ }
+})().catch(e=>{console.error(e.message);process.exit(1)});
+JSROUTING
 
 # /health is a Caddy response. Verify an actual API/database request as well.
 response_file="$(mktemp)"

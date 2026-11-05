@@ -1,13 +1,13 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {GeoService}=require('../dist/src/geo/geo.service');
-const makeGeo=()=>new GeoService({city:{findMany:async()=>require('../dist/src/geo/combined-city-catalog').cityCatalog.map((c,i)=>({...c,id:'fixture-'+i})),findFirst:async()=>null}}, {get:()=>undefined});
+const makeGeo=()=>new GeoService({city:{findMany:async()=>require('../dist/src/geo/combined-city-catalog').cityCatalog.map((c,i)=>({...c,id:'fixture-'+i})),findFirst:async()=>null}}, {get:key=>({OSRM_URL:'https://router.internal',OSRM_FALLBACK_URL:'https://reserve.internal',OSRM_FALLBACK_ENABLED:'true'})[key]});
 const road={code:'Ok',routes:[{distance:8300,duration:900,geometry:{type:'LineString',coordinates:[[82.61,49.95],[82.62,49.94],[82.609,49.90]]},legs:[]}]};
 test('router failure uses independent road provider and coalesces/cache successful geometry',async()=>{
  const geo=makeGeo();let calls=0;const urls=[];
  geo.fetchGeo=async(url)=>{calls++;urls.push(url);if(calls===1)throw Error('timeout');return {json:async()=>road};};
  const [a,b]=await Promise.all([geo.getRoute(49.95,82.61,49.90,82.609),geo.getRoute(49.95,82.61,49.90,82.609)]);
- assert.equal(calls,2);assert.match(urls[0],/^https:/);assert.match(urls[1],/routing.openstreetmap.de/);
+ assert.equal(calls,2);assert.match(urls[0],/^https:/);assert.match(urls[1],/reserve.internal/);
  assert.equal(a.distance,8.3);assert.deepEqual(a.geometry,road.routes[0].geometry);assert.deepEqual(a,b);
  await geo.getRoute(49.95,82.61,49.90,82.609);assert.equal(calls,2);
 });
@@ -36,7 +36,7 @@ test('independent address search keeps Oskemen aliases and excludes other cities
  const rows=await geo.fetchPhotonSearchResults('Казыбек Би',city);
  assert.equal(rows.length,1);assert.match(rows[0].displayName,/Казыбек Би/);assert.equal(rows[0].road,'проспект Казыбек Би');
 });
-test('rate limited address provider is skipped while independent search keeps working',async()=>{
+test('public Nominatim is never called while independent search keeps working',async()=>{
  const geo=makeGeo();const city={name:'Усть-Каменогорск',countryCode:'KZ',lat:49.948986,lng:82.627945};
  geo.findNearestCity=async()=>city;let osmCalls=0,photonCalls=0;
  geo.fetchGeo=async(url)=>{
@@ -44,5 +44,5 @@ test('rate limited address provider is skipped while independent search keeps wo
   photonCalls++;return {json:async()=>({features:[{geometry:{coordinates:[82.627,49.948]},properties:{name:'проспект Казыбек Би',osm_key:'highway',city:'Өскемен',countrycode:'KZ'}}]})};
  };
  for(const q of ['Казыбек Би','Аль-Фараби'])assert((await geo.searchLocations(q,city.lat,city.lng)).length>0);
- assert.equal(osmCalls,1);assert.equal(photonCalls,2);
+ assert.equal(osmCalls,0);assert.equal(photonCalls,2);
 });
