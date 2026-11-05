@@ -373,6 +373,18 @@ class ApiClient {
     return null;
   }
 
+  // A country-scale route on the private VPS may need more than 30 seconds.
+  // Keep the longer finite budget confined to road calculation endpoints.
+  Options? _roadCalculationOptions(String path, Options? options) {
+    if (!const {'/route', '/orders/preview', '/orders'}.contains(path) ||
+        options?.receiveTimeout != null) {
+      return options;
+    }
+    return (options ?? Options()).copyWith(
+      receiveTimeout: const Duration(seconds: 70),
+    );
+  }
+
   Future<Response<dynamic>> get(
     String path, {
     Map<String, dynamic>? queryParameters,
@@ -381,7 +393,7 @@ class ApiClient {
     return _dio.get<dynamic>(
       path,
       queryParameters: queryParameters,
-      options: options,
+      options: _roadCalculationOptions(path, options),
     );
   }
 
@@ -398,7 +410,7 @@ class ApiClient {
             sendTimeout: const Duration(seconds: 8),
             receiveTimeout: const Duration(seconds: 8),
           )
-        : options;
+        : _roadCalculationOptions(path, options);
     try {
       return await _dio.post<dynamic>(path,
           data: data, options: primaryOptions);

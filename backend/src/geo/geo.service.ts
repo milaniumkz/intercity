@@ -827,6 +827,7 @@ export class GeoService {
         return parts.join(', ');
     }
 
+    private brouterBusy = false;
     private readonly routeCache = new Map<string, {expires: number; route: any}>();
     private readonly routeRequests = new Map<string, Promise<any>>();
 
@@ -861,9 +862,16 @@ export class GeoService {
             const url = isBrouter
                 ? `${provider.replace(/\/$/, '')}/brouter?lonlats=${fromLng},${fromLat}%7C${toLng},${toLat}&profile=car-fast-nocost&alternativeidx=0&format=geojson`
                 : `${provider.replace(/\/$/, '')}/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson&steps=true&alternatives=false`;
-            const response = await this.fetchGeo(url, {}, isBrouter ? 22000 : 8000);
-            const raw = await response.json();
-            const data = isBrouter ? brouterRoadResponse(raw) : raw;
+            if (isBrouter && this.brouterBusy) throw new Error('Private road router is busy');
+            if (isBrouter) this.brouterBusy = true;
+            let data: any;
+            try {
+                const response = await this.fetchGeo(url, {}, isBrouter ? 62000 : 8000);
+                const raw = await response.json();
+                data = isBrouter ? brouterRoadResponse(raw) : raw;
+            } finally {
+                if (isBrouter) this.brouterBusy = false;
+            }
             if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
                 const route = data.routes[0];
                 const coords = route.geometry?.coordinates;
