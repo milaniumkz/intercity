@@ -6,6 +6,8 @@ import 'identity_face_guide_model.dart';
 
 @JS('intercityFaceGuide.start')
 external JSPromise<JSAny?> _startGuide(JSFunction callback);
+@JS('intercityFaceGuide.recording')
+external void _recordingGuide();
 @JS('intercityFaceGuide.stop')
 external void _stopGuide();
 
@@ -34,7 +36,12 @@ class IdentityFaceMonitor {
   }
 
   void process(CameraImage image) {}
-  Future<void> beforeRecording(CameraController camera) async {}
+  Future<void> beforeRecording(CameraController camera) async {
+    try {
+      _recordingGuide();
+    } catch (_) {}
+  }
+
   Future<void> stop() async {
     try {
       _stopGuide();

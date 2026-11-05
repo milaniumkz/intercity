@@ -502,6 +502,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                   'Звук не запустился. Нажмите значок динамика и проверьте громкость устройства.'),
                             if (_recording && _camera != null) ...[
                               IdentityCameraFrame(
+                                  key: const ValueKey('identity-live-camera'),
                                   camera: _camera!,
                                   sample: _faceSample,
                                   recording: true,
@@ -525,6 +526,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                             ] else if (_camera != null &&
                                 _camera!.value.isInitialized) ...[
                               IdentityCameraFrame(
+                                  key: const ValueKey('identity-live-camera'),
                                   camera: _camera!,
                                   sample: _faceSample,
                                   recording: false,
