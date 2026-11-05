@@ -52,12 +52,19 @@ def pose(points):
   'mouth':float(np.linalg.norm(p[13]-p[14])/max(.001,np.linalg.norm(p[61]-p[291]))),
   'eye':float((eye(159,145,33,133)+eye(386,374,362,263))/2)}
 
+def sustained(samples,predicate):
+ consecutive=0
+ for sample in samples:
+  consecutive=consecutive+1 if predicate(sample) else 0
+  if consecutive>=2:return True
+ return False
+
 def action_passed(action,samples,baseline):
- if len(samples)<10:return False
- if action=='TURN_LEFT':return sum(p['yaw']-baseline['yaw']>.14 for p in samples)>=3
- if action=='TURN_RIGHT':return sum(p['yaw']-baseline['yaw']<-.14 for p in samples)>=3
- if action=='LOOK_UP':return sum(p['pitch']-baseline['pitch']<-.10 for p in samples)>=3
- if action=='OPEN_MOUTH':return sum(p['mouth']>.35 for p in samples)>=3
+ if len(samples)<6:return False
+ if action=='TURN_LEFT':return sustained(samples,lambda p:p['yaw']-baseline['yaw']>.09)
+ if action=='TURN_RIGHT':return sustained(samples,lambda p:p['yaw']-baseline['yaw']<-.09)
+ if action=='LOOK_UP':return sustained(samples,lambda p:p['pitch']-baseline['pitch']<-.045)
+ if action=='OPEN_MOUTH':return sustained(samples,lambda p:p['mouth']>max(.16,baseline['mouth']+.07))
  if action=='BLINK':
   closed=False;blinks=0
   for p in samples:
@@ -69,7 +76,8 @@ def action_passed(action,samples,baseline):
 def reject(reason):return {'verdict':'REJECT','reason':reason,'model':MODEL}
 
 def verify(path,actions):
- if len(actions)!=3 or len(set(actions))!=3 or not set(actions)<=ACTIONS:return reject('Некорректное задание')
+ if len(actions) not in (2,3) or len(set(actions))!=len(actions) or not set(actions)<=ACTIONS:return reject('Некорректное задание')
+ enrollment=len(actions)==2;expected_duration=2+6*len(actions)
  capture=cv2.VideoCapture(str(path))
  if not capture.isOpened():return reject('Не удалось прочитать видео с камеры')
  fps=capture.get(cv2.CAP_PROP_FPS);count=capture.get(cv2.CAP_PROP_FRAME_COUNT)
@@ -77,7 +85,7 @@ def verify(path,actions):
  # Validate decoded timestamps, never trust a missing container duration.
  valid_fps=5<=fps<=65
  first_stamp=None;last_frame_time=0;last_delta=.033;fingerprints=[];last_fingerprint=-1
- poses=[[],[],[]];neutral=[];vectors=[];scores=[];sharpness=[];reference=None;seen=0;missing=0;last=-1;started=time.monotonic()
+ poses=[[] for _ in actions];neutral=[];vectors=[];neutral_vectors=[];scores=[];sharpness=[];reference=None;seen=0;missing=0;last=-1;started=time.monotonic()
  try:
   with mp.solutions.face_mesh.FaceMesh(static_image_mode=False,max_num_faces=2,refine_landmarks=False,min_detection_confidence=.7,min_tracking_confidence=.7) as mesh:
    index=0
@@ -93,14 +101,15 @@ def verify(path,actions):
     if t<last_frame_time-.05 or t>24.5:return reject('Некорректное время записи')
     if index>0:last_delta=t-last_frame_time
     last_frame_time=t;index+=1
-    if t-last_fingerprint>=.48 and len(fingerprints)<40:
+    if t-last_fingerprint>=expected_duration/40 and len(fingerprints)<40:
      tiny=cv2.resize(cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY),(9,8));bits=(tiny[:,1:]>tiny[:,:-1]).flatten();value=0
      for bit in bits:value=(value<<1)|int(bit)
      fingerprints.append(f'{value:016x}');last_fingerprint=t
     if time.monotonic()-started>70:return reject('Обработка прервана. Повторите запись')
     if index>1600 or frame.shape[0]*frame.shape[1]>2100000:return reject('Запишите видео в обычном качестве, до 1280×720')
-    if t-last<.10:continue
-    last=t;seen+=1
+    sample_tick=int(t*20+1e-6)
+    if sample_tick<=last:continue
+    last=sample_tick;seen+=1
     face=detect(frame)
     if face is None or min(face[2:4])<90:missing+=1;continue
     result=mesh.process(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB))
@@ -109,15 +118,17 @@ def verify(path,actions):
     p=pose(result.multi_face_landmarks[0].landmark)
     if t<2:neutral.append(p)
     else:
-     phase=int((t-2)//6)
-     if phase<3 and (t-2)%6<4:poses[phase].append(p)
-    if seen%3==0:
+     for phase in range(len(actions)):
+      if 2+phase*6-.20<=t<=2+phase*6+4.65:poses[phase].append(p)
+    neutral_phase=t<2 or (t>=2 and (t-2)%6>=4)
+    if seen%(3 if valid_fps and fps<12 else 5)==0:
      v=vector(frame,face);vectors.append(v)
+     if neutral_phase and abs(p['yaw'])<.18:neutral_vectors.append(v)
      if len(vectors)>1 and float(v@vectors[0])<.45:return reject('Лицо изменилось во время записи. Повторите проверку')
     # PAD models are trained on frontal faces; head-turn frames must not
     # be mistaken for a photo attack. All active tasks are still mandatory.
     neutral_phase=t<2 or (t>=2 and (t-2)%6>=4)
-    if seen%4==0 and neutral_phase and abs(p['yaw'])<.18:
+    if seen%(2 if valid_fps and fps<12 else 6)==0 and neutral_phase and abs(p['yaw'])<.18:
      scores.append(pad(frame,face))
      x,y,w,h=map(int,face[:4]);crop=frame[max(0,y):max(0,y)+h,max(0,x):max(0,x)+w]
      if crop.size:sharpness.append(float(cv2.Laplacian(cv2.cvtColor(crop,cv2.COLOR_BGR2GRAY),cv2.CV_64F).var()))
@@ -128,22 +139,22 @@ def verify(path,actions):
      reference=cv2.imencode('.jpg',portrait,[cv2.IMWRITE_JPEG_QUALITY,92])[1].tobytes()
  finally:capture.release()
  duration=last_frame_time+(1/fps if valid_fps else max(.01,min(.2,last_delta)))
- if not 19<=duration<=24:return reject('Запишите полное видео с выполнением всех заданий')
- if seen<90 or missing>seen*.15 or len(neutral)<10 or len(vectors)<25 or len(scores)<10 or reference is None:return reject('Лицо плохо видно. Улучшите освещение и повторите запись')
+ if not expected_duration-1<=duration<=expected_duration+4:return reject('Запишите полное видео с выполнением всех заданий')
+ if seen<max(45,int(expected_duration*4.5)) or missing>seen*(.25 if enrollment else .15) or len(neutral)<10 or len(vectors)<(18 if enrollment else 25) or len(scores)<10 or reference is None:return reject('Лицо плохо видно. Улучшите освещение и повторите запись')
  baseline={k:float(np.median([p[k] for p in neutral])) for k in neutral[0]}
- if baseline['mouth']>.25 or baseline['eye']<.12:return reject('В начале смотрите прямо в камеру, с открытыми глазами и закрытым ртом')
+ if baseline['mouth']>.40 or baseline['eye']<.09:return reject('В начале смотрите прямо в камеру, с открытыми глазами и закрытым ртом')
  actions_ok=[action_passed(a,s,baseline) for a,s in zip(actions,poses)]
  if not any(actions_ok):return reject('Не все задания выполнены. Запишите новое видео по подсказкам')
  values=np.array(scores);medians=np.median(values,axis=0);lower=np.quantile(values,.20,axis=0)
  if min(medians)<.50 or min(lower)<.15:return reject('Проверка подлинности видео не пройдена. Снимите себя вживую без экранов и фотографий')
- averaged=np.mean(vectors,axis=0);averaged/=np.linalg.norm(averaged)
+ averaged=np.mean(neutral_vectors if len(neutral_vectors)>=6 else vectors,axis=0);averaged/=np.linalg.norm(averaged)
  continuity=min(float(v@averaged) for v in vectors)
  problems=[]
  names={'TURN_LEFT':'поворот головы налево','TURN_RIGHT':'поворот головы направо','LOOK_UP':'поднять подбородок','OPEN_MOUTH':'открыть рот','BLINK':'два моргания'}
  if not all(actions_ok):problems.append('Не распознаны задания: '+', '.join(names[a] for a,ok in zip(actions,actions_ok) if not ok))
- if min(medians)<.97 or min(lower)<.85:problems.append('Не удалось уверенно подтвердить живое лицо: уберите блики, направьте свет на лицо')
- if np.median(sharpness)<35:problems.append('Изображение размыто: протрите камеру и держите телефон неподвижно')
- if continuity<.60:problems.append('Лицо теряется при движении: поворачивайте голову плавно')
+ if min(medians)<(.85 if enrollment else .97) or min(lower)<(.50 if enrollment else .85):problems.append('Не удалось уверенно подтвердить живое лицо: уберите блики, направьте свет на лицо')
+ if np.median(sharpness)<(25 if enrollment else 35):problems.append('Изображение размыто: протрите камеру и держите телефон неподвижно')
+ if continuity<(.55 if enrollment else .60):problems.append('Лицо теряется при движении: поворачивайте голову плавно')
  uncertain=bool(problems)
  return {'verdict':'REVIEW' if uncertain else 'PASS','reason':'. '.join(problems), 'model':MODEL,
   'videoSignature':fingerprints,'embedding':averaged.tolist(),'reference':base64.b64encode(reference).decode(),

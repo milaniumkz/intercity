@@ -1176,6 +1176,7 @@ model BiometricProfile {
   model          String
   template       String
   referencePath  String
+  referenceVideoPath String?
   consentVersion String
   driverConsent  Boolean  @default(false)
   driverDocumentHash String?

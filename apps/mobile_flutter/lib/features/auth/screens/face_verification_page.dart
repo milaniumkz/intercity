@@ -11,7 +11,7 @@ import '../../../core/api/api_client.dart';
 import '../../../core/services/identity_session.dart';
 import '../../../core/utils/error_message_ru.dart';
 
-const identityConsentVersion = 'intercity-face-2026-11-v1';
+const identityConsentVersion = 'intercity-face-2026-11-v2';
 const identityActions = {
   'TURN_LEFT': 'Слегка поверните голову налево',
   'TURN_RIGHT': 'Слегка поверните голову направо',
@@ -53,6 +53,9 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
   String? _resetToken;
   late bool _driver = widget.driver;
   bool get _recovery => widget.phone != null;
+  int get _recordingSeconds =>
+      2 +
+      ((_challenge?['actions'] as List?)?.length ?? (_recovery ? 3 : 2)) * 6;
   @override
   void initState() {
     super.initState();
@@ -115,7 +118,8 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       return 'Смотрите прямо в камеру. Глаза открыты, рот закрыт';
     }
     final phase = ((_seconds - 2) / 6).floor();
-    if (phase > 2 || (_seconds - 2) % 6 >= 4) {
+    if (phase >= ((_challenge?['actions'] as List?)?.length ?? 2) ||
+        (_seconds - 2) % 6 >= 4) {
       return 'Снова смотрите прямо в камеру';
     }
     final actions = _challenge?['actions'] as List? ?? [];
@@ -226,11 +230,11 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
             _seconds < 2 || (_seconds - 2) % 6 >= 4 || phase >= actions.length
                 ? 'front'
                 : '${actions[phase]}';
-        if (cue != _lastCue && _seconds < 20) {
+        if (cue != _lastCue && _seconds < _recordingSeconds) {
           _lastCue = cue;
           _voice.play(cue);
         }
-        if (_seconds >= 20) {
+        if (_seconds >= _recordingSeconds) {
           _timer?.cancel();
           unawaited(_stop());
         }
@@ -439,9 +443,10 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                   textAlign: TextAlign.center),
                               const SizedBox(height: 12),
                               LinearProgressIndicator(
-                                  value: (_seconds / 20).clamp(0, 1)),
+                                  value: (_seconds / _recordingSeconds)
+                                      .clamp(0, 1)),
                               Text(
-                                  'Запись: ${_seconds.floor()} / 20 секунд. Не закрывайте экран.'),
+                                  'Запись: ${_seconds.floor()} / $_recordingSeconds секунд. Не закрывайте экран.'),
                               TextButton(
                                   onPressed: () {
                                     _cancelled = true;
@@ -457,8 +462,8 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                       ? 'Смотрите прямо • $_countdown'
                                       : 'Расположите лицо в овале'),
                               const SizedBox(height: 16),
-                              const Text(
-                                  'Расположите лицо в овале. Свет должен падать на лицо, а не в камеру. Выполняйте голосовые подсказки. После нажатия начнётся запись на 20 секунд со случайными заданиями.'),
+                              Text(
+                                  'Расположите лицо в овале. Свет должен падать на лицо, а не в камеру. Выполняйте голосовые подсказки. После нажатия начнётся запись на $_recordingSeconds секунд. Выполните ${(_challenge?['actions'] as List?)?.length ?? (_recovery ? 3 : 2)} коротких задания.'),
                               const SizedBox(height: 16),
                               FilledButton.icon(
                                   onPressed: _busy ? null : _record,
@@ -514,8 +519,9 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                   ? 'У водителя эталон также используется для сверки с фотографией в удостоверении личности. Данные автомобиля проверяются отдельно.'
                                   : 'У пассажира эталон используется только для восстановления пароля.'),
                               const SizedBox(height: 12),
-                              Text(
-                                  'Эталон лица и контрольный снимок хранятся зашифрованными в закрытом хранилище InterCity. Видео обрабатывается на нашем сервере. ${_recovery ? 'Если нужна ручная проверка восстановления, зашифрованная запись хранится до 7 дней.' : 'Первичная проверка проходит автоматически. При неудаче можно повторять запись без ограничения количества попыток.'} При удалении аккаунта эталон удаляется из действующего хранилища. Резервные копии используются только для восстановления сервиса. При автоматическом результате полная запись не сохраняется.'),
+                              Text(_recovery
+                                  ? 'Эталон и материалы первичной проверки хранятся зашифрованными в закрытом хранилище InterCity. Новая запись обрабатывается на нашем сервере: при автоматическом результате она не сохраняется, при ручном рассмотрении хранится зашифрованной до 7 дней. При удалении аккаунта материалы удаляются из действующего хранилища. Резервные копии используются только для восстановления сервиса.'
+                                  : 'Первичная видеозапись, эталон лица и контрольный снимок хранятся зашифрованными в закрытом хранилище InterCity до удаления аккаунта и используются для восстановления пароля. Видео обрабатывается на нашем сервере. Проверка проходит автоматически, при неудаче можно повторять запись без ограничения количества попыток. При удалении аккаунта материалы удаляются из действующего хранилища. Резервные копии используются только для восстановления сервиса.'),
                               const SizedBox(height: 12),
                               const Text(
                                   'Записывайте себя вживую: один человек, хорошее освещение, лицо без маски и тёмных очков. Выполняйте случайные задания по подсказкам. Фотографии и готовые ролики загружать нельзя.'),

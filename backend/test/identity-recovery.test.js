@@ -22,13 +22,21 @@ test('private video enrollment, matching, rejection, manual review and one-use r
    await assert.rejects(enroll(alice,{password:'wrong'}),/Неверный пароль/);
    await assert.rejects(enroll(alice,{consentVersion:'old'}),/согласие/);
   });
+  await t.test('previous enrollment consent cannot authorize newly retained full video',async()=>{
+   const c=await enroll(bob);await db.biometricChallenge.update({where:{id:c.challengeId},data:{consentVersion:'intercity-face-2026-11-v1'}});
+   await assert.rejects(service.submit(c.challengeId,c.challengeToken,video(),bob.id),/Условия хранения/);
+   assert.equal(await db.biometricProfile.count({where:{userId:bob.id}}),0);
+  });
   await t.test('successful initial enrollment encrypts and binds reference; no overwrite',async()=>{
-   const c=await enroll(alice);assert.equal(new Set(c.actions).size,3);
-   const r=await service.submit(c.challengeId,c.challengeToken,video(),alice.id);assert.equal(r.status,'VERIFIED');assert.equal(await service.needsVerification(alice.id,alice.role),false);
+   const c=await enroll(alice);assert.equal(new Set(c.actions).size,2);assert.equal(c.recordingSeconds,14);
+   const recording=video();const r=await service.submit(c.challengeId,c.challengeToken,recording,alice.id);assert.equal(r.status,'VERIFIED');assert.equal(await service.needsVerification(alice.id,alice.role),false);
    const p=await db.biometricProfile.findUnique({where:{userId:alice.id}});assert(!p.template.includes(JSON.stringify(a)));
    assert.deepEqual(JSON.parse(service.vault.open(Buffer.from(p.template,'base64'),alice.id).toString()),a);
    assert.throws(()=>service.vault.open(Buffer.from(p.template,'base64'),bob.id));
    assert.equal((await service.vault.read(alice.id,p.referencePath)).toString(),'reference-image');
+   assert(p.referenceVideoPath);assert.deepEqual(await service.vault.read(alice.id,p.referenceVideoPath),recording);
+   await db.biometricChallenge.update({where:{id:c.challengeId},data:{createdAt:new Date(Date.now()-8*86400000)}});
+   await service.maintenance();assert.deepEqual(await service.vault.read(alice.id,p.referenceVideoPath),recording);
    await assert.rejects(enroll(alice),/нельзя заменить/);
   });
   await t.test('unknown or unenrolled recovery cannot create a reference or reset permission',async()=>{
@@ -51,7 +59,7 @@ test('private video enrollment, matching, rejection, manual review and one-use r
   });
   await t.test('uncertain recovery still requires a manual decision and keeps its rate limits',async()=>{
    await db.biometricChallenge.updateMany({where:{userId:alice.id},data:{createdAt:new Date(Date.now()-2*3600000)}});
-   result.verdict='REVIEW';const c=await recover(alice,'127.0.0.9');assert.equal((await service.submit(c.challengeId,c.challengeToken,video())).status,'REVIEW');
+   result.verdict='REVIEW';const c=await recover(alice,'127.0.0.9');assert.equal(c.actions.length,3);assert.equal(c.recordingSeconds,20);assert.equal((await service.submit(c.challengeId,c.challengeToken,video())).status,'REVIEW');
    await service.review(c.challengeId,admin.id,true,'Reviewed live video and compared with reference');assert.equal((await service.challengeStatus(c.challengeId,c.challengeToken)).status,'VERIFIED');result.verdict='PASS';
   });
   await t.test('expired challenge and foreign session secret are rejected before engine work',async()=>{

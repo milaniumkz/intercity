@@ -8,7 +8,7 @@ import { IdentityEngine } from './identity-engine';
 import { IdentityPushService } from './identity-push.service';
 const hash=(s:string|Buffer)=>createHash('sha256').update(s).digest('hex');
 const token=()=>randomBytes(32).toString('base64url');
-export const IDENTITY_CONSENT='intercity-face-2026-11-v1';
+export const IDENTITY_CONSENT='intercity-face-2026-11-v2';
 export const identityFailure='Не удалось подтвердить владельца аккаунта. Восстановление не разрешено.';
 export function similarity(a:number[],b:number[]) {
  if(a.length!==128||b.length!==128||!a.every(Number.isFinite)||!b.every(Number.isFinite))throw new Error('Invalid face template');
@@ -78,9 +78,9 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   } else if(!user||user.blockedAt||user.role==='ADMIN'||user.phone.startsWith('erased:')||user.biometricProfile?.status!=='VERIFIED')user=null;
   const pool=['TURN_LEFT','TURN_RIGHT','LOOK_UP','OPEN_MOUTH','BLINK'];
   for(let i=pool.length-1;i>0;i--){const j=randomInt(i+1);[pool[i],pool[j]]=[pool[j],pool[i]];}
-  const actions=pool.slice(0,3),secret=token();
+  const actions=pool.slice(0,enrollment?2:3),secret=token();
   const row=await this.prisma.biometricChallenge.create({data:{userId:user?.id||null,subjectHash,ipHash,purpose:enrollment?'ENROLL':'RECOVERY',secretHash:hash(secret),authVersion:user?.authVersion??0,actions,expiresAt:new Date(Date.now()+5*60000),consentVersion:IDENTITY_CONSENT,driverConsent:enrollment&&input.driverConsent===true}});
-  return {challengeId:row.id,challengeToken:secret,actions,phaseSeconds:4,neutralSeconds:2,expiresAt:row.expiresAt,consentVersion:IDENTITY_CONSENT};
+  return {challengeId:row.id,challengeToken:secret,actions,phaseSeconds:4,neutralSeconds:2,recordingSeconds:2+actions.length*6,expiresAt:row.expiresAt,consentVersion:IDENTITY_CONSENT};
  }
  private async getChallenge(id:string,secret:string){
   if(!/^[a-f0-9-]{36}$/i.test(id)||typeof secret!=='string'||secret.length>100)throw new UnauthorizedException(identityFailure);
@@ -91,6 +91,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
  async submit(id:string,secret:string,video:Buffer,userId?:string) {
   const c=await this.getChallenge(id,secret);
   if(c.purpose==='ENROLL'&&c.userId!==userId)throw new UnauthorizedException();
+  if(c.purpose==='ENROLL'&&c.consentVersion!==IDENTITY_CONSENT)throw new BadRequestException('Условия хранения первичной записи обновлены. Начните новую проверку и подтвердите согласие.');
   if(c.expiresAt<new Date()||c.status!=='READY')throw new ConflictException('Проверка истекла или уже использована. Начните новую запись.');
   if(!video||video.length<10000||video.length>16*1024*1024)throw new BadRequestException('Запишите видео с камеры, не более 16 МБ');
   let claimed;
@@ -127,15 +128,21 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   }
   const referencePath=await this.vault.write(user.id,Buffer.from(result.reference!,'base64'));
   const candidate=this.vault.seal(Buffer.from(JSON.stringify(result.embedding)),user.id).toString('base64');
-  const videoPath=verdict==='REVIEW'?await this.vault.write(user.id,video):null;
+  let videoPath:string|null=null;
+  try {
+  videoPath=verdict==='REVIEW'||c.purpose==='ENROLL'?await this.vault.write(user.id,video):null;
   await this.prisma.$transaction(async tx=>{
    await tx.$executeRaw`SELECT id FROM "User" WHERE id=${user.id} FOR UPDATE`;
    const current=await tx.user.findUnique({where:{id:user.id}});
    if(!current||current.blockedAt||current.authVersion!==c.authVersion)throw new UnauthorizedException(identityFailure);
    if(c.purpose==='ENROLL'&&verdict==='PASS' && await tx.biometricProfile.findUnique({where:{userId:user.id}}))throw new ConflictException('Эталон уже создан. Повторная привязка не разрешена');
-   if(c.purpose==='ENROLL'&&verdict==='PASS')await tx.biometricProfile.create({data:{userId:user.id,template:candidate,referencePath,model:result.model,consentVersion:c.consentVersion,driverConsent:c.driverConsent}});
-   await tx.biometricChallenge.update({where:{id},data:{status:verdict==='PASS'?'VERIFIED':'REVIEW',videoSignature:result.videoSignature?this.vault.seal(Buffer.from(JSON.stringify(result.videoSignature)),user.id).toString('base64'):null,candidate:verdict==='REVIEW'?candidate:null,referencePath:c.purpose==='ENROLL'&&verdict==='PASS'?null:referencePath,videoPath,model:result.model,reason:verdict==='REVIEW'?result.reason||'Нужна ручная проверка':null}});
+   if(c.purpose==='ENROLL'&&verdict==='PASS')await tx.biometricProfile.create({data:{userId:user.id,template:candidate,referencePath,referenceVideoPath:videoPath,model:result.model,consentVersion:c.consentVersion,driverConsent:c.driverConsent}});
+   await tx.biometricChallenge.update({where:{id},data:{status:verdict==='PASS'?'VERIFIED':'REVIEW',videoSignature:result.videoSignature?this.vault.seal(Buffer.from(JSON.stringify(result.videoSignature)),user.id).toString('base64'):null,candidate:verdict==='REVIEW'?candidate:null,referencePath:c.purpose==='ENROLL'&&verdict==='PASS'?null:referencePath,videoPath:c.purpose==='ENROLL'&&verdict==='PASS'?null:videoPath,model:result.model,reason:verdict==='REVIEW'?result.reason||'Нужна ручная проверка':null}});
   });
+  } catch(error) {
+   await Promise.allSettled([this.vault.remove(user.id,referencePath),...(videoPath?[this.vault.remove(user.id,videoPath)]:[])]);
+   throw error;
+  }
   if(verdict==='REVIEW')void this.push.notifyReviews().catch(()=>{});
   return this.challengeStatus(id,secret);
  }
