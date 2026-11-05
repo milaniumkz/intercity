@@ -130,6 +130,16 @@ JSLIVEMAP
       docker logs --since 90m --tail 3000 intercity-backend 2>&1 | grep -Ei 'MapTiles|tile|Geocoder.*network|ERR|warn' | tail -30 || true
       exit 0
     fi
+    if [[ "$TARGET" == "routing-rollout" ]]; then
+      printf 'Current release: '; cat "$APP_ROOT/current_commit"
+      if [[ -d "$APP_ROOT/shared/brouter/segments4" ]]; then
+        printf 'Completed road segments: '; find "$APP_ROOT/shared/brouter/segments4" -maxdepth 1 -name '*.rd5' -type f | wc -l
+        du -sh "$APP_ROOT/shared/brouter/segments4"
+      fi
+      ps -eo comm,etime,pcpu,pmem | awk 'NR==1 || $1 ~ /^(tar|gzip|docker|scp|node|python3|sshd|java)$/ {print}'
+      docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}'
+      exit 0
+    fi
     if [[ "$TARGET" == "map-capacity" ]]; then
       printf 'CPU cores: '; nproc
       free -m
