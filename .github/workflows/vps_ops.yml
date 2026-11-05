@@ -10,6 +10,7 @@ on:
         options:
           - status
           - tune-routing-health
+          - extend-routing-budget
           - reset-customer-accounts
           - enable-kz-tax-accounting
           - enable-demo-topups
