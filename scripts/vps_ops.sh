@@ -122,6 +122,14 @@ const p=new PrismaClient();
 JSENABLEDEMO
     ;;
   status)
+    if [[ "$TARGET" == "map-live-failures" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSLIVEMAP'
+const {PrismaClient}=require('@prisma/client'),fs=require('fs'),path=require('path');(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');const where={at:{gte:new Date(Date.now()-8*3600000)},OR:[{action:{contains:'map.load'}},{action:{contains:'location.failed'}}]};console.log(JSON.stringify({events:await tx.techEvent.findMany({where,orderBy:{at:'desc'},take:100,select:{at:true,userId:true,action:true,objectId:true,message:true}})}));});const root=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','map-tiles');const names=fs.existsSync(root)?fs.readdirSync(root).filter(n=>n.endsWith('.json')):[];console.log(JSON.stringify({cachedTiles:names.length,newestCacheAt:names.length?new Date(Math.max(...names.map(n=>fs.statSync(path.join(root,n)).mtimeMs))):null}));}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSLIVEMAP
+      docker logs --since 90m --tail 3000 intercity-backend 2>&1 | grep -Ei 'MapTiles|tile|Geocoder.*network|ERR|warn' | tail -30 || true
+      exit 0
+    fi
     if [[ "$TARGET" == "map-capacity" ]]; then
       printf 'CPU cores: '; nproc
       free -m
