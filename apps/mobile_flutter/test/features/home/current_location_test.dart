@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'package:flutter_map/flutter_map.dart';
+import '../../support/memory_tile_provider.dart';
 import 'dart:async';
 import 'package:intercity_mobile/core/utils/browser_location_error.dart';
 import 'package:go_router/go_router.dart';
@@ -57,6 +59,27 @@ class _LocationApi extends ApiClient {
 }
 
 void main() {
+  for (final stage in ['fixed', 'auction']) {
+    testWidgets('$stage keeps an overview map when browser denies GPS',
+        (tester) async {
+      await tester.pumpWidget(MaterialApp(
+          home: OrderScreen(
+        routeStage: stage,
+        apiClient: _LocationApi(),
+        mapTileProvider: MemoryTileProvider(),
+        locationSession: LocationSession(),
+        locationProvider: () async => throw const BrowserLocationException(
+            BrowserLocationFailure.permissionDenied),
+      )));
+      await tester.pumpAndSettle();
+      final map = tester
+          .widget<FlutterMap>(find.byKey(const ValueKey('city-live-map')));
+      expect(map.mapController!.camera.zoom, 5);
+      expect(find.textContaining('Браузер не разрешил доступ'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets(
       'GPS pickup appears before reverse lookup finishes and is fetched once',
       (tester) async {

@@ -5,7 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 /// Local pixels isolate map interactions from tile servers in widget tests.
 class MemoryTileProvider extends TileProvider {
   final image = MemoryImage(base64Decode(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='));
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMIWpz8HwAE+wJYvkyk1AAAAABJRU5ErkJggg=='));
   @override
   ImageProvider getImage(TileCoordinates coordinates, TileLayer options) =>
       image;

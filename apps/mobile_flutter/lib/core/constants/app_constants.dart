@@ -1,4 +1,5 @@
 import 'package:intercity_shared/intercity_shared.dart';
+import 'package:flutter/foundation.dart';
 
 class AppConstants {
   static const String appName = 'INTERCITY';
@@ -37,5 +38,9 @@ class AppConstants {
   static const String osmTileUrl = String.fromEnvironment(
       'INTERCITY_MAP_TILE_URL',
       defaultValue: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png');
+  static String get serverMapTileUrl =>
+      kIsWeb && (Uri.base.scheme == 'https' || Uri.base.scheme == 'http')
+          ? '${Uri.base.origin}/map-tiles/{z}/{x}/{y}.png'
+          : '$baseUrl/geo/tiles/{z}/{x}/{y}.png';
   static const List<String> mapTileSubdomains = ['a', 'b', 'c'];
 }

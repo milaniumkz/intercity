@@ -102,7 +102,7 @@ class IntercityStaticTileMap extends StatelessWidget {
   String _tileUrl(int x, int y, int z, bool isDark) {
     final subdomain = AppConstants
         .mapTileSubdomains[(x + y) % AppConstants.mapTileSubdomains.length];
-    return AppConstants.osmTileUrl
+    return AppConstants.serverMapTileUrl
         .replaceAll('{s}', subdomain)
         .replaceAll('{z}', '$z')
         .replaceAll('{x}', '$x')

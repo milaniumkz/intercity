@@ -21,11 +21,8 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
   MapCamera? _camera;
   String _viewport = '';
   bool _viewExpired = false;
-  bool _serverTiles = false;
   int _autoAttempts = 0;
-  String get _url => _serverTiles
-      ? '${AppConstants.baseUrl}/geo/tiles/{z}/{x}/{y}.png'
-      : AppConstants.osmTileUrl;
+  String get _url => AppConstants.serverMapTileUrl;
   Iterable<TileImage> get _visibleTiles {
     final camera = _camera;
     if (camera == null) return const [];
@@ -73,10 +70,16 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
         tile.removeListener(_observed.remove(tile)!);
       }
       final visible = _visibleTiles.toList();
-      final loaded = visible.any((t) => t.imageInfo != null && !t.loadError);
-      final timedOut = _viewExpired;
-      final failed = !loaded && (timedOut || visible.any((t) => t.loadError));
-      if (loaded) {
+      bool displayed(TileImage t) =>
+          t.imageInfo != null &&
+          !t.loadError &&
+          t.readyToDisplay &&
+          t.opacity > 0;
+      final loaded = visible.any(displayed);
+      final complete = visible.isNotEmpty && visible.every(displayed);
+      final failed =
+          visible.any((t) => t.loadError) || (!complete && _viewExpired);
+      if (complete) {
         _timeout?.cancel();
         _automaticRetry?.cancel();
         _automaticRetry = null;
@@ -86,8 +89,7 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
           _automaticRetry == null &&
           _autoAttempts < 3 &&
           !_retrying) {
-        unawaited(TechnicalTelemetry.mapEvent(
-            'map.load_failed', _serverTiles ? 'server' : 'direct'));
+        unawaited(TechnicalTelemetry.mapEvent('map.load_failed', 'server'));
         _automaticRetry =
             Timer(Duration(seconds: [1, 3, 8][_autoAttempts]), () {
           _automaticRetry = null;
@@ -123,11 +125,12 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
     _automaticRetry?.cancel();
     _automaticRetry = null;
     if (!automatic) _autoAttempts = 0;
-    _serverTiles = true;
     _startTimeout();
     // The image provider caches by URL, including failed completers on web.
     // Evict before mounting the replacement layer, not during its disposal.
-    await Future.wait(_observed.keys.map((tile) async {
+    await Future.wait(_observed.keys
+        .where((tile) => tile.loadError || tile.imageInfo == null)
+        .map((tile) async {
       try {
         await tile.imageProvider.evict();
       } catch (_) {}
@@ -176,6 +179,7 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
           tileProvider: _provider,
           urlTemplate: _url,
           maxNativeZoom: 19,
+          tileDisplay: const TileDisplay.instantaneous(),
           userAgentPackageName: 'com.milanium.intercity',
           evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
           tileBuilder: (context, child, tile) {
@@ -183,6 +187,18 @@ class _PassengerMapTilesState extends State<PassengerMapTiles> {
             return child;
           },
           errorTileCallback: (_, __, ___) => _health()),
+      if (!_loaded && !_failed)
+        const Positioned(
+            top: 70,
+            left: 12,
+            right: 12,
+            child: IgnorePointer(
+                child: Center(
+                    child: Material(
+                        borderRadius: BorderRadius.all(Radius.circular(12)),
+                        child: Padding(
+                            padding: EdgeInsets.all(10),
+                            child: Text('Загрузка карты…')))))),
       if (_failed)
         Positioned(
             top: 70,

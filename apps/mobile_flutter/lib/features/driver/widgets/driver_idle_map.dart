@@ -1,7 +1,7 @@
+import '../../../core/widgets/passenger_map_tiles.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import '../../../core/constants/app_constants.dart';
 import '../../../core/widgets/road_route_layer.dart';
 
 class DriverIdleMap extends StatefulWidget {
@@ -95,12 +95,7 @@ class DriverIdleMapState extends State<DriverIdleMap>
                       InteractiveFlag.doubleTapZoom |
                       InteractiveFlag.scrollWheelZoom)),
           children: [
-            TileLayer(
-                tileProvider: widget.tileProvider,
-                urlTemplate: AppConstants.osmTileUrl,
-                subdomains: AppConstants.mapTileSubdomains,
-                userAgentPackageName: 'com.milanium.intercity',
-                retinaMode: true),
+            PassengerMapTiles(tileProvider: widget.tileProvider),
             const Padding(
                 padding: EdgeInsets.only(bottom: 90),
                 child: MapDataAttribution()),

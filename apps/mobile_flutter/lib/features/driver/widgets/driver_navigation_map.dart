@@ -1,8 +1,8 @@
+import '../../../core/widgets/passenger_map_tiles.dart';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/theme_controller.dart';
 import '../../../core/widgets/road_route_layer.dart';
 
@@ -101,10 +101,7 @@ class _DriverNavigationMapState extends State<DriverNavigationMap>
           },
         ),
         children: [
-          TileLayer(
-              urlTemplate: AppConstants.osmTileUrl,
-              subdomains: AppConstants.mapTileSubdomains,
-              userAgentPackageName: 'com.milanium.intercity'),
+          const PassengerMapTiles(),
           const MapDataAttribution(),
           if (widget.route.length >= 2)
             PolylineLayer(polylines: [

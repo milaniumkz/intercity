@@ -24,7 +24,6 @@ import 'package:latlong2/latlong.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/api/api_client.dart';
-import '../../../core/constants/app_constants.dart';
 import '../../../core/services/app_preferences.dart';
 import '../../../core/theme/theme_controller.dart';
 import '../../../core/utils/browser_location.dart';
@@ -3335,8 +3334,12 @@ class _OrderScreenState extends State<OrderScreen> {
             padding: const EdgeInsets.fromLTRB(42, 56, 42, 60),
             maxZoom: 16.5));
       } else {
-        _cityMapController.move(
-            focus ?? from ?? _userLocation ?? _mapCenter, zoom);
+        final point = focus ??
+            from ??
+            _userLocation ??
+            _selectedCityPoint ??
+            _confirmedCityPoint;
+        _cityMapController.move(point ?? _mapCenter, point == null ? 5 : zoom);
       }
     } catch (_) {/* Map can detach while changing modes. */}
   }
@@ -12356,12 +12359,8 @@ class _OrderScreenState extends State<OrderScreen> {
                                 },
                               ),
                               children: [
-                                TileLayer(
-                                  urlTemplate: AppConstants.osmTileUrl,
-                                  subdomains: AppConstants.mapTileSubdomains,
-                                  userAgentPackageName:
-                                      'com.milanium.intercity',
-                                ),
+                                PassengerMapTiles(
+                                    tileProvider: widget.mapTileProvider),
                                 if (_userLocation != null)
                                   MarkerLayer(
                                     markers: [

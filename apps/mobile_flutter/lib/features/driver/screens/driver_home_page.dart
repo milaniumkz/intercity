@@ -1,3 +1,4 @@
+import '../../../core/widgets/passenger_map_tiles.dart';
 import '../../../core/utils/freight_details.dart';
 import '../widgets/driver_idle_map.dart';
 import '../../../core/services/trip_status_sound.dart';
@@ -27,7 +28,6 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/api/api_client.dart';
-import '../../../core/constants/app_constants.dart';
 import '../../../core/services/push_notifications_service.dart';
 import '../../../core/services/sse_service.dart';
 import '../../../core/theme/theme_controller.dart';
@@ -5740,10 +5740,7 @@ class _DriverHomePageState extends State<DriverHomePage>
             maxZoom: 16),
       ),
       children: [
-        TileLayer(
-            urlTemplate: AppConstants.osmTileUrl,
-            subdomains: AppConstants.mapTileSubdomains,
-            userAgentPackageName: 'com.milanium.intercity'),
+        const PassengerMapTiles(),
         RoadRouteLayer(from: from, to: to, color: AppTheme.primaryColor),
         MarkerLayer(markers: [
           Marker(

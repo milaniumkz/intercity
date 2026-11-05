@@ -1,3 +1,4 @@
+import '../../../core/widgets/passenger_map_tiles.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -118,11 +119,7 @@ class _SharedTripPageState extends State<SharedTripPage> {
                               [from, to, if (car != null) car]),
                           padding: const EdgeInsets.all(48))),
                   children: [
-                TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    tileProvider: widget.mapTileProvider,
-                    userAgentPackageName: 'kz.intercity.app'),
+                PassengerMapTiles(tileProvider: widget.mapTileProvider),
                 if (_route.isNotEmpty)
                   PolylineLayer(polylines: [
                     Polyline(

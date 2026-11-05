@@ -1,3 +1,4 @@
+import '../../../core/widgets/passenger_map_tiles.dart';
 import '../../../core/utils/route_query.dart';
 import '../widgets/passenger_offers_panel.dart';
 import 'package:flutter/foundation.dart';
@@ -13,7 +14,6 @@ import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/api/api_client.dart';
-import '../../../core/constants/app_constants.dart';
 import '../../../core/services/push_notifications_service.dart';
 import '../../../core/services/trip_status_sound.dart';
 import '../../../core/services/sse_service.dart';
@@ -299,7 +299,8 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
   bool _linkedChatOpened = false;
   void _openLinkedChatIfNeeded() {
     if (_linkedChatOpened ||
-        Uri.tryParse(currentRouteText(context))?.queryParameters['chat'] != '1') {
+        Uri.tryParse(currentRouteText(context))?.queryParameters['chat'] !=
+            '1') {
       return;
     }
     _linkedChatOpened = true;
@@ -2887,17 +2888,8 @@ class _PassengerMapTiles extends StatefulWidget {
 }
 
 class _PassengerMapTilesState extends State<_PassengerMapTiles> {
-  late final tiles = TileLayer(
-      tileProvider: widget.tileProvider ?? _PassengerRasterProvider(),
-      urlTemplate: AppConstants.osmTileUrl,
-      subdomains: AppConstants.mapTileSubdomains,
-      userAgentPackageName: 'com.milanium.intercity');
+  late final tiles = PassengerMapTiles(tileProvider: widget.tileProvider);
+
   @override
   Widget build(BuildContext context) => tiles;
-}
-
-class _PassengerRasterProvider extends TileProvider {
-  @override
-  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) =>
-      NetworkImage(getTileUrl(coordinates, options), headers: headers);
 }

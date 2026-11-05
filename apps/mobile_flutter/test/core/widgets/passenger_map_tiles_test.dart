@@ -8,6 +8,31 @@ import 'package:latlong2/latlong.dart';
 import 'package:intercity_mobile/core/widgets/passenger_map_tiles.dart';
 
 void main() {
+  testWidgets('downloaded map remains visible when animation tickers are muted',
+      (tester) async {
+    final provider = MemoryTileProvider();
+    await tester.pumpWidget(MaterialApp(
+        home: TickerMode(
+            enabled: false,
+            child: Scaffold(
+                body: FlutterMap(
+              options: const MapOptions(
+                  initialCenter: LatLng(49.97, 82.61), initialZoom: 14),
+              children: [PassengerMapTiles(tileProvider: provider)],
+            )))));
+    await tester.runAsync(() =>
+        precacheImage(provider.image, tester.element(find.byType(FlutterMap))));
+    await tester.pumpAndSettle();
+    final images = tester
+        .widgetList<RawImage>(find.byType(RawImage))
+        .where((image) => image.image != null)
+        .toList();
+    expect(images, isNotEmpty);
+    expect(images.every((image) => (image.opacity?.value ?? 1) > 0), isTrue);
+    expect(find.text('Повторить загрузку карты'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('previous loaded tiles do not hide failure after camera moves',
       (tester) async {
     final controller = MapController();
