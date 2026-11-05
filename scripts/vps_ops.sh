@@ -185,6 +185,14 @@ const {PrismaClient}=require('@prisma/client');(async()=>{const p=new PrismaClie
 JSREGCHECK
       exit 0
     fi
+    if [[ "$TARGET" == "identity-video-storage" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSVIDEOSTORAGE'
+const {PrismaClient}=require('@prisma/client'),fs=require('fs'),path=require('path');
+(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');const users=await tx.user.findMany({where:{role:{not:'ADMIN'},NOT:{phone:{startsWith:'erased:'}}},orderBy:{createdAt:'desc'},take:5,select:{id:true,createdAt:true,biometricProfile:{select:{status:true,referenceVideoPath:true,enrolledAt:true}}}});const root=path.join(process.env.TECH_STORAGE_DIR||path.join(process.cwd(),'technical-data'),'identity');const report=[];for(const u of users){const checks=await tx.biometricChallenge.findMany({where:{userId:u.id},orderBy:{createdAt:'desc'},take:5,select:{id:true,createdAt:true,status:true,purpose:true,consentVersion:true,videoPath:true,reason:true}});report.push({account:u.id.slice(0,8),registered:u.createdAt,profileStatus:u.biometricProfile?.status,enrolledAt:u.biometricProfile?.enrolledAt,referenceVideoStored:!!u.biometricProfile?.referenceVideoPath,referenceFileExists:u.biometricProfile?.referenceVideoPath?fs.existsSync(path.join(root,u.id,u.biometricProfile.referenceVideoPath)):false,attempts:checks.map(c=>({at:c.createdAt,status:c.status,purpose:c.purpose,consent:c.consentVersion,clipStored:!!c.videoPath,clipExists:c.videoPath?fs.existsSync(path.join(root,u.id,c.videoPath)):false,reason:c.reason}))});}console.log(JSON.stringify({latestAccounts:report}));},{timeout:30000});}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSVIDEOSTORAGE
+      exit 0
+    fi
     if [[ "$TARGET" == "identity-oleg-diagnostics" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-backend node <<'JSOLEGAUDIT'
