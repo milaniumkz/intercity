@@ -185,6 +185,13 @@ const {PrismaClient}=require('@prisma/client');(async()=>{const p=new PrismaClie
 JSREGCHECK
       exit 0
     fi
+    if [[ "$TARGET" == "attention-release-health" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker exec -i intercity-backend node <<'JSATTENTIONHEALTH'
+const {PrismaClient}=require('@prisma/client');(async()=>{const p=new PrismaClient();try{await p.$transaction(async tx=>{await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');console.log(JSON.stringify({alerts:await tx.adminAttention.groupBy({by:['category','severity'],_count:true}),receipts:{total:await tx.adminAttentionReceipt.count(),pushAccepted:await tx.adminAttentionReceipt.count({where:{pushAt:{not:null}}}),retryPending:await tx.adminAttentionReceipt.count({where:{pushAt:null,lastError:{not:null}}})},recentServerFailures:await tx.techEvent.findMany({where:{at:{gte:new Date(Date.now()-300000)},status:{gte:500}},orderBy:{at:'desc'},take:5,select:{at:true,action:true,status:true,message:true}})}));},{timeout:30000});}finally{await p.$disconnect()}})().catch(e=>{console.error(e.message);process.exitCode=1});
+JSATTENTIONHEALTH
+      exit 0
+    fi
     if [[ "$TARGET" == "intercity-live-offers" ]]; then
       cat "$APP_ROOT/current_commit"
       docker exec -i intercity-backend node <<'JSLIVEOFFERS'
