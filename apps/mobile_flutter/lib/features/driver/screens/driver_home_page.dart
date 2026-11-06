@@ -1,3 +1,4 @@
+import '../../../core/utils/location_permission_events.dart';
 import '../../../core/widgets/passenger_map_tiles.dart';
 import '../../../core/utils/freight_details.dart';
 import '../widgets/driver_idle_map.dart';
@@ -97,6 +98,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   String _offerCurrencySymbol = '₸';
   Timer? _locationTimer;
   StreamSubscription<Position>? _positionStream;
+  StreamSubscription<void>? _locationPermission;
   double _driverHeading = 0;
   LatLng? _lastGpsPoint;
   bool _hasDriverPosition = false;
@@ -169,6 +171,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _boardOfferPriceCtrl.addListener(_refreshBoardOfferPriceSelection);
+    _locationPermission = locationPermissionGrantedEvents().listen((_) {
+      if (!mounted) return;
+      if (_isOnline || _activeOrder != null) {
+        _startLocationUpdates();
+      }
+      unawaited(_updateLocation(autoDetect: true, silent: true));
+    });
     _dashboardMetricsTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (!mounted ||
           _appLifecycleState != AppLifecycleState.resumed ||
@@ -209,6 +218,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _notificationTapSub?.cancel();
     _dashboardMetricsTimer?.cancel();
     _locationTimer?.cancel();
+    _locationPermission?.cancel();
     _positionStream?.cancel();
     _activeOrderPollTimer?.cancel();
     _nearbyPollTimer?.cancel();

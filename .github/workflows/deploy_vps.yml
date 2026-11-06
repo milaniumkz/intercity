@@ -92,6 +92,15 @@ jobs:
           DISPATCH_TEST_DATABASE_URL=postgresql://technical_test:technical_test_only@127.0.0.1:5432/dispatch_test node --test --test-concurrency=1 test/identity-recovery.test.js test/identity-driver-documents.test.js test/vehicle-document.test.js test/admin-customer-records.test.js test/finance-attention.test.js
           TARIFF_TEST_DATABASE_URL=postgresql://technical_test:technical_test_only@127.0.0.1:5432/dispatch_test node --test test/driver-route-schedule.test.js test/delivery-matching.test.js test/geo-order-persistence.test.js
 
+      - name: Verify repeated browser permission reminders
+        run: |
+          npm install --prefix "$RUNNER_TEMP/intercity-permission-browser" --ignore-scripts --no-package-lock --no-audit --no-fund playwright@1.56.1
+          PERMISSION_CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          if [[ -z "$PERMISSION_CHROME" ]]; then
+            "$RUNNER_TEMP/intercity-permission-browser/node_modules/.bin/playwright" install --with-deps chromium
+          fi
+          INTERCITY_PLAYWRIGHT_MODULE="$RUNNER_TEMP/intercity-permission-browser/node_modules/playwright" INTERCITY_BROWSER_EXECUTABLE="$PERMISSION_CHROME" node scripts/tests/permission_reminder_browser.cjs
+
       - name: Verify release backup and rollback
         run: python3 scripts/tests/test_vps_deploy_release.py
 

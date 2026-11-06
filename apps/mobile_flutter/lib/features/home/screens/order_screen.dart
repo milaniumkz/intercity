@@ -1,3 +1,4 @@
+import '../../../core/utils/location_permission_events.dart';
 import '../../../core/widgets/passenger_map_tiles.dart';
 import '../../../core/services/technical_telemetry.dart';
 import '../../../core/utils/network_recovery.dart';
@@ -407,6 +408,7 @@ class OrderScreen extends StatefulWidget {
 class _OrderScreenState extends State<OrderScreen> {
   AppLifecycleListener? _locationLifecycle;
   StreamSubscription<void>? _searchNetwork;
+  StreamSubscription<void>? _locationPermission;
   String? _failedFromSearch, _failedToSearch;
   void _recoverAddressSearch() {
     if (!mounted) return;
@@ -690,6 +692,20 @@ class _OrderScreenState extends State<OrderScreen> {
     _loadPassengerRuntimeSettings();
     unawaited(_loadSavedCardAvailability());
     _draftReady = _restoreBoardDraft();
+    _locationPermission = locationPermissionGrantedEvents().listen((_) async {
+      _locationSession.permissionGranted();
+      await _draftReady;
+      if (!mounted) return;
+      if (_statusText ==
+          const BrowserLocationException(
+                  BrowserLocationFailure.permissionDenied)
+              .userMessage) {
+        setState(() => _statusText = '');
+      }
+      if (widget.autoLocateOnStart && _needsAutomaticCityPickup && !_locating) {
+        unawaited(_initMapCenterByLocation(forceCurrentLocation: true));
+      }
+    });
     if (widget.autoLocateOnStart) {
       unawaited(_startAutomaticLocation());
     }
@@ -1467,6 +1483,7 @@ class _OrderScreenState extends State<OrderScreen> {
 
   @override
   void dispose() {
+    _locationPermission?.cancel();
     _searchNetwork?.cancel();
     _locationLifecycle?.dispose();
     _fromSearchDebounce?.cancel();

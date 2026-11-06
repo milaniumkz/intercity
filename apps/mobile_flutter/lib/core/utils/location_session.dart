@@ -55,6 +55,12 @@ class LocationSession {
     }
   }
 
+  void permissionGranted() {
+    _permissionError = null;
+    _deniedAt = null;
+    _automaticAttempted = false;
+  }
+
   Map<String, dynamic>? city;
   final _reverse = <String, ({DateTime at, Map<String, dynamic> data})>{};
   BrowserLocation? get freshFix =>
