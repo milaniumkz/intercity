@@ -557,10 +557,10 @@ export class DriverService {
         })) : [];
         const localTypes = [...(profile.acceptDelivery ? ['DELIVERY_CITY'] : []), ...(profile.acceptCityAuction ? ['CITY_AUCTION'] : [])];
         const online = profile.online;
-        if (localTypes.length && online?.isOnline && online.city) {
-            const lat = online.lastLat ?? online.city.lat, lng = online.lastLng ?? online.city.lng;
+        if (localTypes.length && online?.isOnline && (online.city || (online.lastLat != null && online.lastLng != null))) {
+            const lat = online.lastLat ?? online.city!.lat, lng = online.lastLng ?? online.city!.lng;
             const origins: any[] = [{fromLat:{gte:lat-0.1,lte:lat+0.1},fromLng:{gte:lng-0.15,lte:lng+0.15}}];
-            if (online.city.name) origins.push({fromLat:null,fromCity:{contains:online.city.name,mode:'insensitive'}});
+            if (online.city?.name) origins.push({fromLat:null,fromCity:{contains:online.city.name,mode:'insensitive'}});
             filters.push({requestType:{in:localTypes},OR:origins});
         }
         if (!filters.length) return [];

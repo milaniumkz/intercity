@@ -7692,6 +7692,14 @@ class _OrderScreenState extends State<OrderScreen> {
   List<Widget> _routeStepContent() {
     return [
       if (_mode() == 'CARGO') ...[
+        ListTile(
+            key: const ValueKey('cargo-origin-city'),
+            title: const Text('Город подачи'),
+            subtitle: Text(
+                _currentCityName.isEmpty ? 'Выберите город' : _currentCityName),
+            trailing: const Icon(Icons.search),
+            onTap: () =>
+                _openIntercityCitySearch(isFrom: true, forCityRide: true)),
         _cargoDepartureField(),
         const SizedBox(height: 12)
       ],
@@ -10748,6 +10756,24 @@ class _OrderScreenState extends State<OrderScreen> {
       );
 
   Widget _scheduleCard() {
+    if (_mode() == 'DELIVERY') {
+      return RouteDepartureField(
+        key: const ValueKey('delivery-departure'),
+        value: _intercityDateConfirmed ? _intercityTripDate : null,
+        title: 'Дата и время забора',
+        helperText:
+            'Выберите дату и время доставки. Время по настройкам устройства.',
+        enabled: !_loading,
+        onChanged: (value) {
+          setState(() {
+            _intercityTripDate = value;
+            _intercityDateConfirmed = true;
+            _statusText = '';
+          });
+          unawaited(_saveBoardDraft());
+        },
+      );
+    }
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     return InkWell(
@@ -12752,7 +12778,10 @@ class _OrderScreenState extends State<OrderScreen> {
       final filtered = await _searchAddresses(
         query,
         anchor: anchor,
-        cityIdOverride: _intercitySearchCityId(isFrom: isFrom),
+        cityIdOverride: (_mode() == 'CARGO' && isFrom)
+            ? _currentCityId
+            : _intercitySearchCityId(isFrom: isFrom),
+        restrictToAnchor: _mode() == 'CARGO' && isFrom,
         allowGlobalFallback:
             !isIntercity || !_hasIntercitySearchCity(isFrom: isFrom),
       );
@@ -12811,7 +12840,7 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   LatLng? _searchAnchor({required bool isFrom}) {
-    if (_shouldRestrictSearchToCurrentCity) {
+    if (_shouldRestrictSearchToCurrentCity || (_mode() == 'CARGO' && isFrom)) {
       final currentAnchor =
           _selectedCityPoint ?? _userLocation ?? _currentCityPointFromOptions();
       if (currentAnchor != null) return currentAnchor;
@@ -12849,6 +12878,9 @@ class _OrderScreenState extends State<OrderScreen> {
         _cityOptions.isEmpty &&
         !_cityOptionsLoading) {
       await _loadCityOptions();
+    }
+    if (_mode() == 'CARGO' && isFrom && _searchAnchor(isFrom: true) == null) {
+      await _openIntercityCitySearch(isFrom: true, forCityRide: true);
     }
     final existingAnchor = _searchAnchor(isFrom: isFrom);
     if (existingAnchor != null) {
@@ -12924,7 +12956,9 @@ class _OrderScreenState extends State<OrderScreen> {
     required LatLng? anchor,
     String? cityIdOverride,
     bool allowGlobalFallback = true,
+    bool restrictToAnchor = false,
   }) async {
+    if (restrictToAnchor && anchor == null) return [];
     if (anchor == null) {
       return _fetchAddressSearchResults(
         query,
@@ -12937,6 +12971,13 @@ class _OrderScreenState extends State<OrderScreen> {
             anchor: anchor, cityIdOverride: cityIdOverride)
         .timeout(const Duration(seconds: 12));
 
+    if (restrictToAnchor) {
+      return anchored.where((item) {
+        final point = _pointFromGeoItem(item);
+        return point != null &&
+            const Distance().as(LengthUnit.Meter, anchor, point) <= 60000;
+      }).toList();
+    }
     if (!_shouldRestrictSearchToCurrentCity &&
         shouldUseNearestAnchoredAddressResult(query: query, local: anchored)) {
       return [anchored.first];
@@ -13190,7 +13231,9 @@ class _OrderScreenState extends State<OrderScreen> {
       final results = await _searchAddresses(
         query,
         anchor: anchor,
-        cityIdOverride: intercityCityId,
+        cityIdOverride:
+            (_mode() == 'CARGO' && isFrom) ? _currentCityId : intercityCityId,
+        restrictToAnchor: _mode() == 'CARGO' && isFrom,
         allowGlobalFallback:
             !isIntercity || !_hasIntercitySearchCity(isFrom: isFrom),
       );
@@ -13519,8 +13562,18 @@ class _OrderScreenState extends State<OrderScreen> {
         : _locationText(isFrom: false);
     return <String, dynamic>{
       'requestType': effectiveType,
-      'fromCity': isIntercity && fromCity.isNotEmpty ? fromCity : fromText,
-      'toCity': isIntercity && toCity.isNotEmpty ? toCity : toText,
+      'fromCity': isIntercity && fromCity.isNotEmpty
+          ? fromCity
+          : (_shouldRestrictSearchToCurrentCity &&
+                  _currentCityName.trim().isNotEmpty
+              ? _currentCityName.trim()
+              : fromText),
+      'toCity': isIntercity && toCity.isNotEmpty
+          ? toCity
+          : (_shouldRestrictSearchToCurrentCity &&
+                  _currentCityName.trim().isNotEmpty
+              ? _currentCityName.trim()
+              : toText),
       'fromAddressLabel': _fromLocation != null ? fromText : null,
       'toAddressLabel': _toLocation != null ? toText : null,
       'fromManualAddress': _fromLocation == null ? fromText : null,
@@ -13558,7 +13611,7 @@ class _OrderScreenState extends State<OrderScreen> {
       _statusText = 'Выберите будущую дату и время подачи грузового транспорта';
       return false;
     }
-    if (_requestType() == requestTypeIntercity &&
+    if ((_requestType() == requestTypeIntercity || _mode() == 'DELIVERY') &&
         (!_intercityDateConfirmed ||
             !_intercityTripDate.isAfter(DateTime.now()))) {
       _statusText = 'Выберите будущую дату и время поездки';

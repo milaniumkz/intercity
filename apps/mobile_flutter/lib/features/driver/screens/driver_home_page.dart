@@ -1,6 +1,7 @@
 import '../../../core/widgets/passenger_map_tiles.dart';
 import '../../../core/utils/freight_details.dart';
 import '../widgets/driver_idle_map.dart';
+import '../widgets/route_departure_field.dart';
 import '../../../core/services/trip_status_sound.dart';
 import '../../../core/services/payment_fallback_notifier.dart';
 import '../../../core/services/text_to_speech_service.dart';
@@ -98,6 +99,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   StreamSubscription<Position>? _positionStream;
   double _driverHeading = 0;
   LatLng? _lastGpsPoint;
+  bool _hasDriverPosition = false;
   DateTime? _lastGpsAt;
   double? _lastGpsAccuracy;
   bool _navigationVoiceWarningShown = false;
@@ -106,10 +108,13 @@ class _DriverHomePageState extends State<DriverHomePage>
   Timer? _offerCountdownTimer;
   Timer? _auctionOfferWaitTimer;
   bool _loadingNearby = false;
+  bool _showHomeWithActiveTrip = false;
+  final Set<String> _notifiedDeliveryIds = {};
   bool _updatingLocation = false;
   final Set<String> _declinedNextOfferIds = <String>{};
   List<LatLng> _activeRoutePolyline = [];
   int _activeRouteRequest = 0;
+  bool _activeRouteFailed = false;
   String? _activeRouteCacheKey;
   String? _activeRoutePendingKey;
   String? _activeRoutePhase;
@@ -338,6 +343,9 @@ class _DriverHomePageState extends State<DriverHomePage>
         final carNumberRaw = (profile['carNumber'] ?? '').toString();
         if (carNumberRaw.isNotEmpty) {
           _carNumberCtrl.text = carNumberRaw;
+        }
+        if (online?['lastLat'] is num && online?['lastLng'] is num) {
+          _hasDriverPosition = true;
         }
         if (online?['lastLat'] != null) {
           _latCtrl.text = online!['lastLat'].toString();
@@ -734,6 +742,23 @@ class _DriverHomePageState extends State<DriverHomePage>
             .whereType<Map>()
             .map((item) => Map<String, dynamic>.from(item))
             .toList();
+        if (!trips) {
+          final fresh = items
+              .where((item) =>
+                  '${item['requestType']}'.startsWith('DELIVERY') &&
+                  _notifiedDeliveryIds.add('${item['id']}'))
+              .toList();
+          if (fresh.isNotEmpty) {
+            unawaited(TripStatusSound.playOnce(
+                '${fresh.first['id']}', 'delivery_available'));
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(
+                    'Новая заявка на доставку. Дата: ${intercityDepartureLabel(fresh.first['date'])}'),
+                action: SnackBarAction(
+                    label: 'Открыть',
+                    onPressed: () => context.go('/driver/trip-create'))));
+          }
+        }
         setState(() {
           if (trips) {
             _myIntercityTrips = items
@@ -2089,7 +2114,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       setState(() => _activeOrder = order);
       _notifyPassengerLeaving(order);
       _openLinkedChatIfNeeded(order);
-      await _syncActiveRoutePolyline(order);
+      unawaited(_syncActiveRoutePolyline(order));
       if (const ['COMPLETED', 'CANCELLED'].contains(status)) {
         _activeOrderPollTimer?.cancel();
         _activeRoutePolyline = [];
@@ -2137,7 +2162,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       setState(() => _activeOrder = request);
       _notifyPassengerLeaving(request);
       _openLinkedChatIfNeeded(request);
-      await _syncActiveRoutePolyline(request);
+      unawaited(_syncActiveRoutePolyline(request));
     } catch (e) {
       if (!mounted) return;
       setState(() => _message = errorMessageRu(e));
@@ -2182,6 +2207,21 @@ class _DriverHomePageState extends State<DriverHomePage>
       toLng = passenger.longitude;
     }
 
+    if (status != 'IN_PROGRESS' &&
+        const Distance().as(LengthUnit.Meter, LatLng(fromLat, fromLng),
+                LatLng(toLat, toLng)) <=
+            50) {
+      _activeRouteRequest++;
+      _activeRoutePendingKey = null;
+      if (mounted) {
+        setState(() {
+          _activeRoutePolyline = [];
+          _navSteps = const [];
+          _navStepIndex = 0;
+        });
+      }
+      return;
+    }
     final cacheKey = [
       order['id'],
       status,
@@ -2191,7 +2231,10 @@ class _DriverHomePageState extends State<DriverHomePage>
       toLng.toStringAsFixed(4),
     ].join('|');
     if (_activeRouteCacheKey == cacheKey) return;
-    if (_activeRoutePendingKey == cacheKey) return;
+    if (_activeRoutePendingKey != null &&
+        _activeRoutePhase == '${order['id']}|$status|$toLat|$toLng') {
+      return;
+    }
     final phase = '${order['id']}|$status|$toLat|$toLng';
     final now = DateTime.now();
     if (_activeRoutePhase == phase &&
@@ -2203,6 +2246,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     _activeRouteStartedAt = now;
     _activeRoutePendingKey = cacheKey;
     final request = ++_activeRouteRequest;
+    if (mounted) setState(() => _activeRouteFailed = false);
 
     try {
       final res = await _api.get(
@@ -2244,6 +2288,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     } catch (_) {
       if (mounted && request == _activeRouteRequest) {
         setState(() {
+          _activeRouteFailed = true;
           _activeRoutePolyline = [];
           _activeRouteCacheKey = null;
           _navSteps = const [];
@@ -2341,12 +2386,14 @@ class _DriverHomePageState extends State<DriverHomePage>
           });
         } else {
           setState(() => _activeOrder = {...?_activeOrder, 'status': status});
-          await _syncActiveRoutePolyline(_activeOrder!);
+          unawaited(_syncActiveRoutePolyline(_activeOrder!));
         }
-        await _loadIntercityMainState();
+        unawaited(_loadIntercityMainState());
       } else {
         await _api.post('/orders/$id/status', data: {'status': status});
-        await _loadOrderById(id);
+        if (!mounted) return;
+        setState(() => _activeOrder = {...?_activeOrder, 'status': status});
+        unawaited(_loadOrderById(id));
       }
       if (status == 'DRIVER_ARRIVED' && _navSteps.isNotEmpty) {
         _announceManeuver(_navSteps.last, 0);
@@ -2387,6 +2434,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final previous = _lastGpsPoint;
     final point = LatLng(position.latitude, position.longitude);
     _lastGpsPoint = point;
+    _hasDriverPosition = true;
     _lastGpsAt = position.timestamp;
     _lastGpsAccuracy = position.accuracy;
     final activeOrder = _activeOrder;
@@ -2657,6 +2705,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   LatLng? _activeDriverPoint() {
+    if (!_hasDriverPosition) return null;
     final lat = double.tryParse(_latCtrl.text);
     final lng = double.tryParse(_lngCtrl.text);
     if (lat == null || lng == null) return null;
@@ -3050,7 +3099,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           _activeOrder = order;
           _message = 'Пассажир принял вашу цену.';
         });
-        await _syncActiveRoutePolyline(order);
+        unawaited(_syncActiveRoutePolyline(order));
         _startActiveOrderPolling(orderId);
         return;
       }
@@ -3155,12 +3204,27 @@ class _DriverHomePageState extends State<DriverHomePage>
     final target = order['status'] == 'IN_PROGRESS' ? destination : pickup;
     final start = _activeDriverPoint() ?? pickup;
     if (start == null || target == null) {
-      return const Center(child: Text('Координаты маршрута уточняются'));
+      return const Center(
+          child: Padding(
+              padding: EdgeInsets.all(20),
+              child: Text(
+                  'Адрес указан без точки на карте. Уточните место подачи у пассажира по телефону или в чате.',
+                  textAlign: TextAlign.center)));
     }
     return ClipRRect(
         borderRadius: BorderRadius.circular(18),
         child: DriverNavigationMap(
             key: ValueKey('driver-navigation-${order['id']}'),
+            tileProvider: widget.mapTileProvider,
+            loadFallbackRoute: false,
+            routeFailed: _activeRouteFailed,
+            onRetryRoute: () {
+              _activeRouteStartedAt = null;
+              unawaited(_syncActiveRoutePolyline(order));
+            },
+            nearbyLabel: order['status'] == 'IN_PROGRESS'
+                ? 'Вы рядом с точкой назначения'
+                : 'Вы рядом с точкой подачи',
             driver: _activeDriverPoint(),
             target: target,
             routeStart: start,
@@ -3947,7 +4011,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         });
         _notifyPassengerLeaving(request);
         _startActiveOrderPolling('${request['id']}');
-        await _syncActiveRoutePolyline(request);
+        unawaited(_syncActiveRoutePolyline(request));
       },
     );
   }
@@ -4030,6 +4094,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   @override
   Widget build(BuildContext context) {
+    if (_showHomeWithActiveTrip) return _boardDriverHomeScreen();
     if (_routeStage('active')) {
       final activeOrderStatus =
           (_activeOrder?['status'] ?? '').toString().toUpperCase();
@@ -4096,9 +4161,14 @@ class _DriverHomePageState extends State<DriverHomePage>
     return DriverActiveTripView(
       map: _activeOrderMap(),
       message: _rideStatusMessage,
-      details: freightDetails(order).join(' · '),
+      details: [
+        ...freightDetails(order),
+        if (_activeOrderIsIntercity &&
+            DateTime.tryParse('${order['date']}') != null)
+          'Выезд: ${formatRouteDeparture(DateTime.parse(order['date'].toString()))}. Бронь сохранена. Можно вернуться на главную.',
+      ].join(' · '),
       onBack: () => _activeOrderIsIntercity
-          ? context.go('/driver/trip-create')
+          ? setState(() => _showHomeWithActiveTrip = true)
           : goBackOr(context, fallback: '/driver/home'),
       passenger: _activePassengerName(order),
       from: (order['fromAddress'] ?? 'Точка подачи').toString(),
@@ -4435,6 +4505,15 @@ class _DriverHomePageState extends State<DriverHomePage>
                         onPressed: () => _showDashboardPopover(anchorContext))),
               ),
             ]),
+            if (_showHomeWithActiveTrip && _activeOrder != null)
+              Card(
+                  child: ListTile(
+                title: const Text('Забронированная поездка'),
+                subtitle: Text(
+                    '${_activeOrder!['fromAddress'] ?? ''} → ${_activeOrder!['toAddress'] ?? ''}'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => setState(() => _showHomeWithActiveTrip = false),
+              )),
             if (_isWaitingAuctionDecision) ...[
               const SizedBox(height: 12),
               Container(

@@ -1175,8 +1175,10 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                _metricTile('Оплата', paymentText),
+                if (requestType == requestTypeIntercity) ...[
+                  const SizedBox(height: 10),
+                  _metricTile('Оплата', paymentText),
+                ],
                 if ((request['comment'] ?? '')
                     .toString()
                     .trim()
@@ -1959,6 +1961,8 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                 _pickupDriverPoint != null &&
                 _fromPoint != null)
               RoadRouteLayer(
+                  arrivalRadiusMeters: 50,
+                  arrivalLabel: 'Водитель рядом',
                   from: _pickupDriverPoint!,
                   to: _fromPoint!,
                   strokeWidth: 5,

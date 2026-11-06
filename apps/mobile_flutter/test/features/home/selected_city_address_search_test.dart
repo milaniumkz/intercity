@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +11,7 @@ class _AddressApi extends ApiClient {
   Map<String, dynamic>? search;
   int calls = 0;
   bool fail = false;
+  bool far = false;
   @override
   Future<Response<dynamic>> get(String path,
       {Map<String, dynamic>? queryParameters, Options? options}) async {
@@ -24,9 +26,10 @@ class _AddressApi extends ApiClient {
       if (fail) throw Exception('offline');
       data = [
         {
-          'displayName': 'Омск, улица Ленина, 10',
-          'lat': 54.99,
-          'lng': 73.37,
+          'displayName':
+              far ? 'Семей, проспект Шакарима, 143' : 'Омск, улица Ленина, 10',
+          'lat': far ? 50.4 : 54.99,
+          'lng': far ? 80.2 : 73.37,
           'countryCode': 'RU'
         }
       ];
@@ -39,6 +42,39 @@ class _AddressApi extends ApiClient {
 }
 
 void main() {
+  testWidgets(
+      'cargo pickup uses the selected city and rejects unrelated distant matches',
+      (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    await AppPreferences.setOrderCity(
+        {'name': 'Омск', 'lat': 54.989, 'lng': 73.368, 'countryCode': 'RU'});
+    await AppPreferences.setOrderDraft(jsonEncode({'modeIndex': 3}));
+    final api = _AddressApi();
+    tester.view.physicalSize = const Size(600, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+        home: OrderScreen(
+            initialStep: 1,
+            apiClient: api,
+            enableLiveMap: false,
+            autoLocateOnStart: false)));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('cargo-origin-city')), findsOneWidget);
+    final field = find.byType(TextField).first;
+    await tester.enterText(field, 'Ленина 10');
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(api.search!['lat'], 54.989);
+    expect(api.search!['lng'], 73.368);
+    expect(find.text('Омск, улица Ленина, 10'), findsWidgets);
+    api.far = true;
+    await tester.enterText(field, 'Шакарима 143');
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.text('Семей, проспект Шакарима, 143'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets(
       'typing is debounced and a failed search can recover without direct providers',
       (tester) async {

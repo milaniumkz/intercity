@@ -39,6 +39,106 @@ class _HomeApi extends ApiClient {
 }
 
 void main() {
+  testWidgets('new future delivery is announced once in the open driver app',
+      (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    tester.view.physicalSize = const Size(600, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    await tester.pumpWidget(MaterialApp(
+        home: DriverHomePage(
+            apiClient: _DeliveryFeedApi(),
+            mapTileProvider: MemoryTileProvider(),
+            realtimeConnector: (_) async =>
+                SseConnection(stream: events.stream, close: () async {}))));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+        find.textContaining('Новая заявка на доставку. Дата:'), findsOneWidget);
+    await tester.pumpAndSettle();
+    events.add({
+      'event': 'driver-event',
+      'data': {'type': 'intercity.requests.changed'}
+    });
+    await tester.pump();
+    await tester.pumpAndSettle();
+    ScaffoldMessenger.of(tester.element(find.byType(DriverHomePage)))
+        .hideCurrentSnackBar();
+    await tester.pumpAndSettle();
+    expect(
+        find.textContaining('Новая заявка на доставку. Дата:'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await events.close();
+  });
+  testWidgets('status button finishes while road calculation is still pending',
+      (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    tester.view.physicalSize = const Size(600, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final api = _SlowStatusApi();
+    await tester.pumpWidget(MaterialApp(
+        home: DriverHomePage(
+            apiClient: api,
+            mapTileProvider: MemoryTileProvider(),
+            realtimeConnector: (_) async => SseConnection(
+                stream: const Stream.empty(), close: () async {}))));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    final action = find.byKey(const ValueKey('driver-primary-ride-action'));
+    expect(action, findsOneWidget);
+    await tester.tap(action);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(api.status, 'DRIVER_ARRIVED');
+    expect(tester.widget<FilledButton>(action).onPressed, isNotNull);
+    expect(
+        find.descendant(
+            of: action, matching: find.byType(CircularProgressIndicator)),
+        findsNothing);
+    expect(find.textContaining('Начать поездку'), findsOneWidget);
+    for (final pending in api.routes) {
+      pending.complete(
+          Response(requestOptions: RequestOptions(path: '/route'), data: {
+        'geometry': {
+          'coordinates': [
+            [76.85, 43.22],
+            [82.6, 49.95]
+          ]
+        },
+        'steps': []
+      }));
+    }
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+  });
+  testWidgets(
+      'intercity booking can return home and reopen without cancellation',
+      (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    tester.view.physicalSize = const Size(600, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+        home: DriverHomePage(
+            apiClient: _IntercityApi(),
+            mapTileProvider: MemoryTileProvider(),
+            realtimeConnector: (_) async => SseConnection(
+                stream: const Stream.empty(), close: () async {}))));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Активный заказ'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Забронированная поездка'), findsOneWidget);
+    await tester.tap(find.text('Забронированная поездка'));
+    await tester.pump();
+    expect(find.text('Активный заказ'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+  });
   testWidgets(
       'accepted intercity restores even while both optional feeds never respond',
       (tester) async {
@@ -146,9 +246,12 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Пассажир выходит к машине'), findsOneWidget);
+    await tester
+        .pumpAndSettle(); // Finish entrance before advancing its display timer.
     events.add(event);
     await tester.pump(const Duration(seconds: 9));
     await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Пассажир выходит к машине'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
@@ -397,6 +500,78 @@ class _UnavailableFeedsApi extends _IntercityApi {
     if (path == '/ridesharing/trips/my' ||
         path == '/driver/intercity/matching') {
       return Completer<Response<dynamic>>().future;
+    }
+    return super.get(path, queryParameters: queryParameters, options: options);
+  }
+}
+
+class _SlowStatusApi extends _HomeApi {
+  String status = 'DRIVER_EN_ROUTE';
+  final routes = <Completer<Response<dynamic>>>[];
+  @override
+  Future<Response<dynamic>> get(String path,
+      {Map<String, dynamic>? queryParameters, Options? options}) async {
+    if (path == '/driver/profile') {
+      final result = await super.get(path);
+      result.data['online'] = {
+        'isOnline': true,
+        'lastLat': 49.96,
+        'lastLng': 82.61
+      };
+      return result;
+    }
+    if (path == '/route') {
+      final pending = Completer<Response<dynamic>>();
+      routes.add(pending);
+      return pending.future;
+    }
+    if (path == '/driver/orders/active' || path == '/orders/status-order') {
+      return Response(requestOptions: RequestOptions(path: path), data: {
+        'id': 'status-order',
+        'status': status,
+        'fromLat': 49.95,
+        'fromLng': 82.6,
+        'toLat': 49.96,
+        'toLng': 82.61,
+        'fromAddress': 'A',
+        'toAddress': 'B',
+        'price': 1000,
+        'paymentMethod': 'CASH',
+        'passenger': {'name': 'Passenger'}
+      });
+    }
+    return super.get(path, queryParameters: queryParameters, options: options);
+  }
+
+  @override
+  Future<Response<dynamic>> post(String path,
+      {dynamic data,
+      Map<String, dynamic>? queryParameters,
+      Options? options}) async {
+    if (path == '/orders/status-order/status') status = data['status'];
+    return Response(requestOptions: RequestOptions(path: path), data: {});
+  }
+}
+
+class _DeliveryFeedApi extends _HomeApi {
+  @override
+  Future<Response<dynamic>> get(String path,
+      {Map<String, dynamic>? queryParameters, Options? options}) async {
+    if (path == '/driver/intercity/matching') {
+      return Response(requestOptions: RequestOptions(path: path), data: [
+        {
+          'id': 'future-delivery',
+          'requestType': 'DELIVERY_CITY',
+          'date': DateTime.now().add(const Duration(days: 2)).toIso8601String(),
+          'fromCity': 'Усть-Каменогорск',
+          'toCity': 'Усть-Каменогорск',
+          'fromManualAddress': 'Шакарима 143',
+          'toManualAddress': 'Сатпаева 1',
+          'price': 1000,
+          'currency': 'KZT',
+          'seats': 1
+        }
+      ]);
     }
     return super.get(path, queryParameters: queryParameters, options: options);
   }

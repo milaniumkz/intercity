@@ -95,7 +95,11 @@ class RoadRouteLayer extends StatefulWidget {
       this.fitPadding = const EdgeInsets.all(36),
       this.onDurationResolved,
       this.repository,
-      this.networkEvents});
+      this.networkEvents,
+      this.arrivalRadiusMeters = 0,
+      this.arrivalLabel = 'Вы рядом с точкой назначения'});
+  final double arrivalRadiusMeters;
+  final String arrivalLabel;
   final LatLng from;
   final LatLng to;
   final Color color;
@@ -111,7 +115,7 @@ class RoadRouteLayer extends StatefulWidget {
 
 class _RoadRouteLayerState extends State<RoadRouteLayer> {
   List<LatLng> _points = const [];
-  bool _failed = false;
+  bool _failed = false, _nearby = false;
   int _request = 0;
   StreamSubscription<void>? _network;
   AppLifecycleListener? _lifecycle;
@@ -143,7 +147,16 @@ class _RoadRouteLayerState extends State<RoadRouteLayer> {
     setState(() {
       _points = const [];
       _failed = false;
+      _nearby = widget.arrivalRadiusMeters > 0 &&
+          const Distance().as(LengthUnit.Meter, widget.from, widget.to) <=
+              widget.arrivalRadiusMeters;
     });
+    if (_nearby) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && request == _request) widget.onDurationResolved?.call(0);
+      });
+      return;
+    }
     try {
       final details = await (widget.repository ?? RoadRouteRepository.shared)
           .details(widget.from, widget.to);
@@ -191,11 +204,13 @@ class _RoadRouteLayerState extends State<RoadRouteLayer> {
           child: Card(
               child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            child: _failed
-                ? TextButton(
-                    onPressed: _load,
-                    child: const Text('Маршрут недоступен. Повторить'))
-                : const Text('Строим маршрут по дорогам…'),
+            child: _nearby
+                ? Text(widget.arrivalLabel)
+                : _failed
+                    ? TextButton(
+                        onPressed: _load,
+                        child: const Text('Маршрут недоступен. Повторить'))
+                    : const Text('Строим маршрут по дорогам…'),
           )),
         ));
   }

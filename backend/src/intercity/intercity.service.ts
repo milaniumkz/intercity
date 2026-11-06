@@ -1,3 +1,4 @@
+import {notifyDeliveryDrivers} from '../common/delivery-notification';
 import {notifyTripChat} from '../common/trip-chat-notification';
 import {reviseDriverRating,ratingReviewHint} from '../common/driver-rating-review';
 import {routeMatchesRequestSchedule} from '../common/driver-route-schedule';
@@ -336,6 +337,7 @@ export class IntercityService {
       return created;
     });
     this.realtime?.publish?.({type:'intercity.requests.changed',entity:'system',at:new Date().toISOString()});
+    void notifyDeliveryDrivers(this.prisma,this.push,createdRequest).catch(error=>console.warn('Delivery notification failed:',error?.name || 'Error'));
     return createdRequest;
   }
 

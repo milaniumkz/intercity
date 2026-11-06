@@ -14,7 +14,16 @@ class DriverNavigationMap extends StatefulWidget {
       required this.target,
       required this.heading,
       required this.route,
-      required this.routeStart});
+      required this.routeStart,
+      this.loadFallbackRoute = true,
+      this.routeFailed = false,
+      this.onRetryRoute,
+      this.nearbyLabel = 'Вы рядом с точкой назначения',
+      this.tileProvider});
+  final bool loadFallbackRoute, routeFailed;
+  final VoidCallback? onRetryRoute;
+  final String nearbyLabel;
+  final TileProvider? tileProvider;
   final LatLng? driver;
   final LatLng target;
   final LatLng routeStart;
@@ -63,6 +72,13 @@ class _DriverNavigationMapState extends State<DriverNavigationMap>
 
   void _followDriver() {
     if (!_ready || !_follow || widget.driver == null) return;
+    if (const Distance()
+            .as(LengthUnit.Meter, _map.camera.center, widget.driver!) >
+        1000) {
+      _animation.stop();
+      _map.moveAndRotate(widget.driver!, _map.camera.zoom, -widget.heading);
+      return;
+    }
     _from = _map.camera.center;
     _to = widget.driver;
     _rotationStart = _map.camera.rotation;
@@ -101,7 +117,7 @@ class _DriverNavigationMapState extends State<DriverNavigationMap>
           },
         ),
         children: [
-          const PassengerMapTiles(),
+          PassengerMapTiles(tileProvider: widget.tileProvider),
           const MapDataAttribution(),
           if (widget.route.length >= 2)
             PolylineLayer(polylines: [
@@ -110,12 +126,34 @@ class _DriverNavigationMapState extends State<DriverNavigationMap>
                   strokeWidth: 6,
                   color: AppTheme.primaryColor)
             ])
-          else
+          else if (widget.loadFallbackRoute)
             RoadRouteLayer(
-                from: widget.routeStart,
+                arrivalRadiusMeters: 50,
+                arrivalLabel: widget.nearbyLabel,
+                from: widget.driver ?? widget.routeStart,
                 to: widget.target,
                 fitCamera: false,
                 color: AppTheme.primaryColor),
+          if (!widget.loadFallbackRoute && widget.route.isEmpty)
+            Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Card(
+                        child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: widget.driver != null &&
+                              const Distance().as(
+                                      LengthUnit.Meter, start, widget.target) <=
+                                  50
+                          ? Text(widget.nearbyLabel)
+                          : widget.routeFailed
+                              ? TextButton(
+                                  onPressed: widget.onRetryRoute,
+                                  child: const Text(
+                                      'Маршрут недоступен. Повторить'))
+                              : const Text('Строим маршрут по дорогам…'),
+                    )))),
           MarkerLayer(markers: [
             Marker(
                 point: widget.target,

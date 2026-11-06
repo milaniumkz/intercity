@@ -1,3 +1,4 @@
+import {RoadRouterQueue} from './road-router-queue';
 import { brouterRoadResponse } from './brouter';
 import { BadRequestException, Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
 import {GeoProviderGate,publicNominatim,routeProviderAllowed} from './provider-policy';
@@ -827,7 +828,7 @@ export class GeoService {
         return parts.join(', ');
     }
 
-    private brouterBusy = false;
+    private readonly privateRoadQueue = new RoadRouterQueue();
     private readonly routeCache = new Map<string, {expires: number; route: any}>();
     private readonly routeRequests = new Map<string, Promise<any>>();
 
@@ -862,16 +863,12 @@ export class GeoService {
             const url = isBrouter
                 ? `${provider.replace(/\/$/, '')}/brouter?lonlats=${fromLng},${fromLat}%7C${toLng},${toLat}&profile=car-fast-nocost&alternativeidx=0&format=geojson&timode=3`
                 : `${provider.replace(/\/$/, '')}/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson&steps=true&alternatives=false`;
-            if (isBrouter && this.brouterBusy) throw new Error('Private road router is busy');
-            if (isBrouter) this.brouterBusy = true;
-            let data: any;
-            try {
+            const fetchRoute = async () => {
                 const response = await this.fetchGeo(url, {}, isBrouter ? 62000 : 8000);
                 const raw = await response.json();
-                data = isBrouter ? brouterRoadResponse(raw) : raw;
-            } finally {
-                if (isBrouter) this.brouterBusy = false;
-            }
+                return isBrouter ? brouterRoadResponse(raw) : raw;
+            };
+            const data = isBrouter ? await this.privateRoadQueue.run(fetchRoute) : await fetchRoute();
             if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
                 const route = data.routes[0];
                 const coords = route.geometry?.coordinates;

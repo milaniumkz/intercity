@@ -79,6 +79,7 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
   String? _lastNotifiedStatus;
   bool _offerActionBusy = false;
   double? _pickupEtaMinutes;
+  bool _pickupEtaFailed = false;
   late final _roadRoutes = RoadRouteRepository(_api);
 
   bool get _isScreenBoardPreview => (widget.orderId == 'board' ||
@@ -1632,6 +1633,8 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
               ),
             if (_driverPoint != null && _fromPoint != null && step <= 3)
               RoadRouteLayer(
+                  arrivalRadiusMeters: 50,
+                  arrivalLabel: 'Водитель рядом',
                   from: _driverPoint!,
                   to: _fromPoint!,
                   strokeWidth: 4,
@@ -1640,7 +1643,10 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
                   fitPadding: _orderMapPadding,
                   onDurationResolved: (minutes) {
                     if (!mounted) return;
-                    setState(() => _pickupEtaMinutes = minutes);
+                    setState(() {
+                      _pickupEtaMinutes = minutes;
+                      _pickupEtaFailed = minutes == null;
+                    });
                   }),
             if (_fromPoint != null &&
                 _toPoint != null &&
@@ -2709,6 +2715,8 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     final step = _statusStep((order['status'] ?? '').toString());
     if (step == 3) return 'На месте';
     if (step == 1 || step == 2) {
+      if (_pickupEtaMinutes == 0) return 'Водитель рядом';
+      if (_pickupEtaFailed) return 'Время пока недоступно';
       if (_pickupEtaMinutes != null) {
         return '~ ${math.max(1, _pickupEtaMinutes!.ceil())} мин';
       }

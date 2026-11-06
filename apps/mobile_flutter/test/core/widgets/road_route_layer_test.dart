@@ -58,6 +58,19 @@ Widget _map(RoadRouteRepository repository,
       )),
     );
 void main() {
+  testWidgets('nearby pickup is explicit and never requests or invents road geometry', (tester) async {
+    final api = _RouteApi()..fail = true;
+    double? eta;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: FlutterMap(
+      options: const MapOptions(initialCenter: LatLng(49.95,82.61), initialZoom:16),
+      children: [RoadRouteLayer(from: const LatLng(49.95,82.61), to: const LatLng(49.9501,82.61),
+        color: Colors.purple, arrivalRadiusMeters:50, arrivalLabel:'Водитель рядом',
+        repository: RoadRouteRepository(api), onDurationResolved:(value)=>eta=value)]))));
+    await tester.pumpAndSettle();
+    expect(api.calls,0); expect(eta,0); expect(find.text('Водитель рядом'),findsOneWidget);
+    expect(find.byType(PolylineLayer),findsNothing);
+    expect(find.text('Маршрут недоступен. Повторить'),findsNothing);
+  });
   testWidgets('renders all road vertices and reuses geometry across screens',
       (tester) async {
     final api = _RouteApi();

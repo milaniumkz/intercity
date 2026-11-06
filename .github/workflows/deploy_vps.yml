@@ -75,6 +75,7 @@ jobs:
           sed -n '/CREATE FUNCTION tech_audit_append_only()/,$p' prisma/migrations/20261020150000_technical_panel/migration.sql > /tmp/technical-audit-trigger.sql
           npx prisma db execute --file /tmp/technical-audit-trigger.sql --schema prisma/schema.prisma
           npm run build
+          node --test test/geo-provider-policy.test.js test/geo-search.test.js test/road-router-queue.test.js test/delivery-notification.test.js
           node --test test/technical-*.test.js
 
       - name: Verify identity workflows against isolated PostgreSQL
@@ -89,7 +90,7 @@ jobs:
           JS
           DATABASE_URL=postgresql://technical_test:technical_test_only@127.0.0.1:5432/dispatch_test npx prisma db push --skip-generate
           DISPATCH_TEST_DATABASE_URL=postgresql://technical_test:technical_test_only@127.0.0.1:5432/dispatch_test node --test --test-concurrency=1 test/identity-recovery.test.js test/identity-driver-documents.test.js test/vehicle-document.test.js test/admin-customer-records.test.js test/finance-attention.test.js
-          TARIFF_TEST_DATABASE_URL=postgresql://technical_test:technical_test_only@127.0.0.1:5432/dispatch_test node --test test/driver-route-schedule.test.js
+          TARIFF_TEST_DATABASE_URL=postgresql://technical_test:technical_test_only@127.0.0.1:5432/dispatch_test node --test test/driver-route-schedule.test.js test/delivery-matching.test.js test/geo-order-persistence.test.js
 
       - name: Verify private identity engine
         run: |

@@ -11,6 +11,31 @@ import 'package:intercity_mobile/core/services/sse_service.dart';
 import 'package:intercity_mobile/features/passenger/screens/order_searching_page.dart';
 
 void main() {
+  testWidgets('failed road ETA is explicit and becomes available after retry',
+      (tester) async {
+    tester.view.physicalSize = const Size(400, 832);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final api = _FakeApiClient(status: 'DRIVER_EN_ROUTE')..failRoute = true;
+    await tester.pumpWidget(MaterialApp(
+        home: OrderSearchingPage(
+            orderId: 'order-1',
+            apiClient: api,
+            mapTileProvider: _TestTiles(),
+            realtimeConnector: (String path,
+                    {Map<String, dynamic>? queryParameters}) async =>
+                null)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Время пока недоступно'), findsOneWidget);
+    expect(find.text('Рассчитываем…'), findsNothing);
+    api.failRoute = false;
+    await tester.tap(find.text('Маршрут недоступен. Повторить'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('~ 7 мин'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('leaving action appears only after arrival and survives refresh',
       (tester) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -386,6 +411,7 @@ class _FakeApiClient extends ApiClient {
   String status;
   double driverLat = 43.24;
   int routeMinutes = 7;
+  bool failRoute = false;
   final routeQueries = <Map<String, dynamic>>[];
 
   @override
@@ -395,6 +421,7 @@ class _FakeApiClient extends ApiClient {
     Options? options,
   }) async {
     if (path == '/route') {
+      if (failRoute) throw Exception('road offline');
       final q = Map<String, dynamic>.from(queryParameters!);
       routeQueries.add(q);
       return Response(requestOptions: RequestOptions(path: path), data: {

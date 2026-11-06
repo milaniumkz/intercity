@@ -58,6 +58,14 @@ class DriverIdleMapState extends State<DriverIdleMap>
 
   void _moveToDriver() {
     if (!_ready) return;
+    if (const Distance()
+            .as(LengthUnit.Meter, _map.camera.center, widget.point) >
+        1000) {
+      _animation.stop();
+      _lastFollowed = widget.point;
+      _map.move(widget.point, _map.camera.zoom);
+      return;
+    }
     _from = _map.camera.center;
     _to = widget.point;
     _lastFollowed = widget.point;
