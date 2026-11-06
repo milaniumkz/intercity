@@ -2216,6 +2216,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (mounted) {
         setState(() {
           _activeRoutePolyline = [];
+          _activeRouteCacheKey = null;
           _navSteps = const [];
           _navStepIndex = 0;
         });

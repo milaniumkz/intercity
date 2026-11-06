@@ -34,6 +34,14 @@ class DeployTest(unittest.TestCase):
         (staged / 'scripts').mkdir(parents=True)
         (staged / 'infra/vps').mkdir(parents=True)
         (staged / 'scripts/vps_release_manifest.py').write_bytes((ROOT / 'scripts/vps_release_manifest.py').read_bytes())
+        # Routing data is exercised separately; this fixture verifies deployment
+        # ordering/rollback without downloading a real map snapshot.
+        (staged / 'scripts/prepare_brouter_data.py').write_bytes(
+            (ROOT / 'scripts/prepare_brouter_data.py').read_bytes())
+        (staged / 'services/routing').mkdir(parents=True)
+        (staged / 'services/routing/segments-manifest.json').write_text(json.dumps({
+            'source': 'https://brouter.de/brouter/segments4/', 'files': [], 'bytes': 0,
+        }))
         (staged / '.release-manifest.json').write_text(json.dumps({
             'baseCommit': OLD, 'releaseCommit': NEW,
             'files': {'source.txt': hashlib.sha256(b'previous source').hexdigest()},

@@ -45,8 +45,8 @@ services:
     image: intercity-routing:prod
     container_name: intercity-routing
     restart: unless-stopped
-    mem_limit: 640m
-    cpus: '1.0'
+    mem_limit: 1536m
+    cpus: '1.5'
     pids_limit: 96
     read_only: true
     cap_drop: [ALL]

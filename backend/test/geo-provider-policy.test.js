@@ -67,15 +67,15 @@ test('private car route outage or malformed output is explicit, not a public-dem
   await assert.rejects(geo.getRoute(49.95,82.61,50.34,83.51),e=>e.getResponse().reason==='PROVIDER_UNAVAILABLE');assert.equal(calls,1);
  }
 });
-test('distinct private routes wait without interrupting the active worker',async()=>{
+test('eight independent private routes start together without queueing or interrupting one another',async()=>{
  const geo=make({BROUTER_URL:'http://routing:17777'});const completions=[];let calls=0;
  geo.fetchGeo=async()=>{calls++;return new Promise(r=>completions.push(()=>r({json:async()=>({features:[{geometry:{type:'LineString',coordinates:[[73.368,54.989],[73.38,55]]},properties:{'track-length':'2100','total-time':'240'}}]})})))};
- const first=geo.getRoute(54.989,73.368,55,73.38);
- const second=geo.getRoute(54.989,73.368,55.1,73.38);
- await new Promise(r=>setImmediate(r));assert.equal(calls,1);
- completions.shift()();assert.equal((await first).distance,2.1);
- await new Promise(r=>setImmediate(r));assert.equal(calls,2);
- completions.shift()();assert.equal((await second).distance,2.1);
+ const requests=Array.from({length:8},(_,i)=>geo.getRoute(54.989,73.368,55+i*.01,73.38));
+ assert.equal(calls,8);
+ await assert.rejects(geo.getRoute(54.989,73.368,56,73.38),e=>e.getResponse().reason==='PROVIDER_UNAVAILABLE');
+ assert.equal(calls,8);completions.forEach(done=>done());
+ assert((await Promise.all(requests)).every(route=>route.distance===2.1));
+ assert.equal(geo.privateRoutesActive,0);
 });
 test('real BRouter car hints retain left/right voice navigation and arrival in the existing step contract',async()=>{
  const fixture=require('./fixtures/brouter-car-road.json');

@@ -1,4 +1,3 @@
-import {RoadRouterQueue} from './road-router-queue';
 import { brouterRoadResponse } from './brouter';
 import { BadRequestException, Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
 import {GeoProviderGate,publicNominatim,routeProviderAllowed} from './provider-policy';
@@ -828,7 +827,7 @@ export class GeoService {
         return parts.join(', ');
     }
 
-    private readonly privateRoadQueue = new RoadRouterQueue();
+    private privateRoutesActive = 0;
     private readonly routeCache = new Map<string, {expires: number; route: any}>();
     private readonly routeRequests = new Map<string, Promise<any>>();
 
@@ -868,7 +867,13 @@ export class GeoService {
                 const raw = await response.json();
                 return isBrouter ? brouterRoadResponse(raw) : raw;
             };
-            const data = isBrouter ? await this.privateRoadQueue.run(fetchRoute) : await fetchRoute();
+            // Start independent routes immediately. Never queue or interrupt an
+            // already running calculation when the engine is at capacity.
+            if (isBrouter && this.privateRoutesActive >= 8) throw new Error('Private road router capacity exceeded');
+            if (isBrouter) this.privateRoutesActive++;
+            let data: any;
+            try { data = await fetchRoute(); }
+            finally { if (isBrouter) this.privateRoutesActive--; }
             if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
                 const route = data.routes[0];
                 const coords = route.geometry?.coordinates;
