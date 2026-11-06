@@ -189,6 +189,12 @@ JSROUTEPROBE
       docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}'
       exit 0
     fi
+    if [[ "$TARGET" == "routing-parallel-status" ]]; then
+      cat "$APP_ROOT/current_commit"
+      docker inspect intercity-routing --format 'entrypoint={{json .Config.Entrypoint}} memory={{.HostConfig.Memory}} nanoCPUs={{.HostConfig.NanoCpus}} OOM={{.State.OOMKilled}} restarts={{.RestartCount}}'
+      docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}' intercity-routing intercity-backend
+      exit 0
+    fi
     if [[ "$TARGET" == "map-capacity" ]]; then
       printf 'CPU cores: '; nproc
       free -m
