@@ -197,8 +197,16 @@ export class GeoService {
         }
     }
 
-    async cityNameAtPoint(lat: number, lng: number) {
-        return (await this.findNearestCity(lat, lng))?.name ?? null;
+    async cityNameAtPoint(lat: number, lng: number, preferredCity?: string) {
+        const needle = this.normalizeCityToken((preferredCity || '').split(',')[0]);
+        if (needle) {
+            const candidates = (await this.activeCitySearchRows()).filter(city =>
+                [city.name, ...(city.aliases || [])].some(alias => this.normalizeCityToken(alias) === needle)
+                && this.haversine(lat, lng, city.lat, city.lng) <= 50);
+            candidates.sort((a, b) => this.haversine(lat, lng, a.lat, a.lng) - this.haversine(lat, lng, b.lat, b.lng));
+            if (candidates.length) return candidates[0].name;
+        }
+        return (await this.reverseGeocode(lat, lng)).city || null;
     }
 
     async departureCurrency(lat?: number | null, lng?: number | null, cityName?: string | null) {
@@ -317,7 +325,7 @@ export class GeoService {
         return this.citySnapshotRequest;
     }
     async searchCities(query: string) {
-        const needle = this.normalizeCityToken((query || '').trim());
+        const needle = this.normalizeCityToken((query || '').trim().replace(/^(?:село|пос[её]лок|деревня|аул|город|с\.|п\.|д\.|г\.)\s+/iu, ''));
         if (needle.length < 2) return [];
         const rows = await this.activeCitySearchRows();
         let matches = this.citySearchSnapshot!.exact.get(needle) || rows.filter(city => city.searchTokens.some(name => name.includes(needle)));

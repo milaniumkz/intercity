@@ -37,7 +37,10 @@ class IntercityRequestCard extends StatelessWidget {
     String address(bool from) {
       final city = '${request[from ? 'fromCity' : 'toCity'] ?? ''}'.trim();
       final label = formatLocationDisplay(request, isFrom: from);
-      return city.isEmpty || label.toLowerCase().contains(city.toLowerCase())
+      return ('${request['requestType']}'.startsWith('DELIVERY') &&
+                  label.isNotEmpty) ||
+              city.isEmpty ||
+              label.toLowerCase().contains(city.toLowerCase())
           ? label
           : '$city, $label';
     }
@@ -57,6 +60,16 @@ class IntercityRequestCard extends StatelessWidget {
                             '${request['requestType'] ?? 'INTERCITY'}'),
                         style: const TextStyle(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 8),
+                    if ('${request['requestType']}'.startsWith('DELIVERY')) ...[
+                      SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                              onPressed: accepting ? null : onOffer,
+                              child: Text(myOffer == null
+                                  ? 'Предложить цену'
+                                  : 'Изменить предложение'))),
+                      const SizedBox(height: 8),
+                    ],
                     for (final from in [true, false])
                       Padding(
                           padding: const EdgeInsets.only(bottom: 8),
@@ -102,6 +115,10 @@ class IntercityRequestCard extends StatelessWidget {
                           padding: const EdgeInsets.only(top: 5),
                           child: Text(
                               'Моё предложение: ${myOffer['price']} ${intercityCurrencyLabel(request)} · ждём ответа')),
+                    if ('${request['comment'] ?? ''}'.trim().isNotEmpty)
+                      Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text('Примечание: ${request['comment']}')),
                     const SizedBox(height: 10),
                     if (onAccept != null && price is num && price > 0) ...[
                       SizedBox(
@@ -113,13 +130,14 @@ class IntercityRequestCard extends StatelessWidget {
                                   : 'Принять ${price.toStringAsFixed(price == price.roundToDouble() ? 0 : 2)} ${intercityCurrencyLabel(request)}'))),
                       const SizedBox(height: 6),
                     ],
-                    SizedBox(
-                        width: double.infinity,
-                        child: FilledButton(
-                            onPressed: accepting ? null : onOffer,
-                            child: Text(myOffer == null
-                                ? 'Предложить цену'
-                                : 'Изменить предложение'))),
+                    if (!'${request['requestType']}'.startsWith('DELIVERY'))
+                      SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                              onPressed: accepting ? null : onOffer,
+                              child: Text(myOffer == null
+                                  ? 'Предложить цену'
+                                  : 'Изменить предложение'))),
                   ]))),
     );
   }

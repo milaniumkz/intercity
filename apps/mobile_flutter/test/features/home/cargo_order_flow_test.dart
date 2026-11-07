@@ -24,6 +24,17 @@ class _CargoApi extends ApiClient {
       {dynamic data,
       Map<String, dynamic>? queryParameters,
       Options? options}) async {
+    if (path == '/geo/search') {
+      return Response(requestOptions: RequestOptions(path: path), data: [
+        {
+          'id': 'ust',
+          'name': 'Усть-Каменогорск',
+          'lat': 49.97,
+          'lng': 82.61,
+          'countryCode': 'KZ'
+        }
+      ]);
+    }
     if (path == '/orders/preview') {
       if (missingTariff) {
         throw DioException(
@@ -53,6 +64,47 @@ class _CargoApi extends ApiClient {
 }
 
 void main() {
+  testWidgets(
+      'choosing cargo pickup city preserves date, freight and village comment',
+      (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    tester.view.physicalSize = const Size(600, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final date = DateTime.now().add(const Duration(days: 2));
+    await AppPreferences.setOrderDraft(jsonEncode({
+      'modeIndex': 3,
+      'cargoScheduledFor': date.toUtc().toIso8601String(),
+      'itemDescription': 'Кровать',
+      'itemWeightKg': '25',
+      'comment': 'Село Черногорка'
+    }));
+    await tester.pumpWidget(MaterialApp(
+        home: OrderScreen(
+            initialStep: 1,
+            apiClient: _CargoApi(),
+            enableLiveMap: false,
+            autoLocateOnStart: false)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('cargo-origin-city')));
+    await tester.pumpAndSettle();
+    final search = find.widgetWithText(TextField, 'Поиск города по карте');
+    await tester.enterText(search, 'Усть');
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Усть-Каменогорск').last);
+    await tester.pumpAndSettle();
+    final draft = jsonDecode((await AppPreferences.getOrderDraft())!);
+    expect(DateTime.parse(draft['cargoScheduledFor']).isAtSameMomentAs(date),
+        true);
+    expect(draft['itemDescription'], 'Кровать');
+    expect(draft['itemWeightKg'], '25');
+    expect(draft['comment'], 'Село Черногорка');
+    expect(find.byKey(const ValueKey('cargo-origin-city')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('cargo exposes tariff error and retries calculation',
       (tester) async {
     FlutterSecureStorage.setMockInitialValues({});

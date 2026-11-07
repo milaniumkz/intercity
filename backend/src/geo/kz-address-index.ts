@@ -72,7 +72,11 @@ export class KazakhstanAddressIndex {
         }
         const tokens = normalizeKzStreet(street).split(' ').filter(Boolean);
         if (!tokens.length || tokens.length > 12) return [];
-        const match = tokens.map(token => `"${token}"*`).join(' AND ');
+        const match = tokens.map(token => {
+            // Keep the snapshot spelling too: Russian genitive Шакарима maps to Шәкәрім.
+            const stem = token.length >= 5 && token.endsWith('а') ? token.slice(0, -1) : token;
+            return stem === token ? `"${token}"*` : `("${token}"* OR "${stem}"*)`;
+        }).join(' AND ');
         const lat = context.lat, lng = context.lng;
         const latDelta = 50/111, lngDelta = 50/(111*Math.max(.25,Math.cos(lat*Math.PI/180)));
         const number = normalizeHouse(house);

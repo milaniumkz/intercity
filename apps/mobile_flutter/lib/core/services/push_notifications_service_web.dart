@@ -193,7 +193,7 @@ class PushNotificationsService {
                     secondsLeft: secondsLeft),
                 icon: '/icons/Icon-192.png',
                 tag: tag,
-                renotify: true,
+                renotify: false,
                 requireInteraction: true,
                 data: payload.jsify(),
               ))
@@ -212,7 +212,7 @@ class PushNotificationsService {
         icon: 'icons/Icon-192.png',
         badge: 'icons/Icon-maskable-192.png',
         tag: tag,
-        renotify: true,
+        renotify: false,
         requireInteraction: true,
       ),
     );
@@ -273,7 +273,7 @@ class PushNotificationsService {
                 silent: payload['type'] == 'chat_message',
                 icon: '/icons/Icon-192.png',
                 tag: tag,
-                renotify: true,
+                renotify: false,
                 data: payload.jsify(),
               ))
           .toDart;

@@ -48,3 +48,15 @@ test('permanently invalid FCM registrations are removed; transient errors retain
     assert.equal(await service.sendToToken('temporary-failure',{title:'Local mock',body:'No network'}),false);assert.equal(cleared.length,1);
   } finally {global.fetch=originalFetch;if(previous===undefined)delete process.env.FIREBASE_SERVICE_ACCOUNT_JSON;else process.env.FIREBASE_SERVICE_ACCOUNT_JSON=previous;}
 });
+
+
+test('web duplicate event tags stay stable without merging distinct trip states or messages',()=>{
+ const {webNotificationTag}=require('../dist/src/notifications/push.service');
+ const event={title:'Водитель прибыл',body:'Ожидает вас',data:{type:'order_status',orderId:'qa',status:'DRIVER_ARRIVED'}};
+ assert.equal(webNotificationTag(event),webNotificationTag({...event}));
+ assert.notEqual(webNotificationTag(event),webNotificationTag({...event,data:{...event.data,status:'COMPLETED'}}));
+ assert.notEqual(webNotificationTag(event),webNotificationTag({...event,data:{...event.data,orderId:'other'}}));
+ const chat={title:'Сообщение',body:'Здравствуйте',data:{type:'chat_message',orderId:'qa',messageId:'first'}};
+ assert.notEqual(webNotificationTag(chat),webNotificationTag({...chat,data:{...chat.data,messageId:'second'}}));
+ assert.equal(webNotificationTag({title:'Без заказа',body:'Тест'}),undefined);
+});

@@ -57,6 +57,7 @@ void main() {
     final departure = DateTime.now().add(const Duration(days: 3));
     await AppPreferences.setOrderDraft(jsonEncode({
       'modeIndex': 1,
+      'comment': 'Село Черногорка, встреча у магазина',
       'intercityDate': departure.toUtc().toIso8601String(),
       'fromText': 'Шакарима 143',
       'fromAddress': 'Шакарима 143',
@@ -95,11 +96,14 @@ void main() {
     await tester.tap(submit);
     await tester.pumpAndSettle();
     expect(api.submitted, isNotNull);
+    expect(api.submitted!['comment'],
+        contains('Село Черногорка, встреча у магазина'));
     expect(api.submitted!['departureOffsetMinutes'],
         departure.timeZoneOffset.inMinutes);
     expect(find.text(duplicateMessage), findsOneWidget);
     expect(find.byType(OrderScreen), findsOneWidget);
     final saved = jsonDecode((await AppPreferences.getOrderDraft())!);
+    expect(saved['comment'], 'Село Черногорка, встреча у магазина');
     expect(saved['fromText'], 'Шакарима 143');
     expect(saved['toText'], 'Абая 10');
     expect(DateTime.parse(saved['intercityDate']).isAtSameMomentAs(departure),

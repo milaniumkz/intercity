@@ -300,7 +300,7 @@ export class IntercityService {
     // Delivery address labels may omit the city. Keep route matching on canonical cities,
     // while retaining the full pickup/drop-off labels for the trip itself.
     const deliveryRouteCities = requestType.startsWith('DELIVERY') && this.geoService.cityNameAtPoint
-      ? await Promise.all([fromLat != null && fromLng != null ? this.geoService.cityNameAtPoint(fromLat, fromLng) : null, toLat != null && toLng != null ? this.geoService.cityNameAtPoint(toLat, toLng) : null])
+      ? await Promise.all([fromLat != null && fromLng != null ? this.geoService.cityNameAtPoint(fromLat, fromLng, data.fromCity) : null, toLat != null && toLng != null ? this.geoService.cityNameAtPoint(toLat, toLng, data.toCity) : null])
       : [null, null];
     const currency = await this.geoService.departureCurrency(fromLat, fromLng, data.fromCity);
     const paymentCardId = paymentMethod === 'CARD' ? await this.cardPayments.cardForOrder(userId, currency) : null;

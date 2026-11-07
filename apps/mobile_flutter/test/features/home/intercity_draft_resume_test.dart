@@ -38,6 +38,7 @@ void main() {
     final departure = DateTime.now().add(const Duration(days: 3));
     await AppPreferences.setOrderDraft(jsonEncode({
       'modeIndex': 1,
+      'comment': 'Уварово — село Черногорка, встреча у магазина',
       'intercityDate': departure.toUtc().toIso8601String(),
       'fromText': 'Шакарима 143',
       'fromAddress': 'Шакарима 143',
@@ -70,6 +71,14 @@ void main() {
             })));
     await tester.pumpAndSettle();
     expect(gpsCalls, 0);
+    final commentField = find.byWidgetPredicate((widget) =>
+        widget is TextField &&
+        widget.controller?.text ==
+            'Уварово — село Черногорка, встреча у магазина');
+    expect(commentField, findsOneWidget);
+    await tester.ensureVisible(commentField);
+    await tester.enterText(commentField, 'Село Черногорка, позвоните');
+    await tester.pumpAndSettle();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     await tester.pump();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -78,6 +87,7 @@ void main() {
         reason:
             'resuming an intercity form must not start destructive automatic GPS');
     final draft = jsonDecode((await AppPreferences.getOrderDraft())!);
+    expect(draft['comment'], 'Село Черногорка, позвоните');
     expect(draft['fromText'], 'Шакарима 143');
     expect(draft['toText'], 'Семей, Абая 10');
     expect(DateTime.parse(draft['intercityDate']).isAtSameMomentAs(departure),

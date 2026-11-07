@@ -622,6 +622,12 @@ class _OrderScreenState extends State<OrderScreen> {
     if (_mode() == 'CARGO' && _orderStep > 0 && !_cargoDepartureReady) {
       return false;
     }
+    if (_mode() == 'DELIVERY' &&
+        _orderStep >= 2 &&
+        (!_intercityDateConfirmed ||
+            !_intercityTripDate.isAfter(DateTime.now()))) {
+      return false;
+    }
     switch (_orderStep) {
       case 0:
         return true;
@@ -655,6 +661,12 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   String _stepHint() {
+    if (_mode() == 'DELIVERY' &&
+        _orderStep >= 2 &&
+        (!_intercityDateConfirmed ||
+            !_intercityTripDate.isAfter(DateTime.now()))) {
+      return 'Выберите будущую дату и время забора доставки';
+    }
     if (_mode() == 'CARGO' && !_cargoDepartureReady) {
       return 'Выберите дату и время подачи грузового транспорта';
     }
@@ -784,6 +796,7 @@ class _OrderScreenState extends State<OrderScreen> {
     final draft = <String, dynamic>{
       'vehicleClass': _vehicleClass,
       'auctionPrice': _auctionPriceController.text,
+      'comment': _commentController.text,
       'itemDescription': _deliveryItemController.text,
       'itemWeightKg': _deliveryWeightController.text,
       'itemDimensions': _deliveryDimensionsController.text,
@@ -874,6 +887,7 @@ class _OrderScreenState extends State<OrderScreen> {
                             : 0);
         _vehicleClass = (draft['vehicleClass'] ?? _vehicleClass).toString();
         _auctionPriceController.text = (draft['auctionPrice'] ?? '').toString();
+        _commentController.text = (draft['comment'] ?? '').toString();
         _deliveryItemController.text =
             (draft['itemDescription'] ?? '').toString();
         _deliveryWeightController.text =
@@ -4396,6 +4410,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 const SizedBox(height: 10),
                 TextField(
                   controller: _commentController,
+                  onChanged: (_) => unawaited(_saveBoardDraft()),
                   maxLength: 200,
                   minLines: 2,
                   maxLines: 3,
@@ -5747,6 +5762,8 @@ class _OrderScreenState extends State<OrderScreen> {
                 _intercityCitySelectorCard(),
                 const SizedBox(height: 12),
                 _routeAddressPanel(),
+                const SizedBox(height: 12),
+                _commentCard(),
                 if (_statusText.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   ICPremiumInfoBanner(text: _statusText),
@@ -6068,6 +6085,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 _boardOptionTitle('Комментарий для водителей'),
                 TextField(
                   controller: _commentController,
+                  onChanged: (_) => unawaited(_saveBoardDraft()),
                   maxLength: 200,
                   minLines: 3,
                   maxLines: 4,
@@ -8568,7 +8586,12 @@ class _OrderScreenState extends State<OrderScreen> {
     final name = _cityTitleFromGeo(selected);
     if (forCityRide) {
       if (point == null) return;
-      _clearRoute();
+      if (_mode() == 'CARGO') {
+        _clearAddressField(isFrom: true);
+        _clearAddressField(isFrom: false);
+      } else {
+        _clearRoute();
+      }
       setState(() {
         _selectedCityPoint = point;
         _mapCenter = point;
@@ -8664,6 +8687,8 @@ class _OrderScreenState extends State<OrderScreen> {
   List<Widget> _confirmStepContent() {
     return [
       _confirmOrderCard(),
+      if (_mode() == 'DELIVERY') _scheduleCard(),
+      if (_mode() == 'CARGO') _cargoDepartureField(),
       const SizedBox(height: 12),
       _commentCard(),
       if (_statusText.isNotEmpty) ...[
@@ -8868,19 +8893,22 @@ class _OrderScreenState extends State<OrderScreen> {
           fontWeight: FontWeight.w700,
         ),
         decoration: _inputDecoration(
-          label: _mode() == 'DELIVERY'
-              ? 'Комментарий к доставке'
-              : _isMarketRequest
-                  ? 'Комментарий к заявке'
-                  : 'Комментарий к заказу',
+          label: _mode() == 'INTERCITY'
+              ? 'Примечание / комментарий'
+              : _mode() == 'DELIVERY'
+                  ? 'Комментарий к доставке'
+                  : _isMarketRequest
+                      ? 'Комментарий к заявке'
+                      : 'Комментарий к заказу',
           hint: _mode() == 'DELIVERY'
               ? 'Подъезд, этаж, получатель, особенности'
               : _isMarketRequest
-                  ? 'Ориентир, пожелания, детали встречи'
+                  ? 'Село, посёлок, ориентир, детали встречи'
                   : 'Подъезд, ориентир, пожелания водителю',
           icon: Icons.notes_outlined,
         ),
-        maxLines: 2,
+        maxLines: 3,
+        onChanged: (_) => unawaited(_saveBoardDraft()),
       ),
     );
   }
@@ -12811,7 +12839,8 @@ class _OrderScreenState extends State<OrderScreen> {
         cityIdOverride: (_mode() == 'CARGO' && isFrom)
             ? _currentCityId
             : _intercitySearchCityId(isFrom: isFrom),
-        restrictToAnchor: _mode() == 'CARGO' && isFrom,
+        restrictToAnchor: (_mode() == 'CARGO' && isFrom) ||
+            (_mode() == 'DELIVERY' && _deliveryModeIndex == 0),
         allowGlobalFallback:
             !isIntercity || !_hasIntercitySearchCity(isFrom: isFrom),
       );
@@ -13072,7 +13101,13 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   List<Map<String, dynamic>> _localCitySearchResults(String query) {
-    final normalized = query.trim().toLowerCase().replaceAll('ё', 'е');
+    final normalized = query
+        .trim()
+        .toLowerCase()
+        .replaceAll('ё', 'е')
+        .replaceFirst(
+            RegExp(r'^(?:село|поселок|деревня|аул|город|с\.|п\.|д\.|г\.)\s+'),
+            '');
     if (normalized.length < 2) return const [];
     final matches = _cityOptions.where((city) {
       final name = (city['name'] ?? '').toString().toLowerCase().replaceAll(
@@ -13263,7 +13298,8 @@ class _OrderScreenState extends State<OrderScreen> {
         anchor: anchor,
         cityIdOverride:
             (_mode() == 'CARGO' && isFrom) ? _currentCityId : intercityCityId,
-        restrictToAnchor: _mode() == 'CARGO' && isFrom,
+        restrictToAnchor: (_mode() == 'CARGO' && isFrom) ||
+            (_mode() == 'DELIVERY' && _deliveryModeIndex == 0),
         allowGlobalFallback:
             !isIntercity || !_hasIntercitySearchCity(isFrom: isFrom),
       );

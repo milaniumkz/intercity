@@ -83,6 +83,16 @@ void main() {
           GlobalCupertinoLocalizations.delegate
         ]));
     await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<InkWell>(find
+                .ancestor(
+                    of: find.text('Далее'), matching: find.byType(InkWell))
+                .first)
+            .onTap,
+        isNull);
+    expect(find.text('Выберите будущую дату и время забора доставки'),
+        findsOneWidget);
     final field = find.byKey(const ValueKey('delivery-departure'));
     expect(field, findsOneWidget);
     expect(find.text('Выбрать дату и время'), findsOneWidget);

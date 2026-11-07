@@ -1,4 +1,4 @@
-import { createSign } from 'node:crypto';
+import { createHash, createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
@@ -8,6 +8,17 @@ type PushPayload = {
     body: string;
     data?: Record<string, string | number | boolean | null | undefined>;
 };
+
+// Repeated delivery of the same event replaces the existing web notification quietly.
+export function webNotificationTag(payload: PushPayload): string | undefined {
+    const entity = payload.data?.orderId || payload.data?.requestId || payload.data?.messageId;
+    if (!entity) return undefined;
+    if (payload.data?.type === 'driver_offer') return `driver-offer-${entity}`;
+    return 'intercity-' + createHash('sha256').update(JSON.stringify([
+        payload.data?.type, entity, payload.data?.status, payload.data?.messageId,
+        payload.title, payload.body,
+    ])).digest('hex').slice(0, 24);
+}
 
 @Injectable()
 export class PushService {
@@ -144,7 +155,7 @@ export class PushService {
                     data: this.stringifyData(payload.data ?? {}),
                     android: { priority: 'high', ttl: `${ttl}s`, notification: { channel_id: offer ? 'intercity_driver_offers_v2' : 'intercity_default_channel', sound: offer ? 'intercity_order' : 'default' } },
                     apns: { payload: { aps: { sound: offer ? 'intercity_order.wav' : 'default', ...(offer ? { 'interruption-level': 'time-sensitive' } : {}) } } },
-                    webpush: { headers: { Urgency: 'high', TTL: String(ttl) }, notification: { tag: offer ? `driver-offer-${payload.data?.orderId}` : undefined, requireInteraction: offer } },
+                    webpush: { headers: { Urgency: 'high', TTL: String(ttl) }, notification: { tag: webNotificationTag(payload), renotify: false, requireInteraction: offer } },
                 } }),
                 signal: AbortSignal.timeout(10000),
             });

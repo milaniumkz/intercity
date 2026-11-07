@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../core/utils/error_message_ru.dart';
+import '../../../core/utils/location_display.dart';
 import 'intercity_request_card.dart';
 
 class IntercityPriceProposalDialog extends StatefulWidget {
@@ -57,11 +58,15 @@ class _IntercityPriceProposalDialogState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
               Text(
-                  '${widget.request['fromCity']} → ${widget.request['toCity']}',
+                  '${widget.request['requestType']}'.startsWith('DELIVERY')
+                      ? '${formatLocationDisplay(widget.request, isFrom: true)} → ${formatLocationDisplay(widget.request, isFrom: false)}'
+                      : '${widget.request['fromCity']} → ${widget.request['toCity']}',
                   style: const TextStyle(fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
               Text(intercityDepartureLabel(widget.request['date'])),
-              Text('${widget.request['requestType']}'.startsWith('DELIVERY') ? '${widget.request['itemDescription'] ?? 'Груз'}${widget.request['itemWeightKg'] == null ? '' : ' · ${widget.request['itemWeightKg']} кг'} · ${intercityCurrencyLabel(widget.request)}' : '${widget.request['seats'] ?? 1} мест(а) · ${intercityCurrencyLabel(widget.request)}'),
+              Text('${widget.request['requestType']}'.startsWith('DELIVERY')
+                  ? '${widget.request['itemDescription'] ?? 'Груз'}${widget.request['itemWeightKg'] == null ? '' : ' · ${widget.request['itemWeightKg']} кг'} · ${intercityCurrencyLabel(widget.request)}'
+                  : '${widget.request['seats'] ?? 1} мест(а) · ${intercityCurrencyLabel(widget.request)}'),
               const SizedBox(height: 16),
               TextField(
                   controller: _price,

@@ -39,3 +39,14 @@ test('city anchoring covers smaller Kazakhstan settlements instead of a distant 
  const service=geo();const city=await service.findNearestCity(49.14284,57.12736);
  assert.equal(city.name,'Темир');assert.equal(city.countryCode,'KZ');
 });
+
+
+test('Russian Шакарима house search matches Kazakh Шәкәрім without guessing another house',async()=>{
+ const context={lat:49.97,lng:82.61,countryCode:'KZ'};
+ const kazakh=await index.search('Шәкәрім 143',context);
+ assert(kazakh.length>0,'OSM snapshot must contain the reported house');
+ const russian=await index.search('Шакарима 143',context);
+ assert(russian.some(row=>kazakh.some(known=>known.lat===row.lat && known.lng===row.lng)));
+ assert(russian.every(row=>/^143(?:[а-яa-z]+)?$/iu.test(row.houseNumber)));
+ assert.deepEqual(await index.search('Шакарима 99999',context),[]);
+});

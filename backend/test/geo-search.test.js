@@ -152,3 +152,21 @@ test('exact house outranks nearby university and wrong numbers',async()=>{
  ];
  const rows=await geo.searchLocations('Серикбаева 1',49.948986,82.627945);assert.equal(rows[0].displayName,'Серикбаева 1');
 });
+
+
+test('settlement prefixes find rural Черногорка without external providers', async()=>{
+ const geo=makeGeo();
+ for(const query of ['Черногорка','село Черногорка','с. Черногорка','посёлок Черногорка']) {
+  const rows=await geo.searchCities(query);
+  assert(rows.some(city=>city.name==='Черногорка' && geo.haversine(city.lat,city.lng,50.13644,82.45329)<1),query);
+ }
+});
+
+test('delivery retains the selected city within its area instead of a nearer hamlet', async()=>{
+ const geo=makeGeo();geo.reverseGeocode=async()=>{throw Error('selected local city requires no provider')};
+ for(const query of ['Усть-Каменогорск','Өскемен']) {
+  assert.equal(await geo.cityNameAtPoint(49.8978927714,82.6315747429,query),'Усть-Каменогорск');
+ }
+ geo.reverseGeocode=async()=>({city:'Семей'});
+ assert.equal(await geo.cityNameAtPoint(50.41,80.25,'Усть-Каменогорск'),'Семей');
+});
