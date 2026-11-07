@@ -171,9 +171,7 @@ class PushNotificationsService {
     int? secondsLeft,
     int? notificationId,
   }) async {
-    if (!_isPermissionGranted) {
-      await _requestPermissionIfNeeded();
-    }
+    // Incoming events cannot request browser permission without a user click.
     if (!_isPermissionGranted) return;
 
     final payload = buildDriverOfferPayload(orderId: orderId);
@@ -237,9 +235,7 @@ class PushNotificationsService {
     int? notificationId,
     Map<String, dynamic>? data,
   }) async {
-    if (!_isPermissionGranted) {
-      await _requestPermissionIfNeeded();
-    }
+    // Incoming events cannot request browser permission without a user click.
     if (!_isPermissionGranted) return;
 
     final payload = <String, dynamic>{
@@ -369,6 +365,11 @@ class PushNotificationsService {
   }
 
   Future<void> _requestPermissionIfNeeded() async {
+    try {
+      if (!web.window.navigator.userActivation.isActive) return;
+    } catch (_) {
+      return;
+    }
     final permission = _notificationPermission;
     if (permission == 'granted' ||
         permission == 'denied' ||

@@ -9,3 +9,5 @@
 #intercity-pwa-prompt .pwa-gate-card h2{font-size:21px;margin:0 0 12px}
 #intercity-pwa-prompt .pwa-gate-card p{font-size:14px}
 #intercity-pwa-prompt .pwa-gate-card [role=status]{padding:10px;border-radius:10px;background:#2e2146}
+
+#intercity-pwa-prompt.pwa-push-details{max-height:min(55dvh,420px)}

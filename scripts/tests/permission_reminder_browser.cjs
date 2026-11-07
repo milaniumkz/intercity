@@ -19,12 +19,12 @@ let browser;
 const errors=[];
 async function pageFor(options={}) {
   const context = await browser.newContext({viewport:{width:393,height:852},isMobile:true,hasTouch:true,
-    userAgent:options.ios ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17 Mobile/15 Safari/604.1' : 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/143 Mobile Safari/537.36'});
+    userAgent:options.ios ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17 Mobile/15 Safari/604.1' : 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/143 Mobile Safari/537.36'+(options.yandex?' YaBrowser/25.2.7.104.00':'' )});
   const page=await context.newPage();
   page.on('pageerror',error=>errors.push(error.message));
   await page.clock.install({time:new Date('2026-11-06T15:00:00Z')});
   await page.addInitScript(options=>{
-    const state=window.permissionFixture={signedIn:true,geo:'denied',push:'denied',geoCalls:0,pushCalls:0,reads:0,grants:0,...options};
+    const state=window.permissionFixture={signedIn:true,geo:'denied',push:'granted',geoCalls:0,pushCalls:0,reads:0,grants:0,...options};
     const status=window.permissionGeoStatus=new EventTarget();
     Object.defineProperty(status,'state',{get:()=>state.geo});
     Object.defineProperty(navigator,'permissions',{value:{query:async()=>{if(state.noPermissionsApi)throw Error('unsupported');return status}}});
@@ -36,18 +36,29 @@ async function pageFor(options={}) {
     Object.defineProperty(navigator,'standalone',{value:!!state.installed});
     window.intercityWebPushStatus=()=>{
       state.reads++;
-      const snapshot={signedIn:state.signedIn,permission:state.push,registered:state.push==='granted'};
+      const snapshot={signedIn:state.signedIn,permission:state.push,registered:state.registered??state.push==='granted'};
       if(state.holdNext){state.holdNext=false;return new Promise(resolve=>{state.releaseStatus=()=>resolve(snapshot)})}
       return Promise.resolve(snapshot);
     };
     window.intercityRequestWebPush=()=>{
       state.pushCalls++;state.pushActivation=!!navigator.userActivation?.isActive;
       if(state.throwPush)throw Error('not ready');
-      state.push='granted';return Promise.resolve(true);
+      if(state.failToken)return Promise.resolve(false);state.registered=true;return Promise.resolve(true);
     };
+    state.nativePushCalls=0;
+    Object.defineProperty(window,'Notification',{value:class {
+      static get permission(){return state.push}
+      static requestPermission(callback){
+        state.nativePushCalls++;state.nativeActivation=!!navigator.userActivation?.isActive;
+        if(state.hangPush)return new Promise(()=>{});
+        state.push=state.nativePushResult||'granted';
+        callback?.(state.push);
+        return state.callbackOnly?undefined:Promise.resolve(state.push);
+      }
+    }});
     window.addEventListener('intercity-location-permission-granted',()=>state.grants++);
     if(state.dismissInstall!==false)localStorage.setItem('intercity.pwa.install.dismissedUntil',String(Date.now()+86400000));
-    localStorage.setItem('intercity.pwa.push.dismissedUntil',String(Date.now()+86400000));
+    if(state.dismissPush!==false)localStorage.setItem('intercity.pwa.push.dismissedUntil',String(Date.now()+86400000));
   }, options);
   await page.goto(`http://127.0.0.1:${server.address().port}/#${options.route || '/order'}`);
   await page.clock.fastForward(2000);
@@ -72,7 +83,7 @@ async function run(round){
   await close(t);
 
   // One approval removes the gate, even if notifications are denied.
-  t=await pageFor({geo:'prompt',push:'denied'});await t.prompt.waitFor();
+  t=await pageFor({geo:'prompt',push:'granted'});await t.prompt.waitFor();
   await t.page.getByRole('button',{name:'Разрешить местоположение',exact:true}).click();
   await t.page.waitForFunction(()=>permissionFixture.grants===1);
   await t.page.waitForFunction(()=>!document.querySelector('[data-kind="permissions"]'));
@@ -82,7 +93,7 @@ async function run(round){
   await close(t);
 
   // Previously granted permission never opens a new system prompt or gate.
-  t=await pageFor({geo:'granted',push:'denied'});await t.page.clock.fastForward(600000);
+  t=await pageFor({geo:'granted',push:'granted'});await t.page.clock.fastForward(600000);
   await t.page.evaluate(()=>window.dispatchEvent(new CustomEvent('intercity-location-access',{detail:'denied'})));await t.page.clock.fastForward(6000);
   assert.equal(await t.prompt.count(),0);assert.equal(await t.page.evaluate(()=>permissionFixture.grants+permissionFixture.geoCalls+permissionFixture.pushCalls),0);
   await t.page.reload();await t.page.clock.fastForward(6000);assert.equal(await t.prompt.count(),0);await close(t);
@@ -140,7 +151,39 @@ async function run(round){
   t=await pageFor({signedIn:false,dismissInstall:false});await t.page.locator('#intercity-pwa-prompt').waitFor();
   assert.equal(await t.prompt.count(),0);await t.page.getByRole('button',{name:'Закрыть подсказку'}).click();
   await t.page.clock.fastForward(120000);assert.equal(await t.page.locator('#intercity-pwa-prompt').count(),0);await close(t);
-  assert.deepEqual(errors,[]);console.log(`Permission gate browser pass ${round}: 10 scenario groups OK`);
+  // Yandex: native notification request is synchronous in the trusted click.
+  for(const callbackOnly of [false,true]){
+    t=await pageFor({yandex:true,geo:'granted',push:'default',dismissPush:false,callbackOnly});
+    await t.page.getByRole('button',{name:'Включить уведомления',exact:true}).click();
+    await t.page.waitForFunction(()=>permissionFixture.pushCalls===1);
+    assert.deepEqual(await t.page.evaluate(()=>[permissionFixture.nativePushCalls,permissionFixture.nativeActivation]),[1,true]);
+    await t.page.clock.fastForward(60000);assert.equal(await t.page.locator('[data-kind=push]').count(),0);assert.equal(await t.prompt.count(),0);assert.equal(await t.page.locator('main').evaluate(e=>e.inert),false);await close(t);
+  }
+  t=await pageFor({yandex:true,geo:'granted',push:'denied',dismissPush:false});
+  await t.page.getByRole('button',{name:'Включить уведомления',exact:true}).click();
+  assert.match(await t.prompt.innerText(),/Яндекс Браузере[\s\S]*Уведомления от сайтов/);
+  assert.equal(await t.page.locator('main').evaluate(e=>e.inert),true);assert.equal(await t.page.getByRole('button',{name:/Закрыть/}).count(),0);
+  assert.equal(await t.page.evaluate(()=>permissionFixture.nativePushCalls+permissionFixture.pushCalls),0);await close(t);
+
+  // Browser-wide block/default return gives useful feedback instead of a dead button.
+  t=await pageFor({yandex:true,geo:'granted',push:'default',dismissPush:false,nativePushResult:'default'});
+  await t.page.getByRole('button',{name:'Включить уведомления',exact:true}).click();
+  await t.page.waitForFunction(()=>document.querySelector('[role=status]')?.textContent.includes('Запрос не подтверждён'));
+  await t.page.clock.fastForward(600000);
+  assert.deepEqual(await t.page.evaluate(()=>[permissionFixture.nativePushCalls,permissionFixture.pushCalls]),[1,0]);await close(t);
+
+  // An FCM connection failure is distinct from the OS permission request.
+  t=await pageFor({yandex:true,geo:'granted',push:'granted',registered:false,dismissPush:false,failToken:true});
+  await t.page.getByRole('button',{name:'Подключить уведомления',exact:true}).click();
+  await t.page.waitForFunction(()=>document.querySelector('[role=status]')?.textContent.includes('Разрешение получено. Не удалось подключить уведомления'));
+  assert.equal(await t.page.evaluate(()=>permissionFixture.nativePushCalls),0);await close(t);
+
+  // Approving push cannot bypass the required GPS gate.
+  t=await pageFor({yandex:true,push:'default'});await t.prompt.waitFor();
+  await t.page.getByRole('button',{name:'Включить уведомления',exact:true}).click();
+  await t.page.waitForFunction(()=>permissionFixture.pushCalls===1);await t.prompt.waitFor();
+  assert.equal(await t.page.locator('main').evaluate(e=>e.inert),true);await close(t);
+  assert.deepEqual(errors,[]);console.log(`Permission gate browser pass ${round}: 16 scenario groups OK`);
 }
 (async()=>{
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
