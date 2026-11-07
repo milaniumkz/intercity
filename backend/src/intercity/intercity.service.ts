@@ -1,3 +1,4 @@
+import { requireNoDuplicateDeparture, departureDay } from '../common/intercity-departure-duplicate';
 import {notifyDeliveryDrivers} from '../common/delivery-notification';
 import {notifyTripChat} from '../common/trip-chat-notification';
 import {reviseDriverRating,ratingReviewHint} from '../common/driver-rating-review';
@@ -21,6 +22,7 @@ import { requireNoActivePassengerOrder } from '../common/active-passenger-order'
 import { GeoService } from '../geo/geo.service';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -203,6 +205,7 @@ export class IntercityService {
     userId: string,
     data: {
       requestType?: string;
+      departureOffsetMinutes?: number;
       fromCity?: string;
       toCity?: string;
       fromLat?: number | null;
@@ -236,6 +239,8 @@ export class IntercityService {
     }
 
     const requestDate = normalizeClientDateTime(data.date, "date");
+    const departureOffsetMinutes = data.departureOffsetMinutes ?? 300;
+    departureDay(requestDate, departureOffsetMinutes);
     const paymentMethod = this.normalizePaymentMethod(
       data.paymentMethod,
       requestType,
@@ -300,10 +305,14 @@ export class IntercityService {
     const currency = await this.geoService.departureCurrency(fromLat, fromLng, data.fromCity);
     const paymentCardId = paymentMethod === 'CARD' ? await this.cardPayments.cardForOrder(userId, currency) : null;
     const createdRequest = await this.prisma.$transaction(async (tx) => {
-      await requireNoActivePassengerOrder(tx, userId);
+      if (requestType === 'INTERCITY') await requireNoDuplicateDeparture(tx,userId,'PASSENGER',{
+        fromCity:this.coerceNonEmptyString(data.fromCity) || route.from,toCity:this.coerceNonEmptyString(data.toCity) || route.to,
+        date:requestDate,offset:departureOffsetMinutes});
+      await requireNoActivePassengerOrder(tx, userId, requestType === 'INTERCITY');
       const created = await tx.intercityRequest.create({
       data: {
         passengerId: userId,
+        departureOffsetMinutes: data.departureOffsetMinutes ?? null,
         currency,
         requestType,
         fromCity: requestType === 'INTERCITY' ? this.coerceNonEmptyString(data.fromCity) || route.from : deliveryRouteCities[0] || this.coerceNonEmptyString(data.fromCity) || route.from,
@@ -582,6 +591,8 @@ export class IntercityService {
     if (["IN_PROGRESS", "COMPLETED"].includes(request.status)) throw new BadRequestException('Завершённую поездку нельзя отменить');
 
     return this.prisma.$transaction(async (tx) => {
+      await lockIncomeAccounting(tx);
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id=${passengerId} FOR UPDATE`;
       await tx.$executeRaw`SELECT id FROM "IntercityRequest" WHERE id=${requestId} FOR UPDATE`;
       const current = await tx.intercityRequest.findUniqueOrThrow({where:{id:requestId}});
       if (current.status === 'CANCELLED') return current;
@@ -682,6 +693,17 @@ export class IntercityService {
     }
 
     const updated = await this.prisma.$transaction(async tx => {
+      if (request.requestType === 'INTERCITY') {
+        await lockIncomeAccounting(tx);
+        if (target === 'CANCELLED') await tx.$queryRaw`SELECT id FROM "User" WHERE id=${request.passengerId} FOR UPDATE`;
+      }
+      if (request.requestType === 'INTERCITY' && ['DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS'].includes(target)) {
+        try { await requireNoActivePassengerOrder(tx,request.passengerId,true,requestId); }
+        catch (error) {
+          if (error instanceof ConflictException) throw new BadRequestException('У пассажира уже есть текущая поездка. Начать эту поездку можно после её завершения.');
+          throw error;
+        }
+      }
       const changed = await tx.intercityRequest.updateMany({ where: { id: requestId, status: current }, data: { status: target } });
       if (changed.count !== 1) throw new BadRequestException('Request status changed. Refresh the request.');
       if (target === 'IN_PROGRESS') {

@@ -48,6 +48,11 @@ class _OrderPageState extends State<OrderPage> {
           return;
         }
         if (data['type'] == 'INTERCITY') {
+          if (data['requestType'] == 'INTERCITY' &&
+              ['OPEN', 'DRIVER_ASSIGNED'].contains(data['status'])) {
+            setState(() => _checking = false);
+            return;
+          }
           context.go('/market/request/$id');
           return;
         }

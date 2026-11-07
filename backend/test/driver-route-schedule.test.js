@@ -26,7 +26,7 @@ test('scheduled route matches only selected local day, validates offers, preserv
   await assert.rejects(intercity.createOffer(driver.id,ids[2],{price:1000,seats:1}),/Недостаточно средств/);
   await tx.wallet.update({where:{userId:driver.id},data:{money:10000}});await intercity.createOffer(driver.id,ids[4],{price:1000,seats:1});
   const offer=await intercity.createOffer(driver.id,ids[2],{price:1000,seats:1});await intercity.acceptOffer(passenger.id,offer.id);assert(notices.some(n=>n.audience==='passenger'&&n.status==='DRIVER_ASSIGNED'));assert.equal(notices.filter(n=>n.userId===driver.id&&n.payload.data.status==='INTERCITY_ACCEPTED').length,1);await intercity.acceptOffer(passenger.id,offer.id);assert.equal(notices.filter(n=>n.userId===driver.id&&n.payload.data.status==='INTERCITY_ACCEPTED').length,1);
-  await assert.rejects(service.addIntercityRoute(driver.id,data),/принятые заказы/);assert.equal((await tx.driverIntercityRoute.findUnique({where:{id:route.id}})).seatsAvailable,1);
+  await assert.rejects(service.addIntercityRoute(driver.id,data),/маршрут и дату/);assert.equal((await tx.driverIntercityRoute.findUnique({where:{id:route.id}})).seatsAvailable,1);
   await tx.driverIntercityRoute.update({where:{id:route.id},data:{departureAt:new Date(Date.now()-2*86400000)}});assert.deepEqual(await service.getMatchingIntercityRequests(driver.id),[]);
   assert((await service.getActiveIntercity(driver.id)).some(r=>r.id===ids[2]));
   const pickup=await intercity.getRequest(passenger.id,ids[2]);assert.equal(pickup.pickupProgress.route.seatsAvailable,1);assert.equal(pickup.pickupProgress.driverLocation,null);

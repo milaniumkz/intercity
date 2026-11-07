@@ -153,8 +153,13 @@ export class OrdersService {
             select: { id: true, status: true },
         });
         if (order) return { ...order, type: 'CITY' };
-        const request = await this.prisma.intercityRequest.findFirst({
-            where, orderBy: { createdAt: 'desc' }, select: { id: true, status: true },
+        const select = { id: true, status: true, requestType: true, date: true };
+        const ongoing = await this.prisma.intercityRequest.findFirst({
+            where: {...where, NOT:{requestType:'INTERCITY',status:{in:['OPEN','DRIVER_ASSIGNED']}}},
+            orderBy:{createdAt:'desc'},select,
+        });
+        const request = ongoing ?? await this.prisma.intercityRequest.findFirst({
+            where, orderBy: { createdAt: 'desc' }, select,
         });
         return request ? { ...request, type: 'INTERCITY' } : null;
     }

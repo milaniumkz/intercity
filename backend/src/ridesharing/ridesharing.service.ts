@@ -1,3 +1,4 @@
+import {requireNoDuplicateDeparture, departureDay} from '../common/intercity-departure-duplicate';
 import { GeoService } from '../geo/geo.service';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
@@ -17,6 +18,7 @@ export class RidesharingService {
         seatsTotal: number;
         pricePerSeat: number;
         departureTime: Date | string;
+        departureOffsetMinutes?: number;
         promoteToTop?: boolean;
     }) {
         if (!Number.isFinite(data.seatsTotal) || data.seatsTotal < 1) {
@@ -32,16 +34,21 @@ export class RidesharingService {
             data.departureTime,
             'departureTime',
         );
+        const departureOffsetMinutes = data.departureOffsetMinutes ?? 300;
+        departureDay(departureTime,departureOffsetMinutes);
         const {
             promoteToTop,
             departureTime: _rawDepartureTime,
             ...tripData
         } = data;
         const currency = await this.geoService.departureCurrency(data.fromLat, data.fromLng, data.fromCity);
-        return this.prisma.rideSharingTrip.create({
+        return this.prisma.$transaction(async tx => {
+        await requireNoDuplicateDeparture(tx,driverId,'DRIVER',{fromCity:data.fromCity,toCity:data.toCity,date:departureTime,offset:departureOffsetMinutes});
+        return tx.rideSharingTrip.create({
             data: {
                 driverId,
                 ...tripData,
+                departureOffsetMinutes: data.departureOffsetMinutes ?? null,
                 currency,
                 departureTime,
                 topUntil: this.resolveTopUntil(
@@ -51,6 +58,7 @@ export class RidesharingService {
                 seatsAvailable: tripData.seatsTotal,
                 status: 'OPEN',
             },
+        });
         });
     }
 

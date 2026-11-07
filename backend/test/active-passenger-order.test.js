@@ -32,7 +32,7 @@ for (const kind of ['CITY','INTERCITY','NONE']) {
  test(`active order lookup returns ${kind} for the authenticated passenger`,async()=>{
   const makeFinder=(type)=>async({where,select})=>{
    assert.equal(where.passengerId,'account');assert.deepEqual(where.status.notIn,['COMPLETED','CANCELLED']);
-   assert.deepEqual(select,{id:true,status:true});
+   assert.deepEqual(select,type==='CITY'?{id:true,status:true}:{id:true,status:true,requestType:true,date:true});
    return kind===type?{id:'existing',status:type==='CITY'?'SEARCHING_DRIVER':'OPEN'}:null;
   };
   const service=new OrdersService({order:{findFirst:makeFinder('CITY')},intercityRequest:{findFirst:makeFinder('INTERCITY')}},null,null,null,null);

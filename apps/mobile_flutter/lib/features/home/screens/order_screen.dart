@@ -683,7 +683,7 @@ class _OrderScreenState extends State<OrderScreen> {
       _recoverAddressSearch();
       if (mounted &&
           widget.autoLocateOnStart &&
-          _fromLocation == null &&
+          _needsAutomaticCityPickup &&
           !_locating) {
         unawaited(_initMapCenterByLocation(forceCurrentLocation: true));
       }
@@ -12282,9 +12282,8 @@ class _OrderScreenState extends State<OrderScreen> {
         _confirmedCityPoint = null;
         await AppPreferences.clearOrderCity();
         if (!mounted) return;
-        // A GPS retry must preserve a destination already selected on the
-        // unified booking screen.
-        if (!_showCityComposer) _clearRoute();
+        // Refreshing GPS must preserve the intercity date, destination and
+        // typed addresses as well as a city booking's destination.
         _selectedCityPoint = null;
         _currentCityId = null;
       }
@@ -13618,6 +13617,7 @@ class _OrderScreenState extends State<OrderScreen> {
       'paymentMethod': _paymentMethod,
       'comment': _marketRequestComment(),
       'date': _intercityTripDate.toUtc().toIso8601String(),
+      'departureOffsetMinutes': _intercityTripDate.timeZoneOffset.inMinutes,
       'hasUnconfirmedLocation': _fromLocation == null || _toLocation == null,
       if (effectiveType == requestTypeIntercity) ...{
         'seats': _intercityWholeCabin ? 4 : _intercitySeats,

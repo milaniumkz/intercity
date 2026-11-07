@@ -70,6 +70,13 @@ String errorMessage(Object error) {
               t('Данные не найдены.', 'Деректер табылмады.');
         }
         if (code == 409) {
+          final data = error.response?.data;
+          if (data is Map && data['code'] == 'DUPLICATE_INTERCITY_DEPARTURE') {
+            return t(
+              'На этот маршрут и дату уже есть заявка. Выберите другую дату или откройте существующую заявку.',
+              'Бұл бағыт пен күнге өтінім бар. Басқа күнді таңдаңыз немесе бар өтінімді ашыңыз.',
+            );
+          }
           return _translateServerMessage(serverMessage) ??
               t(
                 'Такое действие уже выполнено или данные уже существуют.',

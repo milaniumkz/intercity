@@ -17,7 +17,16 @@ class _EntryApi extends ApiClient {
     dynamic data = <String, dynamic>{};
     if (path == '/orders/active') {
       checks++;
-      data = type == 'NONE' ? null : {'id': 'existing', 'type': type};
+      data = type == 'NONE'
+          ? null
+          : type == 'PLANNED'
+              ? {
+                  'id': 'existing',
+                  'type': 'INTERCITY',
+                  'requestType': 'INTERCITY',
+                  'status': 'OPEN'
+                }
+              : {'id': 'existing', 'type': type};
     }
     if (path == '/geo/cities') data = <dynamic>[];
     if (path == '/app/runtime-settings') {
@@ -28,7 +37,7 @@ class _EntryApi extends ApiClient {
 }
 
 void main() {
-  for (final type in ['CITY', 'INTERCITY', 'NONE']) {
+  for (final type in ['CITY', 'INTERCITY', 'NONE', 'PLANNED']) {
     testWidgets('entry opens $type or a new order form', (tester) async {
       FlutterSecureStorage.setMockInitialValues({});
       tester.view.physicalSize = const Size(600, 1100);
@@ -49,7 +58,7 @@ void main() {
       await tester.pumpWidget(MaterialApp.router(routerConfig: router));
       await tester.pumpAndSettle();
       expect(api.checks, 1);
-      if (type == 'NONE') {
+      if (type == 'NONE' || type == 'PLANNED') {
         expect(find.byType(OrderScreen), findsOneWidget);
       } else {
         expect(

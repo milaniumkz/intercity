@@ -123,6 +123,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
         'seatsTotal': _seatsTotal,
         'pricePerSeat': double.tryParse(_pricePerSeatCtrl.text) ?? 2000,
         'departureTime': _departureTime.toUtc().toIso8601String(),
+        'departureOffsetMinutes': _departureTime.timeZoneOffset.inMinutes,
         'promoteToTop': _promoteToTop,
       });
       if (!mounted) return;
@@ -678,6 +679,8 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   }
 
   Future<void> _openRouteCitySearch({required bool isFrom}) async {
+    var dialogOpen = true;
+    ModalRoute<dynamic>? searchRoute;
     final controller = TextEditingController();
     List<Map<String, dynamic>> results = [];
     bool loading = false;
@@ -689,6 +692,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
       String value,
       void Function(void Function()) setSheetState,
     ) async {
+      if (!mounted || !dialogOpen) return;
       final query = value.trim();
       requestId++;
       final currentRequestId = requestId;
@@ -709,7 +713,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
           '/geo/search',
           data: {'q': query, 'type': 'city'},
         );
-        if (currentRequestId != requestId) return;
+        if (!mounted || !dialogOpen || currentRequestId != requestId) return;
         final parsed = res.data is List
             ? (res.data as List)
                 .whereType<Map>()
@@ -738,7 +742,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
           localMessage = results.isEmpty ? 'Город не найден' : '';
         });
       } catch (e) {
-        if (currentRequestId != requestId) return;
+        if (!mounted || !dialogOpen || currentRequestId != requestId) return;
         final localFallback = _localCitySearchResults(query);
         setSheetState(() {
           results = localFallback;
@@ -766,6 +770,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
+        searchRoute = ModalRoute.of(sheetContext);
         return StatefulBuilder(
           builder: (context, setSheetState) {
             final theme = Theme.of(context);
@@ -869,6 +874,16 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                                   ),
                             trailing: const Icon(Icons.chevron_right_rounded),
                             onTap: () {
+                              if (!mounted ||
+                                  !dialogOpen ||
+                                  !sheetContext.mounted ||
+                                  ModalRoute.of(sheetContext)?.isCurrent !=
+                                      true) {
+                                return;
+                              }
+                              dialogOpen = false;
+                              requestId++;
+                              debounce?.cancel();
                               setState(() {
                                 if (isFrom) {
                                   _routeFromCityName = title;
@@ -892,7 +907,10 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
         );
       },
     );
+    dialogOpen = false;
+    requestId++;
     debounce?.cancel();
+    await searchRoute?.completed;
     controller.dispose();
   }
 

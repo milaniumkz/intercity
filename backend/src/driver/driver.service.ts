@@ -1,3 +1,4 @@
+import {requireNoDuplicateDeparture} from '../common/intercity-departure-duplicate';
 import { DriverDocumentService } from '../identity/driver-document.service';
 import { driverTaxChecksEnabled } from '../tax/driver-tax-mode';
 import {routeRequestTimeRange, routeMatchesRequestSchedule} from '../common/driver-route-schedule';
@@ -196,11 +197,8 @@ export class DriverService {
             : 4;
         return this.prisma.$transaction(async tx => {
             await lockIncomeAccounting(tx);
-            const where = {driverId_fromCity_toCity:{driverId:profile.id,fromCity,toCity}};
-            const previous = await tx.driverIntercityRoute.findUnique({where});
-            if (previous && await tx.intercityRequest.count({where:{reservedRouteId:previous.id,reservedSeats:{gt:0},status:{notIn:['COMPLETED','CANCELLED']}}})) throw new BadRequestException('На маршруте уже есть принятые заказы. Завершите или отмените их перед изменением отправления');
-            const data = {seatsTotal:seatsAvailable,seatsAvailable,isActive:true,departureAt,departureOffsetMinutes:dto.departureOffsetMinutes};
-            return tx.driverIntercityRoute.upsert({where,create:{driverId:profile.id,fromCity,toCity,...data},update:data});
+            await requireNoDuplicateDeparture(tx,driverUserId,'DRIVER',{fromCity,toCity,date:departureAt,offset:dto.departureOffsetMinutes,driverProfileId:profile.id});
+            return tx.driverIntercityRoute.create({data:{driverId:profile.id,fromCity,toCity,seatsTotal:seatsAvailable,seatsAvailable,isActive:true,departureAt,departureOffsetMinutes:dto.departureOffsetMinutes}});
         });
     }
 
@@ -657,12 +655,10 @@ export class DriverService {
         });
         const scheduledRoutes = routeApplications.filter(route => routeRequestTimeRange(route));
         if (scheduledRoutes.length === 0) return [];
-        const allowedRoutes = new Map(
-            scheduledRoutes.map((route) => [
-                `${this.routeKey(route.fromCity)}→${this.routeKey(route.toCity)}`,
-                route,
-            ]),
-        );
+        const matchingRoute = (request: any) => scheduledRoutes.find(route =>
+            this.routeKey(route.fromCity) === this.routeKey(request.fromCity) &&
+            this.routeKey(route.toCity) === this.routeKey(request.toCity) &&
+            route.seatsAvailable >= Math.max(1,Math.trunc(Number(request.seats ?? 1))) && routeMatchesRequestSchedule(route,request));
 
         const allRequests = await this.prisma.intercityRequest.findMany({
             where: {
@@ -676,20 +672,20 @@ export class DriverService {
         });
         const requests=[];
         for(const request of allRequests) {
-            const route=allowedRoutes.get(`${this.routeKey(request.fromCity)}→${this.routeKey(request.toCity)}`);
+            const route=matchingRoute(request);
             if(!route || route.seatsAvailable<request.seats || !routeMatchesRequestSchedule(route,request)) continue;
             const window=await this.prisma.$transaction(tx=>ensureRouteTopWindow(tx,request));
             if(canSeePriorityRequest(window,driverId)) requests.push(request);
         }
         return requests
             .filter((request: any) => {
-                const route = allowedRoutes.get(`${this.routeKey(request.fromCity)}→${this.routeKey(request.toCity)}`);
+                const route = matchingRoute(request);
                 if (!route) return false;
                 const seatsNeeded = Math.max(1, Math.trunc(Number(request.seats ?? 1)));
                 return route.seatsAvailable >= seatsNeeded;
             })
             .map((request: any) => {
-                const route = allowedRoutes.get(`${this.routeKey(request.fromCity)}→${this.routeKey(request.toCity)}`);
+                const route = matchingRoute(request);
                 const hasCoords = request.fromLat != null && request.fromLng != null;
                 const distanceKm = hasCoords
                     ? this.haversine(driverLat, driverLng, request.fromLat, request.fromLng)

@@ -319,7 +319,7 @@ model DriverIntercityRoute {
   updatedAt      DateTime      @updatedAt
 
   @@index([driverId, isActive, departureAt])
-  @@unique([driverId, fromCity, toCity])
+  @@index([driverId, fromCity, toCity, departureAt])
   @@index([driverId, isActive])
   @@index([fromCity, toCity, isActive])
 }
@@ -688,6 +688,7 @@ model TariffDelivery {
 }
 
 model IntercityRequest {
+  departureOffsetMinutes Int?
   driverRating Int?
   driverRatingStatus String @default("COUNTED")
   driverRatingReason String?
@@ -736,6 +737,7 @@ model IntercityRequest {
 
   @@index([requestType, status, date])
   @@index([passengerId, requestType, createdAt])
+  @@index([passengerId, date])
 }
 
 model IntercityOffer {
@@ -754,6 +756,7 @@ model IntercityOffer {
 }
 
 model RideSharingTrip {
+  departureOffsetMinutes Int?
   id             String               @id @default(uuid())
   driverId       String
   fromCity       String
@@ -774,6 +777,7 @@ model RideSharingTrip {
   updatedAt      DateTime             @updatedAt
 
   @@index([status, topUntil, departureTime])
+  @@index([driverId, departureTime])
 }
 
 model RideSharingBooking {

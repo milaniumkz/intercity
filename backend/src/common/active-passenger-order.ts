@@ -2,7 +2,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 // Serialize both creation paths on the same account until creation commits.
-export async function requireNoActivePassengerOrder(tx: Prisma.TransactionClient, passengerId: string) {
+export async function requireNoActivePassengerOrder(tx: Prisma.TransactionClient, passengerId: string, allowPlannedIntercity = false, excludeRequestId?: string) {
     const users = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT id FROM "User" WHERE id = ${passengerId} FOR UPDATE
     `;
@@ -12,7 +12,9 @@ export async function requireNoActivePassengerOrder(tx: Prisma.TransactionClient
         select: { id: true },
     });
     const request = order ? null : await tx.intercityRequest.findFirst({
-        where: { passengerId, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
+        where: { passengerId, status: { notIn: ['COMPLETED', 'CANCELLED'] },
+            ...(allowPlannedIntercity ? {NOT:{requestType:'INTERCITY',status:{in:['OPEN','DRIVER_ASSIGNED']}}} : {}),
+            ...(excludeRequestId ? {id:{not:excludeRequestId}} : {}) },
         select: { id: true },
     });
     if (order || request) throw new ConflictException({
