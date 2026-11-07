@@ -4,6 +4,8 @@
 #intercity-pwa-prompt.pwa-compact{padding:12px 18px;max-width:440px;bottom:calc(82px + env(safe-area-inset-bottom));max-height:160px;box-shadow:0 5px 22px #0003}
 #intercity-pwa-prompt.pwa-compact h2{font-size:17px;margin:0 28px 4px 0}#intercity-pwa-prompt.pwa-compact p{margin:3px 0;font-size:13px}#intercity-pwa-prompt.pwa-compact button.pwa-primary{width:auto;min-height:36px;padding:7px 14px;margin-top:7px;font-size:14px}
 
-#intercity-pwa-prompt.pwa-permissions{padding:14px 16px;bottom:calc(82px + env(safe-area-inset-bottom));max-height:min(55dvh,400px);font-size:14px}
-#intercity-pwa-prompt.pwa-permissions h2{font-size:18px;margin:0 30px 8px 0}
-#intercity-pwa-prompt.pwa-permissions p{font-size:13px;margin:8px 0}
+#intercity-pwa-prompt.pwa-permission-gate{inset:0;transform:none;width:100%;max-width:none;height:100dvh;max-height:100dvh;border:0;border-radius:0;background:#0b0714f5;display:flex;align-items:center;justify-content:center;padding:20px;color:#f6f1ff;overscroll-behavior:contain}
+#intercity-pwa-prompt .pwa-gate-card{box-sizing:border-box;width:100%;max-width:440px;max-height:calc(100dvh - 40px);overflow:auto;padding:22px;border-radius:22px;background:#171124;border:1px solid #483166}
+#intercity-pwa-prompt .pwa-gate-card h2{font-size:21px;margin:0 0 12px}
+#intercity-pwa-prompt .pwa-gate-card p{font-size:14px}
+#intercity-pwa-prompt .pwa-gate-card [role=status]{padding:10px;border-radius:10px;background:#2e2146}

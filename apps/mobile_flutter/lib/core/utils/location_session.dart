@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:dio/dio.dart';
 import 'package:latlong2/latlong.dart';
 import 'browser_location_model.dart';
 import 'current_location.dart';
@@ -83,7 +85,7 @@ class LocationSession {
     if (cached != null) return cached;
     final key = _key(point);
     if (_reversePending[key] != null) return _reversePending[key]!;
-    final request = provider();
+    final request = _loadReverse(provider);
     _reversePending[key] = request;
     try {
       final data = await request;
@@ -91,6 +93,27 @@ class LocationSession {
       return data;
     } finally {
       if (identical(_reversePending[key], request)) _reversePending.remove(key);
+    }
+  }
+
+  Future<Map<String, dynamic>> _loadReverse(
+      Future<Map<String, dynamic>> Function() provider) async {
+    try {
+      return await provider();
+    } catch (error) {
+      final transient = error is TimeoutException ||
+          (error is DioException &&
+              ({
+                    DioExceptionType.connectionTimeout,
+                    DioExceptionType.sendTimeout,
+                    DioExceptionType.receiveTimeout,
+                    DioExceptionType.connectionError
+                  }.contains(error.type) ||
+                  (error.response?.statusCode ?? 0) >= 500));
+      if (!transient) rethrow;
+      // One shared retry for address + city; never retry permissions or 4xx.
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      return provider();
     }
   }
 

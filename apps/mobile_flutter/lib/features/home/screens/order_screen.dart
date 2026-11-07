@@ -409,6 +409,7 @@ class _OrderScreenState extends State<OrderScreen> {
   AppLifecycleListener? _locationLifecycle;
   StreamSubscription<void>? _searchNetwork;
   StreamSubscription<void>? _locationPermission;
+  bool _retryLocationAfterPermission = false;
   String? _failedFromSearch, _failedToSearch;
   void _recoverAddressSearch() {
     if (!mounted) return;
@@ -702,8 +703,12 @@ class _OrderScreenState extends State<OrderScreen> {
               .userMessage) {
         setState(() => _statusText = '');
       }
-      if (widget.autoLocateOnStart && _needsAutomaticCityPickup && !_locating) {
-        unawaited(_initMapCenterByLocation(forceCurrentLocation: true));
+      if (widget.autoLocateOnStart && _needsAutomaticCityPickup) {
+        if (_locating) {
+          _retryLocationAfterPermission = true;
+        } else {
+          unawaited(_initMapCenterByLocation(forceCurrentLocation: true));
+        }
       }
     });
     if (widget.autoLocateOnStart) {
@@ -12358,7 +12363,16 @@ class _OrderScreenState extends State<OrderScreen> {
         });
       }
     } finally {
-      if (mounted) setState(() => _locating = false);
+      if (mounted) {
+        setState(() => _locating = false);
+        final retryAfterGrant = _retryLocationAfterPermission;
+        _retryLocationAfterPermission = false;
+        if (retryAfterGrant &&
+            widget.autoLocateOnStart &&
+            _needsAutomaticCityPickup) {
+          unawaited(_initMapCenterByLocation(forceCurrentLocation: true));
+        }
+      }
     }
   }
 

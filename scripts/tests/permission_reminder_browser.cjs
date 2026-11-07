@@ -55,84 +55,92 @@ async function pageFor(options={}) {
 }
 async function close(test){await test.context.close();}
 async function run(round){
-  // No permanent dismissal, no background native requests, and stable reading/focus.
+  // A denied site is gated: it cannot be dismissed or bypassed by typing/chat.
   let t=await pageFor();await t.prompt.waitFor();
-  await t.page.getByRole('button',{name:'Как разрешить геолокацию',exact:true}).click();
-  assert.match(await t.prompt.innerText(),/браузер не показывает системный запрос повторно/);
-  await t.page.evaluate(()=>document.querySelector('[data-kind="permissions"]').dataset.probe='kept');
-  await t.page.clock.fastForward(600000);
-  assert.equal(await t.prompt.getAttribute('data-probe'),'kept');
+  assert.equal(await t.prompt.getAttribute('aria-modal'),'true');
+  assert.equal(await t.page.getByRole('button',{name:/Закрыть/}).count(),0);
+  assert.equal(await t.page.locator('main').evaluate(e=>e.inert),true);
+  assert.match(await t.prompt.innerText(),/GPS телефона и разрешение для сайта/);
+  await t.page.keyboard.press('Escape');await t.page.clock.fastForward(600000);await t.prompt.waitFor();
   assert.equal(await t.page.evaluate(()=>permissionFixture.geoCalls+permissionFixture.pushCalls),0);
-  await t.page.getByRole('button',{name:'Закрыть напоминание на 30 секунд'}).click();
-  assert.equal(await t.prompt.count(),0);await t.page.clock.fastForward(31000);await t.prompt.waitFor();
-  assert.equal(await t.page.evaluate(()=>localStorage.getItem('intercity.pwa.permissions.dismissedUntil')),null);
+  await t.page.evaluate(()=>{const input=document.createElement('input');document.querySelector('main').append(input);input.focus();window.intercityPermissionUiDepth=1;window.dispatchEvent(new Event('focus'))});
+  await t.page.clock.fastForward(6000);assert.equal(await t.prompt.count(),1);
+  await t.page.getByRole('button',{name:'Проверить доступ к геолокации',exact:true}).click();
+  await t.page.waitForFunction(()=>document.querySelector('[role=status]')?.textContent.includes('Доступ для сайта запрещён'));
+  assert.equal(await t.page.evaluate(()=>permissionFixture.geoCalls),1);
+  await t.page.clock.fastForward(60000);assert.equal(await t.prompt.count(),1);
   await close(t);
 
-  // Explicit clicks grant both permissions and update the app without a reload.
-  t=await pageFor({geo:'prompt',push:'default'});await t.prompt.waitFor();
-  await t.page.getByRole('button',{name:'Разрешить геолокацию',exact:true}).click();
+  // One approval removes the gate, even if notifications are denied.
+  t=await pageFor({geo:'prompt',push:'denied'});await t.prompt.waitFor();
+  await t.page.getByRole('button',{name:'Разрешить местоположение',exact:true}).click();
   await t.page.waitForFunction(()=>permissionFixture.grants===1);
-  await t.page.getByRole('button',{name:'Разрешить уведомления',exact:true}).click();
   await t.page.waitForFunction(()=>!document.querySelector('[data-kind="permissions"]'));
   await t.page.clock.fastForward(600000);
-  assert.equal(await t.prompt.count(),0);
-  assert.deepEqual(await t.page.evaluate(()=>[permissionFixture.geoCalls,permissionFixture.pushCalls,permissionFixture.grants,permissionFixture.pushActivation]),[1,1,1,true]);
+  assert.equal(await t.prompt.count(),0);assert.equal(await t.page.locator('main').evaluate(e=>e.inert),false);
+  assert.deepEqual(await t.page.evaluate(()=>[permissionFixture.geoCalls,permissionFixture.pushCalls,permissionFixture.grants]),[1,0,1]);
   await close(t);
 
-  t=await pageFor({geo:'granted',push:'granted'});await t.page.clock.fastForward(60000);
-  assert.equal(await t.prompt.count(),0);assert.equal(await t.page.evaluate(()=>permissionFixture.grants+permissionFixture.geoCalls+permissionFixture.pushCalls),0);await close(t);
+  // Previously granted permission never opens a new system prompt or gate.
+  t=await pageFor({geo:'granted',push:'denied'});await t.page.clock.fastForward(600000);
+  await t.page.evaluate(()=>window.dispatchEvent(new CustomEvent('intercity-location-access',{detail:'denied'})));await t.page.clock.fastForward(6000);
+  assert.equal(await t.prompt.count(),0);assert.equal(await t.page.evaluate(()=>permissionFixture.grants+permissionFixture.geoCalls+permissionFixture.pushCalls),0);
+  await t.page.reload();await t.page.clock.fastForward(6000);assert.equal(await t.prompt.count(),0);await close(t);
 
-  // Typed addresses, including Flutter shadow inputs, must not be obscured.
+  // Registration and identity verification remain available before GPS setup.
   t=await pageFor();await t.prompt.waitFor();
-  await t.page.evaluate(()=>{const host=document.createElement('div');host.id='editing';host.attachShadow({mode:'open'}).innerHTML='<input>';document.body.append(host);host.shadowRoot.querySelector('input').focus()});
-  await t.page.clock.fastForward(31000);assert.equal(await t.prompt.count(),0);
-  await t.page.evaluate(()=>{document.getElementById('editing').shadowRoot.querySelector('input').blur();window.dispatchEvent(new Event('focus'))});
-  await t.prompt.waitFor();
   for(const route of ['/identity','/forgot-password','/register/passenger','/login','/driver/verification/docs']){
-    await t.page.evaluate(route=>location.hash=route,route);await t.page.clock.fastForward(6000);assert.equal(await t.prompt.count(),0,route);
+    await t.page.evaluate(route=>location.hash=route,route);await t.page.clock.fastForward(6000);
+    assert.equal(await t.prompt.count(),0,route);assert.equal(await t.page.locator('main').evaluate(e=>e.inert),false);
   }
-  await close(t);
+  await t.page.evaluate(()=>location.hash='/driver/active-order');await t.page.clock.fastForward(6000);await t.prompt.waitFor();await close(t);
 
-  // iPhone web push instructions explain installation; closing is not a permanent opt-out.
-  t=await pageFor({ios:true,geo:'granted',push:'unsupported'});await t.prompt.waitFor();
-  await t.page.getByRole('button',{name:'Разрешить уведомления',exact:true}).click();
-  assert.match(await t.page.locator('#intercity-pwa-prompt').innerText(),/На экран/);
-  await t.page.getByRole('button',{name:'Закрыть подсказку'}).click();await t.page.clock.fastForward(31000);await t.prompt.waitFor();
-  await close(t);
+  // iPhone unsupported web push must not lock users who have GPS access.
+  t=await pageFor({ios:true,geo:'granted',push:'unsupported'});await t.page.clock.fastForward(600000);
+  assert.equal(await t.prompt.count(),0);assert.equal(await t.page.locator('main').evaluate(e=>e.inert),false);await close(t);
 
-  // Permission changes are detected on return; hidden pages do not keep checking.
+  // Settings changes are detected on return; hidden pages do not poll.
   t=await pageFor();await t.prompt.waitFor();
   await t.page.evaluate(()=>{permissionFixture.hidden=true;Object.defineProperty(document,'hidden',{get:()=>permissionFixture.hidden});document.dispatchEvent(new Event('visibilitychange'))});
   const reads=await t.page.evaluate(()=>permissionFixture.reads);await t.page.clock.fastForward(120000);
   assert.equal(await t.page.evaluate(()=>permissionFixture.reads),reads);
-  await t.page.evaluate(()=>{permissionFixture.geo='granted';permissionFixture.push='granted';permissionFixture.hidden=false;document.dispatchEvent(new Event('visibilitychange'))});
+  await t.page.evaluate(()=>{permissionFixture.geo='granted';permissionFixture.hidden=false;document.dispatchEvent(new Event('visibilitychange'))});
   await t.page.waitForFunction(()=>!document.querySelector('[data-kind="permissions"]'));
-  assert.equal(await t.page.evaluate(()=>permissionFixture.grants),1);
-  await close(t);
+  assert.equal(await t.page.evaluate(()=>permissionFixture.grants),1);await close(t);
 
-  // Out-of-order permission reads never restore a stale denied prompt.
+  // Out-of-order reads cannot restore the old denied gate.
   t=await pageFor();await t.prompt.waitFor();
   await t.page.evaluate(()=>{permissionFixture.holdNext=true;window.dispatchEvent(new Event('intercity-pwa-refresh'))});
   await t.page.waitForFunction(()=>!!permissionFixture.releaseStatus);
-  await t.page.evaluate(()=>{permissionFixture.geo='granted';permissionFixture.push='granted';window.dispatchEvent(new Event('intercity-pwa-refresh'))});
+  await t.page.evaluate(()=>{permissionFixture.geo='granted';window.dispatchEvent(new Event('intercity-pwa-refresh'))});
   await t.page.waitForFunction(()=>!document.querySelector('[data-kind="permissions"]'));
-  await t.page.evaluate(()=>permissionFixture.releaseStatus());await t.page.clock.fastForward(1000);assert.equal(await t.prompt.count(),0);
-  await close(t);
+  await t.page.evaluate(()=>permissionFixture.releaseStatus());await t.page.clock.fastForward(1000);assert.equal(await t.prompt.count(),0);await close(t);
 
-  // Safari without Permissions API and a blocked push bridge remain recoverable.
-  t=await pageFor({geo:'prompt',push:'default',noPermissionsApi:true,throwPush:true});await t.prompt.waitFor();
-  await t.page.getByRole('button',{name:'Разрешить геолокацию',exact:true}).click();await t.page.waitForFunction(()=>permissionFixture.grants===1);
-  await t.page.getByRole('button',{name:'Разрешить уведомления',exact:true}).click();
-  assert.match(await t.prompt.innerText(),/Не удалось запросить уведомления/);
-  await t.page.clock.fastForward(60000);assert.equal(await t.page.evaluate(()=>permissionFixture.geoCalls),1);
-  await close(t);
+  // Native GPS success is authoritative, including Safari without Permissions API.
+  t=await pageFor({noPermissionsApi:true});await t.prompt.waitFor();
+  await t.page.evaluate(()=>window.dispatchEvent(new CustomEvent('intercity-location-access',{detail:'granted'})));
+  await t.page.waitForFunction(()=>!document.querySelector('[data-kind="permissions"]'));
+  await t.page.clock.fastForward(600000);assert.equal(await t.prompt.count(),0);assert.equal(await t.page.evaluate(()=>permissionFixture.grants),1);await close(t);
 
-  // Existing installation hints still close for a day when no permission is required.
+  // GPS timeout is not a denial; revocation later restores the mandatory gate.
+  t=await pageFor({geo:'prompt'});await t.prompt.waitFor();
+  await t.page.evaluate(()=>{navigator.geolocation.getCurrentPosition=(ok,fail)=>{permissionFixture.geoCalls++;fail({code:3})}});
+  await t.page.getByRole('button',{name:'Разрешить местоположение',exact:true}).click();
+  await t.page.waitForFunction(()=>!document.querySelector('[data-kind="permissions"]'));
+  await t.page.clock.fastForward(60000);assert.equal(await t.prompt.count(),0);
+  await t.page.evaluate(()=>{permissionFixture.geo='denied';permissionGeoStatus.dispatchEvent(new Event('change'))});
+  await t.prompt.waitFor();assert.equal(await t.page.locator('main').evaluate(e=>e.inert),true);await close(t);
+
+  // A browser approval cannot keep blocking because of an old cached denial.
+  t=await pageFor();await t.prompt.waitFor();
+  await t.page.evaluate(()=>{navigator.geolocation.getCurrentPosition=success=>{permissionFixture.geoCalls++;success({coords:{latitude:49.97,longitude:82.61}})}});
+  await t.page.getByRole('button',{name:'Проверить доступ к геолокации',exact:true}).click();
+  await t.page.waitForFunction(()=>permissionFixture.grants===1);assert.equal(await t.prompt.count(),0);await close(t);
+
   t=await pageFor({signedIn:false,dismissInstall:false});await t.page.locator('#intercity-pwa-prompt').waitFor();
   assert.equal(await t.prompt.count(),0);await t.page.getByRole('button',{name:'Закрыть подсказку'}).click();
-  await t.page.clock.fastForward(120000);assert.equal(await t.page.locator('#intercity-pwa-prompt').count(),0);
-  await close(t);
-  assert.deepEqual(errors,[]);console.log(`Permission reminder browser pass ${round}: 8 scenarios OK`);
+  await t.page.clock.fastForward(120000);assert.equal(await t.page.locator('#intercity-pwa-prompt').count(),0);await close(t);
+  assert.deepEqual(errors,[]);console.log(`Permission gate browser pass ${round}: 10 scenario groups OK`);
 }
 (async()=>{
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));

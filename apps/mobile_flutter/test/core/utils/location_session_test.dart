@@ -6,6 +6,38 @@ import 'package:intercity_mobile/core/utils/location_session.dart';
 import 'package:intercity_mobile/core/utils/browser_location_model.dart';
 
 void main() {
+  test('transient reverse failures retry once and share the retry', () async {
+    final session = LocationSession();
+    var calls = 0;
+    Future<Map<String, dynamic>> provider() async {
+      calls++;
+      if (calls == 1) throw TimeoutException('reverse timeout');
+      return {'address': 'Шакарима 143', 'addressResolved': true};
+    }
+
+    const point = LatLng(49.97, 82.61);
+    final results = await Future.wait([
+      session.resolveReverse(point, provider),
+      session.resolveReverse(point, provider),
+    ]);
+    expect(calls, 2);
+    expect(results.first['address'], 'Шакарима 143');
+    expect(results.first, results.last);
+    await session.resolveReverse(point, provider);
+    expect(calls, 2);
+  });
+  test('permanent reverse failure stops after the one retry', () async {
+    final session = LocationSession();
+    var calls = 0;
+    await expectLater(
+        session.resolveReverse(const LatLng(49.97, 82.61), () async {
+          calls++;
+          throw TimeoutException('unavailable');
+        }),
+        throwsA(isA<TimeoutException>()));
+    expect(calls, 2);
+  });
+
   test(
       'granting permission retries immediately without clearing the chosen city',
       () async {

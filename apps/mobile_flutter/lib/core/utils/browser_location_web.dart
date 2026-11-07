@@ -5,6 +5,11 @@ import 'browser_location_model.dart';
 import 'browser_location_error.dart';
 import 'current_location.dart';
 
+void _notifyLocationAccess(String state) {
+  web.window.dispatchEvent(web.CustomEvent(
+      'intercity-location-access', web.CustomEventInit(detail: state.toJS)));
+}
+
 Future<BrowserLocation?> getBrowserLocation() async {
   final geolocation = web.window.navigator.geolocation;
   final completer = Completer<BrowserLocation?>();
@@ -25,6 +30,7 @@ Future<BrowserLocation?> getBrowserLocation() async {
     geolocation.getCurrentPosition(
       ((web.GeolocationPosition position) {
         if (completer.isCompleted) return;
+        _notifyLocationAccess('granted');
         final fix = BrowserLocation(
             latitude: position.coords.latitude,
             longitude: position.coords.longitude,
@@ -35,6 +41,7 @@ Future<BrowserLocation?> getBrowserLocation() async {
       }).toJS,
       ((web.GeolocationPositionError error) {
         if (!completer.isCompleted && error.code == 1) {
+          _notifyLocationAccess('denied');
           completer.completeError(const BrowserLocationException(
               BrowserLocationFailure.permissionDenied));
         }
@@ -47,6 +54,7 @@ Future<BrowserLocation?> getBrowserLocation() async {
     watch = geolocation.watchPosition(
       ((web.GeolocationPosition position) {
         if (completer.isCompleted) return;
+        _notifyLocationAccess('granted');
         final coords = position.coords;
         final fix = BrowserLocation(
           latitude: coords.latitude,
@@ -61,6 +69,7 @@ Future<BrowserLocation?> getBrowserLocation() async {
       ((web.GeolocationPositionError error) {
         if (completer.isCompleted) return;
         if (error.code == 1) {
+          _notifyLocationAccess('denied');
           completer.completeError(const BrowserLocationException(
               BrowserLocationFailure.permissionDenied));
         } else {
