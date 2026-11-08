@@ -39,6 +39,8 @@ void main() {
         findsNothing);
     await tester.scrollUntilVisible(trip, -250,
         scrollable: find.byType(Scrollable).first);
+    await Scrollable.ensureVisible(tester.element(trip), alignment: 0.5);
+    await tester.pumpAndSettle();
     await tester.tap(trip);
     await tester.pumpAndSettle();
     expect(find.text('Opened accepted-trip'), findsOneWidget);
