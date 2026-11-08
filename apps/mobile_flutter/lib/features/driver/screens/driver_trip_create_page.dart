@@ -3149,7 +3149,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                   : Text(_intercityRoutes
                       .take(2)
                       .map((route) =>
-                          '${route['fromCity']} → ${route['toCity']} · ${route['seatsAvailable']} мест')
+                          '${route['fromCity']} → ${route['toCity']} · ${route['seatsAvailable']} мест · ${formatRouteDeparture(DateTime.tryParse('${route['departureAt']}'), offsetMinutes: (route['departureOffsetMinutes'] as num?)?.toInt())}')
                       .join('\n')),
               children: [_intercityRouteApplicationCard()],
             )),
@@ -3202,8 +3202,10 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
             if (!_loading &&
                 _loadWarning == null &&
                 _boardFilteredRequests.isEmpty)
-              const ICPremiumInfoBanner(
-                text: 'Нет заявок по выбранным фильтрам.',
+              ICPremiumInfoBanner(
+                text: _boardTypeFilter == 'Межгород'
+                    ? 'Нет заявок по выбранным фильтрам. Проверьте дату отправления и свободные места в «Мои маршруты». Заявки показываются на выбранный день и направление.'
+                    : 'Нет заявок по выбранным фильтрам.',
               )
             else
               ..._boardFilteredRequests.map(
@@ -3559,9 +3561,12 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
       final order = Map<String, dynamic>.from(raw as Map);
       final type = (order['requestType'] ?? '').toString();
       final payment = (order['paymentMethod'] ?? '').toString();
+      final isIntercity = type == requestTypeIntercity ||
+          type == requestTypeDeliveryIntercity ||
+          type == requestTypeDeliveryRf;
       final typeOk = _boardTypeFilter == 'Все' ||
-          (_boardTypeFilter == 'Межгород' && type == requestTypeIntercity) ||
-          (_boardTypeFilter == 'По городу' && type != requestTypeIntercity);
+          (_boardTypeFilter == 'Межгород' && isIntercity) ||
+          (_boardTypeFilter == 'По городу' && !isIntercity);
       final paymentOk = _boardPaymentFilter == 'Все' ||
           (_boardPaymentFilter == 'Наличные' && payment == paymentMethodCash) ||
           (_boardPaymentFilter == 'Карта' &&

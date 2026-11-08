@@ -619,6 +619,8 @@ class _OrderScreenState extends State<OrderScreen> {
 
   bool _canContinueFromStep(bool canCreate) {
     if (_loading) return false;
+    // Let final cargo submission report validation errors on the form.
+    if (_mode() == 'CARGO' && _orderStep >= 3) return true;
     if (_mode() == 'CARGO' && _orderStep > 0 && !_cargoDepartureReady) {
       return false;
     }
@@ -668,7 +670,7 @@ class _OrderScreenState extends State<OrderScreen> {
       return 'Выберите будущую дату и время забора доставки';
     }
     if (_mode() == 'CARGO' && !_cargoDepartureReady) {
-      return 'Выберите дату и время подачи грузового транспорта';
+      return 'Выберите будущую дату и время подачи грузового транспорта';
     }
     switch (_orderStep) {
       case 0:

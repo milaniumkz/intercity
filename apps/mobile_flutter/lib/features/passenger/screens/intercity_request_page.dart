@@ -1789,9 +1789,7 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
                   child: _requestActionButton(
                     label: _actionBusy
                         ? 'Подтверждаем...'
-                        : _isDeliveryRequestType(requestType)
-                            ? 'Выбрать исполнителя'
-                            : 'Принять предложение водителя',
+                        : 'Принять предложение водителя',
                     icon: Icons.check_circle_rounded,
                     onPressed: _actionBusy ? null : () => _acceptOffer(offer),
                   ),

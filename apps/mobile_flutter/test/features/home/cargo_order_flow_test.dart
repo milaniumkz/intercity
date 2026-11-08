@@ -64,6 +64,34 @@ class _CargoApi extends ApiClient {
 }
 
 void main() {
+  testWidgets('final cargo button explains missing pickup time',
+      (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    tester.view.physicalSize = const Size(390, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    addTearDown(AppPreferences.clearOrderDraft);
+    await AppPreferences.setOrderDraft(jsonEncode({'modeIndex': 3}));
+    final api = _CargoApi();
+    await tester.pumpWidget(MaterialApp(
+        home: OrderScreen(
+            initialStep: 3,
+            apiClient: api,
+            enableLiveMap: false,
+            autoLocateOnStart: false)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Создать заказ'));
+    await tester.pumpAndSettle();
+    final error =
+        find.text('Выберите будущую дату и время подачи грузового транспорта');
+    await tester.scrollUntilVisible(error, 300,
+        scrollable: find.byType(Scrollable).first);
+    expect(error, findsOneWidget);
+    expect(api.created, isNull);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets(
       'choosing cargo pickup city preserves date, freight and village comment',
       (tester) async {
