@@ -18,17 +18,31 @@ class _Api extends ApiClient {
   @override
   Future<Response<dynamic>> get(String path,
           {Map<String, dynamic>? queryParameters, Options? options}) async =>
-      Response(requestOptions: RequestOptions(path: path), data: {
-        'money': money,
-        'bonus': 0,
-        'withdrawable': money,
-        'transactions': [],
-        'topups': pending
-            ? [
-                {'id': currentId, 'provider': 'KASSA24', 'status': 'PENDING'}
-              ]
-            : [],
-      });
+      Response(
+          requestOptions: RequestOptions(path: path),
+          data: path == '/wallet/kaspi/instructions'
+              ? {
+                  'available': true,
+                  'account': '70000000001',
+                  'paymentUrl': null,
+                  'bankConnectionReady': false,
+                  'message': 'Оплата Kaspi находится на подключении у банка.'
+                }
+              : {
+                  'money': money,
+                  'bonus': 0,
+                  'withdrawable': money,
+                  'transactions': [],
+                  'topups': pending
+                      ? [
+                          {
+                            'id': currentId,
+                            'provider': 'KASSA24',
+                            'status': 'PENDING'
+                          }
+                        ]
+                      : [],
+                });
   @override
   Future<Response<dynamic>> post(String path,
       {dynamic data,
@@ -89,12 +103,36 @@ void main() {
   }
 
   testWidgets(
+      'Kaspi shows account without making a card payment or claiming credit',
+      (tester) async {
+    final api = _Api();
+    String? opened;
+    await open(tester, api, opened: (url) => opened = url);
+    await tester.tap(find.text('Пополнить'));
+    await tester.pumpAndSettle();
+    expect(find.text('Онлайн картой'), findsOneWidget);
+    await tester.tap(find.text('Kaspi'));
+    await tester.pumpAndSettle();
+    expect(find.text('70000000001'), findsOneWidget);
+    expect(find.textContaining('на подключении'), findsOneWidget);
+    expect(find.text('Открыть Kaspi'), findsNothing);
+    expect(api.created, isNull);
+    expect(opened, isNull);
+    expect(api.money, 200);
+    await tester.tap(find.text('Обновить баланс'));
+    await tester.pumpAndSettle();
+    expect(api.money, 200);
+  });
+
+  testWidgets(
       'entering an amount is required and closing payment checks actual credit',
       (tester) async {
     final api = _Api();
     String? opened;
     await open(tester, api, opened: (url) => opened = url);
     await tester.tap(find.text('Пополнить'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Онлайн картой'));
     await tester.pumpAndSettle();
     expect(
         tester
@@ -120,6 +158,8 @@ void main() {
     final api = _Api();
     await open(tester, api);
     await tester.tap(find.text('Пополнить'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Онлайн картой'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Отмена'));
     await tester.pumpAndSettle();
@@ -176,6 +216,8 @@ void main() {
     await open(tester, api);
     api.approved = true;
     await tester.tap(find.text('Пополнить'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Онлайн картой'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextFormField), '750');
     await tester.tap(find.text('Продолжить'));

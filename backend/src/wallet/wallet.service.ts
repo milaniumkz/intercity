@@ -246,7 +246,7 @@ export class WalletService {
         if (!topup) {
             throw new NotFoundException('Заявка на пополнение не найдена');
         }
-        if (topup.currency !== 'KZT' || topup.provider === 'MANUAL') return { success: true, ignored: true, reason: 'manual_payment' };
+        if (topup.currency !== 'KZT' || ['MANUAL','KASPI'].includes(topup.provider ?? '')) return { success: true, ignored: true, reason: 'manual_payment' };
         if (topup.status !== 'PENDING') {
             return { success: true, alreadyProcessed: true, topupId: topup.id };
         }

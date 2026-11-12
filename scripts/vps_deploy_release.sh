@@ -181,4 +181,6 @@ if ! docker exec -i intercity-backend node - --run < "$RELEASE_DIR/scripts/verif
   echo 'Optional Firebase validation unavailable; web release remains published'
 fi
 compose ps
+docker exec intercity-backend node scripts/provision-kaspi-test.cjs
+
 printf 'Published and verified release: %s\n' "$COMMIT_SHA"

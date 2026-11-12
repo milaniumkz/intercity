@@ -25,7 +25,7 @@ RUN npx prisma generate
 
 COPY --from=builder /app/dist ./dist
 COPY technical-web ./technical-web
-COPY scripts/technical-owner.cjs scripts/technical-report.cjs ./scripts/
+COPY scripts/technical-owner.cjs scripts/technical-report.cjs scripts/provision-kaspi-test.cjs ./scripts/
 
 ENV NODE_ENV=production
 ENV PORT=8080

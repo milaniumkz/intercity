@@ -1,6 +1,12 @@
 api.intercity.89-207-255-27.sslip.io, api.intercity.89-207-255-27.nip.io {
 	encode gzip
 
+	@kaspiBlocked {
+		path /api/payments/kaspi
+		not remote_ip 194.187.247.152 194.187.245.108 197.187.244.108
+	}
+	respond @kaspiBlocked "Forbidden" 403
+
 	handle /api/* {
 		reverse_proxy backend:3000
 	}

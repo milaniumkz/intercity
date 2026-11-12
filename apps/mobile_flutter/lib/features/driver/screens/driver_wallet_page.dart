@@ -256,10 +256,105 @@ class _DriverWalletPageState extends State<DriverWalletPage>
         false;
   }
 
+  Future<String?> _chooseTopupProvider() => showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+            title: const Text('Способ пополнения'),
+            children: [
+              SimpleDialogOption(
+                  onPressed: () => Navigator.pop(ctx, 'KASSA24'),
+                  child: const ListTile(
+                      leading: Icon(Icons.credit_card),
+                      title: Text('Онлайн картой'),
+                      subtitle: Text('Kassa24'))),
+              SimpleDialogOption(
+                  onPressed: _currency == 'KZT'
+                      ? () => Navigator.pop(ctx, 'KASPI')
+                      : null,
+                  child: ListTile(
+                      leading: const Icon(Icons.account_balance_wallet),
+                      title: const Text('Kaspi'),
+                      subtitle: Text(_currency == 'KZT'
+                          ? 'Пополнение через Kaspi.kz'
+                          : 'Доступно для баланса в тенге'))),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Отмена')),
+            ],
+          ));
+
+  Future<void> _showKaspiTopup() async {
+    final res = await _api.get('/wallet/kaspi/instructions');
+    if (!mounted) return;
+    final data = Map<String, dynamic>.from(res.data as Map);
+    if (data['available'] != true) {
+      setState(
+          () => _message = (data['message'] ?? 'Kaspi недоступен').toString());
+      return;
+    }
+    final account = (data['account'] ?? '').toString();
+    final url = (data['paymentUrl'] ?? '').toString();
+    await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+              title: const Text('Пополнение через Kaspi'),
+              content: SingleChildScrollView(
+                  child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text((data['message'] ?? '').toString()),
+                    const SizedBox(height: 16),
+                    const Text('Номер счёта водителя'),
+                    SelectableText(account,
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    TextButton.icon(
+                        onPressed: () async {
+                          await Clipboard.setData(ClipboardData(text: account));
+                          if (ctx.mounted) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                                const SnackBar(
+                                    content: Text('Номер счёта скопирован')));
+                          }
+                        },
+                        icon: const Icon(Icons.copy),
+                        label: const Text('Скопировать номер')),
+                    const Text(
+                        'Валюта: тенге. Введите сумму в Kaspi.kz. Баланс обновится после подтверждения банка.'),
+                  ])),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('Закрыть')),
+                if (url.isNotEmpty)
+                  FilledButton(
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        await (widget.paymentOpener ?? showPaymentModal)(
+                            context, url);
+                        if (mounted) await _load();
+                      },
+                      child: const Text('Открыть Kaspi')),
+                TextButton(
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      await _load();
+                    },
+                    child: const Text('Обновить баланс')),
+              ],
+            ));
+  }
+
   Future<void> _topup() async {
     if (_topupBusy) return;
     setState(() => _topupBusy = true);
     try {
+      final provider = await _chooseTopupProvider();
+      if (!mounted || provider == null) return;
+      if (provider == 'KASPI') {
+        await _showKaspiTopup();
+        return;
+      }
       if (!await _askTopupAmount() || !mounted) return;
       final amount = double.parse(_topupCtrl.text.replaceAll(',', '.'));
       setState(() => _message = 'Создаём заявку на пополнение...');
