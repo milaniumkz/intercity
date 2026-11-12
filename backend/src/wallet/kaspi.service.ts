@@ -51,11 +51,12 @@ export class KaspiService {
             }
             const user=await tx.user.findUnique({where:{phone:'+'+account},include:{wallet:true,driverProfile:true}});
             if(!user?.wallet||!user.driverProfile||user.blockedAt)return reply(txnId,1,'Счёт не найден или недоступен');
+            const bankDate=new Date(`${txnDate.slice(0,4)}-${txnDate.slice(4,6)}-${txnDate.slice(6,8)}T${txnDate.slice(8,10)}:${txnDate.slice(10,12)}:${txnDate.slice(12,14)}+05:00`);
             const amount=cents/100,id=`${Date.now()}${randomInt(100000,1000000)}`;
             const topup=await tx.topupRequest.create({data:{id,walletId:user.wallet.id,amount,currency:'KZT',provider:'KASPI',externalOrderId:key,status:'APPROVED'}});
             await tx.wallet.update({where:{id:user.wallet.id},data:{money:{increment:amount}}});
-            await tx.walletTransaction.create({data:{walletId:user.wallet.id,type:'TOPUP_KASPI',direction:'CREDIT',balanceSource:'MONEY',currency:'KZT',amount,topupRequestId:topup.id,idempotencyKey:key,
-                note:JSON.stringify({provider:'KASPI',txn_id:txnId,txn_date:txnDate,timezone:'Asia/Almaty',account,testAccount:account===KASPI_TEST_PHONE})}});
+            await tx.walletTransaction.create({data:{walletId:user.wallet.id,type:'TOPUP_KASPI',direction:'CREDIT',balanceSource:'MONEY',currency:'KZT',amount,topupRequestId:topup.id,idempotencyKey:key,createdAt:bankDate,
+                note:JSON.stringify({provider:'KASPI',txn_id:txnId,txn_date:txnDate,received_at:new Date().toISOString(),timezone:'Asia/Almaty',account,testAccount:account===KASPI_TEST_PHONE})}});
             return reply(txnId,0,'OK',{prv_txn_id:topup.id,sum:amount.toFixed(2)});
         },{maxWait:2000,timeout:10000});}catch(_){return reply(txnId,5,'Временная ошибка провайдера. Повторите запрос с тем же txn_id');}
     }

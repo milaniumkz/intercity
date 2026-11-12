@@ -36,7 +36,7 @@ test('Kaspi credits once under concurrent retries, preserves bank date and rolls
   const results=await Promise.all(Array.from({length:12},()=>service.process(q)));
   for(const r of results){assert.equal(r.result,0);assert.equal(r.prv_txn_id,results[0].prv_txn_id);assert.match(r.prv_txn_id,/^\d{1,20}$/);assert.equal(r.sum,'123.45');}
   let wallet=await p.wallet.findUnique({where:{id:user.wallet.id}});assert.equal(wallet.money,133.45);assert.equal(wallet.moneyRub,55);
-  const ledger=await p.walletTransaction.findMany({where:{walletId:wallet.id}});assert.equal(ledger.length,1);assert.equal(JSON.parse(ledger[0].note).txn_date,q.txn_date);
+  const ledger=await p.walletTransaction.findMany({where:{walletId:wallet.id}});assert.equal(ledger.length,1);assert.equal(JSON.parse(ledger[0].note).txn_date,q.txn_date);assert.equal(ledger[0].createdAt.toISOString(),'2026-11-12T07:00:01.000Z');assert(JSON.parse(ledger[0].note).received_at);
   assert.equal((await service.process({...q,sum:'999.00'})).result,5);
   assert.equal((await service.process({...q,account:'70000000002'})).result,5);
   assert.equal((await service.process({...q,txn_id:q.txn_id+'2',account:'70000000002'})).result,1);
