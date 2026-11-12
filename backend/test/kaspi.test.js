@@ -20,6 +20,12 @@ test('Kaspi rejects untrusted IP and ignores forged forwarded headers',async()=>
  assert.equal(response.code,403);assert.equal(calls,0);assert.match(response.headers['Cache-Control'],/no-store/);
  await c.callback({txn_id:'1'},{ip:'::ffff:'+KASPI_IPS[0]},response);assert.equal(response.code,200);assert.equal(calls,1);
 });
+test('wallet history shows a human Kaspi label instead of bank metadata',async()=>{
+ const {WalletService}=require('../dist/src/wallet/wallet.service');
+ const wallet={id:'w',money:0,bonus:0,moneyRub:0,bonusRub:0,lockedBonus:0,lockedBonusRub:0,referralMoney:0};
+ const p={wallet:{findUnique:async()=>wallet},topupRequest:{findMany:async()=>[]},payoutRequest:{findMany:async()=>[]},walletTransaction:{findMany:async()=>[{type:'TOPUP_KASPI',note:'{"txn_date":"20261112150000"}'}]}};
+ const result=await new WalletService(p,{}).getWallet('user');assert.equal(result.transactions[0].note,'Пополнение через Kaspi');
+});
 const database=process.env.DISPATCH_TEST_DATABASE_URL||process.env.TARIFF_TEST_DATABASE_URL;
 test('Kaspi credits once under concurrent retries, preserves bank date and rolls back failed ledger writes',{skip:!database},async()=>{
  const url=new URL(database);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.pathname,'/dispatch_test');

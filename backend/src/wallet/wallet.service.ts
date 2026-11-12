@@ -80,7 +80,7 @@ export class WalletService {
 
         return {
             withdrawable: withdrawableMoney(wallet, currency),
-            transactions,
+            transactions: transactions.map(row => row.type === 'TOPUP_KASPI' ? {...row, note: 'Пополнение через Kaspi'} : row),
             ...wallet,
             lockedBonus: wallet[lockedBonusField(currency)],
             currency,
