@@ -237,9 +237,18 @@ export class DriverService {
             await this.ensureDriverCanStayOnline(driverUserId, profile.id, cityId ?? undefined);
         }
         const freshGps = dto.accuracy != null && dto.accuracy <= 100 && !!dto.sampledAt && Math.abs(Date.now()-Date.parse(dto.sampledAt)) <= 30000;
-        const updated = await this.prisma.driverOnline.update({
+        const updated = await this.prisma.driverOnline.upsert({
             where: { driverId: profile.id },
-            data: {
+            create: {
+                driverId: profile.id,
+                isOnline: false,
+                lastAccuracy: freshGps ? dto.accuracy : null,
+                lastLat: dto.lat,
+                lastLng: dto.lng,
+                lastLocationAt: new Date(),
+                cityId,
+            },
+            update: {
                 lastAccuracy: freshGps ? dto.accuracy : null,
                 lastLat: dto.lat,
                 lastLng: dto.lng,

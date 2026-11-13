@@ -10,7 +10,7 @@ test('registered route matches distant requests and permits a real price offer, 
  const p=new PrismaClient({datasources:{db:{url:database}}}), key=randomUUID();
  let user,profile;const ids=[];
  try {
-  user=await p.user.create({data:{phone:'test-route:'+key,password:'test',name:'Route fixture',refCode:key,refLink:'test',role:'DRIVER'}});
+  user=await p.user.create({data:{phone:'qa-route:0'+key,password:'test',name:'Route fixture',refCode:key,refLink:'test',role:'DRIVER'}});
   profile=await p.driverProfile.create({data:{userId:user.id,status:'ACTIVE',acceptIntercity:true}});
   const from='Route From '+key,to='Route To '+key;
   await p.driverIntercityRoute.create({data:{driverId:profile.id,fromCity:from,toCity:to,seatsAvailable:2,seatsTotal:2,departureAt:new Date(new Date(Date.now()+86400000).setUTCHours(23,59,59,999)),departureOffsetMinutes:0}});
