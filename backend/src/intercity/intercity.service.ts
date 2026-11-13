@@ -737,7 +737,7 @@ export class IntercityService {
   }
 
   private async completionCommission(tx: any, request: Record<string, any>, driverUserId: string) {
-    if (request.requestType === 'INTERCITY') return this.getIntercityAcceptedRequestFee(request, driverUserId);
+    if (request.requestType === 'INTERCITY') return this.getIntercityAcceptedRequestFee(request, driverUserId, tx);
     const offer = request.selectedOfferId ? await tx.intercityOffer.findUnique({where:{id:request.selectedOfferId}}) : null;
     const price = Number(offer?.price ?? request.price);
     const setting = await tx.appSettings.findUnique({where:{key:'orderCommissionPercent'}});
@@ -930,9 +930,10 @@ export class IntercityService {
   private async getIntercityAcceptedRequestFee(
     request: Record<string, any>,
     driverUserId: string,
+    db: any = this.prisma,
   ) {
     const rub = request['currency'] === 'RUB';
-    const driver = await this.prisma.user.findUnique({
+    const driver = await db.user.findUnique({
       where: { id: driverUserId },
       select: { phone: true },
     });
@@ -945,7 +946,7 @@ export class IntercityService {
       this.coerceNullableNumber(request["toLng"]),
     );
 
-    const bandSetting = await this.prisma.appSettings.findUnique({
+    const bandSetting = await db.appSettings.findUnique({
       where: { key: rub ? "intercityCommissionByDistanceKmRub" : "intercityCommissionByDistanceKm" },
     });
     if (bandSetting?.value) {
@@ -976,7 +977,7 @@ export class IntercityService {
       }
     }
 
-    const setting = await this.prisma.appSettings.findUnique({
+    const setting = await db.appSettings.findUnique({
       where: { key: rub ? "intercityAcceptedRequestFeeRub" : "intercityAcceptedRequestFee" },
     });
     const parsed = Number.parseFloat(setting?.value || (rub ? "0" : "500"));
@@ -998,6 +999,7 @@ export class IntercityService {
     const fee = await this.getIntercityAcceptedRequestFee(
       request,
       driverUserId,
+      tx,
     );
     if (fee <= 0) return;
 

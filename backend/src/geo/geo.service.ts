@@ -756,7 +756,19 @@ export class GeoService {
         return verifiedAddresses.filter(address => {
             if (house && house !== address.house && !(address.house.startsWith(house) && /^[\p{L}]$/u.test(address.house.slice(house.length)))) return false;
             if (city && this.haversine(city.lat, city.lng, address.lat, address.lng) > this.addressSearchRadiusKm) return false;
-            return address.streetAliases.some(alias => alias.includes(street));
+            // Users commonly paste a full address, with the city before or after
+            // the street. Remove only aliases of this verified address's city;
+            // a different locality must never resolve to the verified house.
+            const locality = this.normalizeLocalityName(address.city);
+            const names = [...GeoService.localityAliases.entries()]
+                .filter(([, canonical]) => canonical === locality)
+                .map(([name]) => name).sort((a, b) => b.length - a.length);
+            let addressStreet = street.replace(/^(?:город|г\.)\s+/u, '');
+            for (const name of names) {
+                if (addressStreet.startsWith(name + ' ')) addressStreet = addressStreet.slice(name.length).trim();
+                if (addressStreet.endsWith(' ' + name)) addressStreet = addressStreet.slice(0, -name.length).trim();
+            }
+            return addressStreet.length >= 3 && address.streetAliases.some(alias => alias.includes(addressStreet));
         }).map(address => ({
             displayName: address.displayName, lat: address.lat, lng: address.lng,
             countryCode: address.countryCode, source: address.source,

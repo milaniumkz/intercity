@@ -57,6 +57,7 @@ test('start schedules charge, ambiguous result reuses transaction, three confirm
  for(let i=0;i<3;i++)await payments.processPayment(failedId);
  assert.equal(failedCreates,3);assert.equal((await p.order.findUnique({where:{id:declined.id}})).paymentMethod,'CASH');assert.equal((await p.tripCardPayment.findUnique({where:{id:failedId}})).status,'CASH');
  await payments.processPayment(failedId);assert.equal(failedCreates,3);assert.equal(pushes.length,2);assert.ok(events.some(e=>e.type==='driver.payment.changed'&&e.payload.paymentStatus==='CASH'));
+ await orders.updateOrderStatus(declined.id,'COMPLETED',{userId:driver.id,role:'DRIVER'});
  // Intercity charge uses the accepted offer, not the passenger's initial proposed fare.
  const intercity=new IntercityService(p,{},payments);
  const request=await p.intercityRequest.create({data:{passengerId:passenger.id,fromCity:'A',toCity:'B',date:new Date(),price:500,currency:'KZT',status:'DRIVER_ARRIVED',selectedDriverId:driver.id,paymentMethod:'CARD',paymentCardId:card.id}});

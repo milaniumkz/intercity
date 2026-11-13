@@ -170,3 +170,12 @@ test('delivery retains the selected city within its area instead of a nearer ham
  geo.reverseGeocode=async()=>({city:'Семей'});
  assert.equal(await geo.cityNameAtPoint(50.41,80.25,'Усть-Каменогорск'),'Семей');
 });
+
+
+test('full verified addresses accept their own locality before or after the street, never a different city',()=>{
+ const geo=makeGeo();
+ for(const q of ['Усть-Каменогорск, Назарбаева 8/1','Назарбаева 8/1, Усть-Каменогорск','г. Усть-Каменогорск, проспект Назарбаева 8/1','Өскемен, Назарбаева 8/1']){
+  const rows=geo.findVerifiedAddresses(q);assert.equal(rows.length,1,q);assert.equal(rows[0].lat,49.958850);assert.equal(rows[0].lng,82.610169);
+ }
+ for(const q of ['Алматы, Назарбаева 8/1','Назарбаева 8/1, Омск','Усть-Каменогорск, Назарбаева 8/11'])assert.equal(geo.findVerifiedAddresses(q).length,0,q);
+});

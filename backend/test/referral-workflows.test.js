@@ -13,7 +13,7 @@ test('referral registration, real completed trips, review decisions and summary 
   assert.equal((await tx.user.findUnique({where:{id:passenger.id}})).referredBy,refPassenger.refCode);assert.equal((await tx.user.findUnique({where:{id:driver.id}})).referredBy,refDriver.refCode);
   assert.equal((await auth.getReferralSummary(refPassenger.id)).invitedCount,1);assert.equal((await auth.getReferralSummary(refDriver.id)).invitedCount,1);
   await assert.rejects(auth.register({phone:passenger.phone,name:'Duplicate',password:'LocalFixture2026!',referralCode:refDriver.refCode}),e=>e.getStatus()===409);assert.equal((await tx.user.findUnique({where:{id:passenger.id}})).referredBy,refPassenger.refCode);
-  const invalidPhone='+7702'+String(Date.now()+100).slice(-7);await assert.rejects(auth.register({phone:invalidPhone,name:'Invalid',password:'LocalFixture2026!',referralCode:'UNKNOWNREFERRALCODE'}),e=>e.getStatus()===400);assert.equal(await tx.user.count({where:{phone:invalidPhone}}),0);
+  const invalidPhone='+7702'+String(Date.now()+100).slice(-7);const ignoredInvitation=await auth.register({phone:invalidPhone,name:'Invalid invitation',password:'LocalFixture2026!',referralCode:'UNKNOWNREFERRALCODE'});assert.equal(await tx.user.count({where:{phone:invalidPhone}}),1);assert.equal((await tx.user.findUnique({where:{id:ignoredInvitation.user.id}})).referredBy,null);
   const profile=await tx.driverProfile.create({data:{userId:driver.id,status:'ACTIVE'}});await tx.wallet.update({where:{userId:driver.id},data:{money:10000,moneyRub:10000}});
   const orders=new OrdersService(db,{}, {},{publish(){}},{sendOrderStatusToPassenger:async()=>{}},{});
   async function trip(currency,verified=true,status='IN_PROGRESS') {

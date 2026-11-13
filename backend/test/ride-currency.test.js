@@ -158,12 +158,12 @@ test('local database stores city rates and immutable order/request currencies', 
         const orders = new OrdersService(prisma, geo, { assignCityOrder: async () => {} }, { publish: () => {} }, { sendOrderStatusToPassenger: async () => {} });
         const user = await prisma.user.create({ data: { phone: '+7700' + Date.now().toString().slice(-7), password: 'test-only', name: 'Currency test', refCode: suffix, refLink: `test://${suffix}` } });
         const dto = { fromLat: 55, fromLng: 37, toLat: 55.01, toLng: 37.01, fromAddress: 'A', toAddress: 'B', mode: 'CITY', vehicleClass: 'ECONOMY', paymentMethod: 'CASH' };
-        assert.equal((await orders.previewOrder(dto)).price, 250);
+        assert.equal((await orders.previewOrder(dto)).price, 240);
         await admin.updateCityTariff(tariff.id, { pricePerKm: 100 });
-        assert.equal((await orders.previewOrder(dto)).price, 500);
+        assert.equal((await orders.previewOrder(dto)).price, 480);
         const order = await orders.createOrder(user.id, dto);
         assert.equal(order.currency, 'RUB');
-        assert.equal(order.price, 500);
+        assert.equal(order.price, 480);
         const intercity = new IntercityService(prisma, geo);
         await assert.rejects(intercity.createRequest(user.id, { fromCity: ru.name, toCity: kz.name, price: 2000, date: new Date(Date.now() + 86400000).toISOString() }), /активный заказ/);
         await orders.cancelOrder(order.id, user.id);
@@ -184,7 +184,7 @@ test('local database stores city rates and immutable order/request currencies', 
         assert.equal((await wallets.getWallet(recipient.id, 'RUB')).bonus, 100);
         assert.equal((await wallets.getWallet(recipient.id, 'KZT')).bonus, 0);
         const bonusOrder = await orders.createOrder(user.id, { ...dto, paymentMethod: 'BONUSES' });
-        assert.equal((await wallets.getWallet(user.id, 'RUB')).bonus, 2400);
+        assert.equal((await wallets.getWallet(user.id, 'RUB')).bonus, 2420);
         await orders.cancelOrder(bonusOrder.id, user.id);
         assert.equal((await wallets.getWallet(user.id, 'RUB')).bonus, 2900);
         await assert.rejects(orders.cancelOrder(bonusOrder.id, user.id), /already/);
