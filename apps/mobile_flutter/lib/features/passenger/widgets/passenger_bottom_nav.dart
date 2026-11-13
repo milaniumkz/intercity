@@ -7,9 +7,11 @@ class PassengerBottomNav extends StatelessWidget {
   const PassengerBottomNav({
     super.key,
     required this.currentIndex,
+    this.onHome,
   });
 
   final int currentIndex;
+  final VoidCallback? onHome;
 
   @override
   Widget build(BuildContext context) {
@@ -82,6 +84,10 @@ class PassengerBottomNav extends StatelessWidget {
   }
 
   void _go(BuildContext context, int index) {
+    if (index == 0 && onHome != null) {
+      onHome!();
+      return;
+    }
     if (index == currentIndex) return;
     switch (index) {
       case 0:

@@ -59,6 +59,44 @@ class _LocationApi extends ApiClient {
 }
 
 void main() {
+  testWidgets(
+      'Home returns from delivery and cargo forms to mode choice 20 times without clearing addresses',
+      (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    tester.view.physicalSize = const Size(393, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    addTearDown(AppPreferences.clearOrderDraft);
+    await AppPreferences.setOrderDraft(
+        jsonEncode({'modeIndex': 0, 'fromText': 'QA исходный адрес'}));
+    final api = _LocationApi()..mapHomeEnabled = true;
+    final router = GoRouter(initialLocation: '/order', routes: [
+      GoRoute(
+          path: '/order',
+          builder: (_, __) => OrderScreen(
+              apiClient: api, autoLocateOnStart: false, enableLiveMap: false))
+    ]);
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    for (var round = 0; round < 20; round++) {
+      for (final mode in ['Доставка', 'Грузовые']) {
+        await tester.tap(find.text(mode).first);
+        await tester.pumpAndSettle();
+        expect(find.text('Далее'), findsOneWidget,
+            reason: '$mode opened, round $round');
+        await tester.tap(find.text('Главная'));
+        await tester.pumpAndSettle();
+        expect(find.text('Выберите режим'), findsOneWidget,
+            reason: 'Home from $mode, round $round');
+        final draft = jsonDecode((await AppPreferences.getOrderDraft())!);
+        expect(draft['fromText'], 'QA исходный адрес');
+        expect(tester.takeException(), isNull);
+      }
+    }
+    await tester.pumpWidget(const SizedBox());
+  });
+
   for (final stage in ['fixed', 'auction']) {
     testWidgets('$stage keeps an overview map when browser denies GPS',
         (tester) async {

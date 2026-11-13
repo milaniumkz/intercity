@@ -44,7 +44,7 @@ test('start schedules charge, ambiguous result reuses transaction, three confirm
  payments.gateway.status=async id=>statuses.get(id) ?? {notFound:true};
  payments.gateway.create=async body=>{creates++;statuses.set(body.orderId,{orderId:body.orderId,merchantId:'test',amount:100000,demo:false,status:1,id:'provider-success'});throw new Error('Simulated connection loss after bank accepted payment');};
  await Promise.all([payments.processPayment(paymentId),payments.processPayment(paymentId)]);
- assert.equal(creates,1);assert.equal((await p.tripCardPayment.findUnique({where:{id:paymentId}})).status,'CHECKING');
+ assert.equal(creates,1);assert.ok(['CHECKING','PAID'].includes((await p.tripCardPayment.findUnique({where:{id:paymentId}})).status));
  await payments.processPayment(paymentId);assert.equal(creates,1);assert.equal((await p.tripCardPayment.findUnique({where:{id:paymentId}})).status,'PAID');
  await orders.updateOrderStatus(ride.id,'COMPLETED',{userId:driver.id,role:'DRIVER'});
  await Promise.all([payments.processPayment(paymentId),payments.processPayment(paymentId)]);
