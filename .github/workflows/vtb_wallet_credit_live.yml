@@ -1,0 +1,75 @@
+name: Inspect VTB sandbox checkout fields
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/vtb_wallet_credit_live.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+      - name: Register an unpaid sandbox checkout for field inspection
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" 'docker exec -i intercity-backend node' > "$RUNNER_TEMP/vtb-form.json" <<'JS'
+          const {randomUUID}=require('node:crypto');
+          const {VtbSandboxGateway}=require('./dist/src/payments/vtb-sandbox-gateway');
+          const gateway=new VtbSandboxGateway({userName:process.env.VTB_SANDBOX_USER_NAME,
+            password:Buffer.from(process.env.VTB_SANDBOX_PASSWORD_B64||'','base64').toString('utf8')});
+          const id=randomUUID();
+          gateway.register({orderNumber:id,amountMinor:70000,
+            returnUrl:'https://api.intercity.89-207-255-27.sslip.io/api/payments/vtb/sandbox/return?paymentId='+id})
+            .then(result=>console.log(JSON.stringify({paymentUrl:result.paymentUrl})))
+            .catch(()=>{console.error('Sandbox checkout registration failed');process.exitCode=1;});
+          JS
+      - name: Inspect hosted checkout field metadata
+        run: |
+          npm install --prefix "$RUNNER_TEMP/vtb-browser" --ignore-scripts --no-package-lock --no-audit --no-fund playwright@1.56.1
+          export BANK_BROWSER_MODULE="$RUNNER_TEMP/vtb-browser/node_modules/playwright"
+          export BANK_BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable)"
+          node <<'JS'
+          const fs=require('node:fs');
+          const {chromium}=require(process.env.BANK_BROWSER_MODULE);
+          (async()=>{
+            const data=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/vtb-form.json','utf8'));
+            const b=await chromium.launch({headless:true,executablePath:process.env.BANK_BROWSER_BIN,args:['--no-sandbox']});
+            try{
+              const p=await b.newPage({locale:'ru-RU',viewport:{width:1280,height:900}});
+              await p.goto(data.paymentUrl,{waitUntil:'domcontentloaded',timeout:60000});
+              await p.waitForSelector('input',{state:'attached',timeout:45000});
+              await p.waitForTimeout(2000);
+              for(const frame of p.frames()){
+                const fields=await frame.locator('input,select').evaluateAll(es=>es.map(e=>({
+                  tag:e.tagName,id:e.id,name:e.name,type:e.type,placeholder:e.placeholder,
+                  autocomplete:e.autocomplete,maxLength:e.maxLength,
+                  options:e.tagName==='SELECT'?[...e.options].map(o=>({value:o.value,label:o.label})):undefined,
+                })));
+                for(const field of fields)console.log('FIELD '+JSON.stringify(field));
+                const buttons=await frame.locator('button,input[type=submit]').evaluateAll(es=>es.map(e=>({id:e.id,name:e.name,text:e.textContent?.trim()})));
+                for(const button of buttons)console.log('BUTTON '+JSON.stringify(button));
+              }
+              console.log(JSON.stringify({sandboxCheckoutInspected:true,paymentSubmitted:false}));
+            }finally{await b.close();}
+          })().catch(e=>{console.error(e.message);process.exitCode=1;});
+          JS
