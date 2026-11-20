@@ -1,0 +1,65 @@
+name: Verify deployed VTB sandbox
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/vtb_sandbox_live_verify.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+      - name: Check deployed sandbox without changing balances or orders
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          expected=00db5732de2fdaa70d99e234696ed08f0bd52301
+          current="$(readlink -f /opt/intercity/current)"
+          [[ "$(basename "$current")" == "$expected" ]] || { echo 'Expected VTB release is not active'; exit 1; }
+          docker exec -i intercity-backend node <<'JS'
+          const assert = require('node:assert/strict');
+          const { PrismaClient } = require('@prisma/client');
+          const { VtbSandboxGateway, verifiedVtbSandboxState } = require('./dist/src/payments/vtb-sandbox-gateway');
+          const p = new PrismaClient();
+          (async () => {
+            assert.equal(process.env.VTB_SANDBOX_ENABLED, 'true', 'Sandbox flag');
+            const gateway = new VtbSandboxGateway({
+              userName: process.env.VTB_SANDBOX_USER_NAME || '',
+              password: process.env.VTB_SANDBOX_PASSWORD || Buffer.from(process.env.VTB_SANDBOX_PASSWORD_B64 || '', 'base64').toString('utf8'),
+            });
+            assert.equal(gateway.configured, true, 'Sandbox credentials');
+            // Read only: the official test-card operation completed during verification.
+            const response = await gateway.status('4f3492e8-4ec6-7d91-bc02-741c00e88b48');
+            const verified = verifiedVtbSandboxState(response, {
+              orderNumber: '442dde54-853f-49bd-9f8c-47a449b2e5cf', bankAmountMinor: 70000,
+            });
+            assert.equal(verified, 'SUCCEEDED', 'Bank status, saved amount, currency and order');
+            await p.vtbSandboxPayment.count();
+            console.log(JSON.stringify({releaseVerified:true, sandboxEnabled:true, credentialsVerified:true, tableReady:true,
+              appCurrency:'RUB', appAmount:100, conversionRate:7, bankCurrency:response.currency,
+              bankAmountMinor:response.amount, verifiedStatus:verified, financialWrites:false}));
+          })().catch(() => { console.error('Deployed VTB sandbox verification failed; no credentials printed'); process.exitCode=1; })
+            .finally(() => p.$disconnect());
+          JS
+          REMOTE
