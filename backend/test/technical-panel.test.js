@@ -710,12 +710,16 @@ test(
                     assert.equal(response.status, 200);
                     abort.abort();
                     // Stream close and persisted audit evidence complete asynchronously.
-                    // Wait for the required record, rather than assuming a 150 ms write.
+                    // Wait for every required stage; concurrent writes may finish out of order.
                     const deadline = Date.now() + 5000;
                     let records;
                     do {
                         records = await p.techEvent.findMany({where:{requestId}});
-                        if (records.some(x => x.stage === 'ABORTED' && x.result === 'UNKNOWN')) break;
+                        if (
+                            records.some(x => x.stage === 'START') &&
+                            records.some(x => x.stage === 'PROCESSING' && x.userId === b.user.id) &&
+                            records.some(x => x.stage === 'ABORTED' && x.result === 'UNKNOWN')
+                        ) break;
                         await new Promise(r => setTimeout(r, 25));
                     } while (Date.now() < deadline);
                     assert.ok(records.some((x) => x.stage === 'START'));
