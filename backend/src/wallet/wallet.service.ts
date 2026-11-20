@@ -37,6 +37,7 @@ export class WalletService {
             where: { userId },
             select: {
                 id: true,
+                user: { select: { city: { select: { countryCode: true } } } },
                 userId: true,
                 money: true,
                 bonus: true,
@@ -79,6 +80,7 @@ export class WalletService {
         ]);
 
         return {
+            countryCode: wallet.user?.city?.countryCode?.toUpperCase() || 'KZ',
             withdrawable: withdrawableMoney(wallet, currency),
             transactions: transactions.map(row => row.type === 'TOPUP_KASPI' ? {...row, note: 'Пополнение через Kaspi'} : row),
             ...wallet,

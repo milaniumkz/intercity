@@ -1277,6 +1277,9 @@ model VtbSandboxPayment {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   requestKey String
   amountMinor Int
+  bankAmountMinor Int
+  conversionRate Int @default(7)
+  purpose String @default("TOPUP")
   status String @default("CREATED")
   bankOrderId String? @unique
   paymentUrl String?

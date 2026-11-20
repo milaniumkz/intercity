@@ -39,15 +39,15 @@ export class VtbSandboxGateway {
 
     async register(input: { orderNumber: string; amountMinor: number; returnUrl: string }) {
         if (!/^[A-Za-z0-9_-]{1,36}$/.test(input.orderNumber) ||
-            !Number.isSafeInteger(input.amountMinor) || input.amountMinor < 100 || input.amountMinor > 10000000) {
+            !Number.isSafeInteger(input.amountMinor) || input.amountMinor < 100 || input.amountMinor > 1000000000) {
             throw new Error('Invalid sandbox payment parameters');
         }
         const returnUrl = new URL(input.returnUrl);
         if (returnUrl.protocol !== 'https:' || returnUrl.username || returnUrl.password) throw new Error('HTTPS return URL required');
         const data = await this.request('register.do', {
             orderNumber: input.orderNumber, amount: String(input.amountMinor),
-            currency: '643', language: 'ru', returnUrl: returnUrl.toString(),
-            description: 'InterCity: тестовая оплата в рублях',
+            currency: '398', language: 'ru', returnUrl: returnUrl.toString(),
+            description: 'InterCity: sandbox payment',
             sessionTimeoutSecs: '1200',
         });
         if (typeof data.orderId !== 'string' || !/^[a-f0-9-]{36}$/i.test(data.orderId) || typeof data.formUrl !== 'string') {
@@ -72,11 +72,11 @@ export class VtbSandboxGateway {
     }
 }
 
-export function verifiedVtbSandboxState(data: Record<string, any>, expected: { orderNumber: string; amountMinor: number }) {
+export function verifiedVtbSandboxState(data: Record<string, any>, expected: { orderNumber: string; bankAmountMinor: number }) {
     if (!data || ('success' in data && data.success !== true) ||
         ('errorCode' in data && String(data.errorCode) !== '0') ||
-        data.orderNumber !== expected.orderNumber || String(data.currency) !== '643' ||
-        !Number.isSafeInteger(data.amount) || data.amount !== expected.amountMinor) return 'UNVERIFIED';
+        data.orderNumber !== expected.orderNumber || String(data.currency) !== '398' ||
+        !Number.isSafeInteger(data.amount) || data.amount !== expected.bankAmountMinor) return 'UNVERIFIED';
     const status = Number(data.orderStatus);
     if (status === 2 && String(data.actionCode) === '0') return 'SUCCEEDED';
     if (status === 3 || status === 4) return 'CANCELLED';

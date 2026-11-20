@@ -7,6 +7,7 @@ import { VtbSandboxService } from './vtb-sandbox.service';
 export class VtbSandboxPaymentDto {
     @ApiProperty({ example: 100 }) @IsNumber() amount: number;
     @ApiProperty({ enum: ['RUB'] }) @IsIn(['RUB']) currency: 'RUB';
+    @ApiPropertyOptional({ enum: ['TOPUP', 'TRIP_TEST'] }) @IsOptional() @IsIn(['TOPUP', 'TRIP_TEST']) purpose?: string;
     @ApiPropertyOptional() @IsOptional() @IsString() @Matches(/^[A-Za-z0-9_-]{1,80}$/) requestKey?: string;
 }
 
@@ -25,7 +26,7 @@ export class VtbSandboxWalletController {
 @Controller('payments/vtb/sandbox')
 export class VtbSandboxBankController {
     constructor(private readonly service: VtbSandboxService) {}
-    @Get('return') @Redirect() returnToApp(@Query('paymentId') id: string) { return { url: this.service.returnTarget(id || ''), statusCode: 302 }; }
+    @Get('return') @Redirect() async returnToApp(@Query('paymentId') id: string) { return { url: await this.service.returnTarget(id || ''), statusCode: 302 }; }
     @Get('callback') callbackGet(@Query() query: Record<string, any>) { return this.service.callback(query); }
     @Post('callback') callbackPost(@Body() body: Record<string, any>) { return this.service.callback(body || {}); }
 }

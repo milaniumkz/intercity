@@ -14,20 +14,21 @@ test('VTB sandbox: Russian RUB only, ownership, concurrent requests, forged call
   assert.equal((await service.instructions(users[0].id)).available,true);
   assert.equal((await service.instructions(users[1].id)).eligible,false);
   await assert.rejects(service.create(users[1].id,{amount:100,currency:'RUB'}),/российского/);
-  await assert.rejects(service.create(users[0].id,{amount:100,currency:'KZT'}),/рубли/);
+  await assert.rejects(service.create(users[0].id,{amount:100,currency:'KZT'}),/рубл/);
   await assert.rejects(service.create(users[0].id,{amount:1.001,currency:'RUB'}),/сумма/);
   const input={amount:100,currency:'RUB',requestKey:'same-request'};
   const created=await Promise.all(Array.from({length:20},()=>service.create(users[0].id,input)));
   assert.equal(new Set(created.map(x=>x.id)).size,1);assert.equal(registrations,1);
+  assert.equal(created[0].bankAmount,700);assert.equal(created[0].conversionRate,7);assert.equal(created[0].bankCurrency,'KZT');
   const id=created[0].id,payment=await p.vtbSandboxPayment.findUnique({where:{id}});
   await assert.rejects(service.create(users[0].id,{...input,amount:101}),/ту же сумму/);
   await assert.rejects(service.check(users[1].id,id),/не найден/);
-  const valid={errorCode:0,orderNumber:lastOrder,amount:10000,currency:'643',orderStatus:0,actionCode:0};
+  const valid={errorCode:0,orderNumber:lastOrder,amount:70000,currency:'398',orderStatus:0,actionCode:0};
   bankState=valid;
   assert.equal((await service.callback({mdOrder:payment.bankOrderId,orderNumber:id,status:1,operation:'deposited'})).status,'PENDING');
   bankState={...valid,orderStatus:1};
   assert.equal((await service.check(users[0].id,id)).status,'PENDING');
-  for(const patch of [{amount:9999},{currency:'398'},{orderNumber:'wrong'}]){
+  for(const patch of [{amount:69999},{currency:'643'},{orderNumber:'wrong'}]){
    bankState={...valid,orderStatus:2,...patch};
    assert.equal((await service.check(users[0].id,id)).status,'UNVERIFIED');
   }
@@ -39,6 +40,16 @@ test('VTB sandbox: Russian RUB only, ownership, concurrent requests, forged call
   for(const field of ['money','moneyRub','bonus','bonusRub'])assert.equal(wallet[field],users[0].wallet[field]);
   assert.equal(await p.topupRequest.count({where:{walletId:wallet.id}}),0);
   assert.equal(await p.walletTransaction.count({where:{walletId:wallet.id}}),0);
+  await p.user.update({where:{id:users[0].id},data:{role:'PASSENGER'}});
+  await assert.rejects(service.create(users[0].id,{amount:100,currency:'RUB',requestKey:'passenger-topup'}),/водителю/);
+  const trip=await service.create(users[0].id,{amount:100,currency:'RUB',purpose:'TRIP_TEST',requestKey:'trip-test'});
+  assert.equal(trip.purpose,'TRIP_TEST');assert.equal(trip.creditsWallet,false);
+  bankState={...valid,orderNumber:trip.id,orderStatus:2};
+  assert.equal((await service.check(users[0].id,trip.id)).status,'SUCCEEDED');
+  assert.ok((await service.returnTarget(trip.id)).includes('#/order?'));
+  assert.equal((await service.instructions(users[0].id)).latestPayment.id,id);
+  assert.equal(await p.order.count({where:{passengerId:users[0].id}}),0);
+  await p.user.update({where:{id:users[0].id},data:{role:'DRIVER'}});
   service.gateway.register=async()=>{throw Error('fixture-secret-must-not-leak')};
   const uncertain=await service.create(users[0].id,{...input,requestKey:'network-timeout'});
   assert.equal(uncertain.status,'UNKNOWN');assert.ok(!JSON.stringify(uncertain).includes('fixture-secret'));
