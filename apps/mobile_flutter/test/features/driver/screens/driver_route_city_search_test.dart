@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -52,6 +53,20 @@ class _RefreshingRouteApi extends _SearchApi {
   }
 }
 
+class _LateRouteApi extends _RefreshingRouteApi {
+  final initialRoutes = Completer<void>();
+  bool firstRouteRequest = true;
+  @override
+  Future<Response<dynamic>> get(String path,
+          {Map<String, dynamic>? queryParameters, Options? options}) async {
+    if (path == '/driver/intercity/routes' && firstRouteRequest) {
+      firstRouteRequest = false;
+      await initialRoutes.future;
+    }
+    return super.get(path, queryParameters: queryParameters, options: options);
+  }
+}
+
 class _FilterApi extends _SearchApi {
   @override
   Future<Response<dynamic>> get(String path,
@@ -99,6 +114,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(visibleTypes(),
         ['INTERCITY', 'DELIVERY_INTERCITY', 'DELIVERY_RF', 'DELIVERY_CITY']);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('late initial routes do not close a form already being edited',
+      (tester) async {
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final api = _LateRouteApi()..hasSavedRoute = true;
+    await tester.pumpWidget(
+        MaterialApp(home: DriverTripCreatePage(apiClient: api)));
+    await tester.tap(find.text('Откуда'));
+    await tester.pump(const Duration(milliseconds: 300));
+    api.initialRoutes.complete();
+    await tester.pumpAndSettle();
+    final search = find.descendant(
+        of: find.byType(BottomSheet), matching: find.byType(TextField));
+    await tester.enterText(search, 'Усть');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, 'Усть-Каменогорск'));
+    await tester.pumpAndSettle();
+    expect(find.text('Откуда').hitTestable(), findsOneWidget);
+    expect(find.text('Усть-Каменогорск'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
