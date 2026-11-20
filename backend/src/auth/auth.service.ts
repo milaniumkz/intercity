@@ -5,6 +5,7 @@ import {
     ForbiddenException,
     Injectable,
     NotFoundException,
+    ServiceUnavailableException,
     UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -14,6 +15,10 @@ import { PrismaService } from '../prisma.service';
 import { RegisterDto, LoginDto, ResetPasswordDto } from './dto/auth.dto';
 import { GeoService } from '../geo/geo.service';
 import { v4 as uuidv4 } from 'uuid';
+import { Prisma, RefreshToken } from '@prisma/client';
+
+type SessionAccount = { id: string; phone: string; role: string; authVersion: number };
+const REFRESH_RETRY_GRACE_MS = 30_000;
 
 @Injectable()
 export class AuthService {
@@ -144,36 +149,72 @@ export class AuthService {
     }
 
     async refreshToken(refreshToken: string) {
+        let payload: any;
         try {
-            const tokenRecord = await this.prisma.refreshToken.findUnique({
-                where: { token: refreshToken },
-            });
-            if (!tokenRecord || tokenRecord.expiresAt < new Date()) {
-                throw new UnauthorizedException('Invalid refresh token');
-            }
-
-            const payload = this.jwtService.verify(refreshToken, {
+            payload = this.jwtService.verify(refreshToken, {
                 secret: this.getRequiredSecret('JWT_REFRESH_SECRET'),
             });
-
-            const user = await this.prisma.user.findUnique({
-                where: { id: payload.sub },
-            });
-
-            if (!user || user.blockedAt || (payload.ver ?? 0) !== user.authVersion) {
-                throw new UnauthorizedException('Invalid token');
-            }
-
-            const tokens = await this.generateTokens(user.id, user.phone, user.role);
-
-            await this.prisma.refreshToken.delete({
-                where: { token: refreshToken },
-            });
-
-            return tokens;
         } catch {
             throw new UnauthorizedException('Invalid refresh token');
         }
+        if (payload.type !== 'refresh' || typeof payload.sub !== 'string') {
+            throw new UnauthorizedException('Invalid refresh token');
+        }
+        try {
+            return await this.prisma.$transaction(async tx => {
+                const now = new Date();
+                const record = await tx.refreshToken.findUnique({ where: { token: refreshToken } });
+                if (!record || record.userId !== payload.sub || record.expiresAt <= now) {
+                    throw new UnauthorizedException('Invalid refresh token');
+                }
+                const user = await tx.user.findUnique({ where: { id: payload.sub } });
+                if (!user || user.blockedAt || user.phone.startsWith('erased:') ||
+                    (payload.ver ?? 0) !== user.authVersion) {
+                    throw new UnauthorizedException('Invalid refresh token');
+                }
+                if (record.rotatedAt) return this.reuseRotatedSession(tx, record, user);
+
+                const replacementId = uuidv4();
+                const claimed = await tx.refreshToken.updateMany({
+                    where: { id: record.id, userId: user.id, rotatedAt: null, expiresAt: { gt: now } },
+                    data: { rotatedAt: now, replacementId },
+                });
+                if (claimed.count !== 1) {
+                    const winner = await tx.refreshToken.findUnique({ where: { id: record.id } });
+                    if (!winner) throw new UnauthorizedException('Invalid refresh token');
+                    return this.reuseRotatedSession(tx, winner, user);
+                }
+
+                const tokens = this.sessionTokens(user);
+                await tx.refreshToken.create({ data: {
+                    id: replacementId, userId: user.id, token: tokens.refreshToken,
+                    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                } });
+                await tx.refreshToken.deleteMany({ where: { userId: user.id, expiresAt: { lte: now } } });
+                return tokens;
+            });
+        } catch (error) {
+            if (error instanceof UnauthorizedException) throw error;
+            throw new ServiceUnavailableException('Не удалось обновить сессию. Повторите запрос.');
+        }
+    }
+
+    private async reuseRotatedSession(tx: Prisma.TransactionClient, record: RefreshToken, user: SessionAccount) {
+        let current: RefreshToken | null = record;
+        // Old native clients can refresh through several API instances at once.
+        // Briefly return the same replacement instead of invalidating another request.
+        for (let depth = 0; depth < 8; depth++) {
+            const now = Date.now();
+            if (!current || current.userId !== user.id || current.expiresAt.getTime() <= now) {
+                throw new UnauthorizedException('Invalid refresh token');
+            }
+            if (!current.rotatedAt) return this.sessionTokens(user, current.token);
+            if (!current.replacementId || now - current.rotatedAt.getTime() > REFRESH_RETRY_GRACE_MS) {
+                throw new UnauthorizedException('Invalid refresh token');
+            }
+            current = await tx.refreshToken.findUnique({ where: { id: current.replacementId } });
+        }
+        throw new UnauthorizedException('Invalid refresh token');
     }
 
     async resetPassword(dto: ResetPasswordDto) {
@@ -246,32 +287,30 @@ export class AuthService {
         return this.validateUser(userId);
     }
 
-    private async generateTokens(userId: string, phone: string, role: string) {
-        const jwtSecret = this.getRequiredSecret('JWT_SECRET');
-        const refreshSecret = this.getRequiredSecret('JWT_REFRESH_SECRET');
-        const account = await this.prisma.user.findUnique({where:{id:userId},select:{authVersion:true}});
+    private sessionTokens(account: SessionAccount, existingRefreshToken?: string) {
         const accessToken = this.jwtService.sign(
-            { sub: userId, phone, role, ver: account.authVersion },
-            { secret: jwtSecret, expiresIn: '1d' }
+            { sub: account.id, phone: account.phone, role: account.role, ver: account.authVersion },
+            { secret: this.getRequiredSecret('JWT_SECRET'), expiresIn: '1d' }
         );
-
-        const refreshToken = this.jwtService.sign(
-            { sub: userId, type: 'refresh', jti: uuidv4(), ver: account.authVersion },
-            { secret: refreshSecret, expiresIn: '7d' }
+        const refreshToken = existingRefreshToken ?? this.jwtService.sign(
+            { sub: account.id, type: 'refresh', jti: uuidv4(), ver: account.authVersion },
+            { secret: this.getRequiredSecret('JWT_REFRESH_SECRET'), expiresIn: '7d' }
         );
-
-        await this.prisma.$transaction([
-            this.prisma.refreshToken.deleteMany({ where: { userId } }),
-            this.prisma.refreshToken.create({
-                data: {
-                    userId,
-                    token: refreshToken,
-                    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-                },
-            }),
-        ]);
-
         return { accessToken, refreshToken };
+    }
+
+    private async generateTokens(userId: string, phone: string, role: string) {
+        const account = await this.prisma.user.findUnique({ where: { id: userId }, select: { authVersion: true } });
+        if (!account) throw new UnauthorizedException('Invalid account');
+        const tokens = this.sessionTokens({ id: userId, phone, role, authVersion: account.authVersion });
+        await this.prisma.$transaction([
+            this.prisma.refreshToken.deleteMany({ where: { userId, expiresAt: { lte: new Date() } } }),
+            this.prisma.refreshToken.create({ data: {
+                userId, token: tokens.refreshToken,
+                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+            } }),
+        ]);
+        return tokens;
     }
 
     private getRequiredSecret(key: 'JWT_SECRET' | 'JWT_REFRESH_SECRET'): string {

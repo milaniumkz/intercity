@@ -872,6 +872,8 @@ model RefreshToken {
   token     String   @unique
   expiresAt DateTime
   createdAt DateTime @default(now())
+  rotatedAt DateTime?
+  replacementId String?
 
   @@index([userId])
 }
