@@ -4060,6 +4060,17 @@ class _OrderScreenState extends State<OrderScreen> {
                           _selectPaymentAndContinue(paymentMethodCard)),
                   const SizedBox(height: 12),
                 ],
+                if (_rideCurrency == 'RUB') ...[
+                  _boardPaymentRow(
+                    title: 'Банковская карта · ВТБ',
+                    subtitle: 'Тестовая оплата · 1 ₽ = 7 ₸',
+                    icon: Icons.credit_card_rounded,
+                    selected: _paymentMethod == paymentMethodCard,
+                    onTap: () =>
+                        _selectPaymentAndContinue(paymentMethodCard),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 _boardPaymentRow(
                   title: 'Перевод водителю',
                   subtitle: 'По реквизитам водителя',
