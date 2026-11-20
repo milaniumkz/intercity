@@ -1,0 +1,43 @@
+name: Verify persistent authentication sessions
+on:
+  pull_request:
+    paths:
+      - 'backend/src/auth/**'
+      - 'backend/prisma/**'
+      - 'backend/test/auth-session-service.test.js'
+      - '.github/workflows/auth_sessions_verify.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sessions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: qa
+          POSTGRES_PASSWORD: isolated_test_only
+          POSTGRES_DB: auth_session_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Verify session persistence against isolated PostgreSQL
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://qa:isolated_test_only@127.0.0.1:5432/auth_session_test
+          AUTH_SESSION_TEST_DATABASE_URL: postgresql://qa:isolated_test_only@127.0.0.1:5432/auth_session_test
+        run: |
+          npm ci
+          npx prisma generate
+          npx prisma db push --skip-generate
+          npm run build
+          node --test test/auth-session-service.test.js
