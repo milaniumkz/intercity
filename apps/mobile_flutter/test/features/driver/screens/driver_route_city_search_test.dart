@@ -25,6 +25,33 @@ class _SearchApi extends ApiClient {
       ]);
 }
 
+class _RefreshingRouteApi extends _SearchApi {
+  bool hasSavedRoute = false;
+  @override
+  Future<Response<dynamic>> get(String path,
+          {Map<String, dynamic>? queryParameters, Options? options}) async {
+    if (path == '/driver/intercity/routes') {
+      return Response(
+          requestOptions: RequestOptions(path: path),
+          data: [
+            if (hasSavedRoute)
+              {
+                'id': 'saved-route',
+                'fromCity': 'Алматы',
+                'toCity': 'Астана',
+                'seatsAvailable': 2,
+                'currency': 'KZT',
+                'departureAt': DateTime.now()
+                    .add(const Duration(days: 1))
+                    .toUtc()
+                    .toIso8601String(),
+              }
+          ]);
+    }
+    return super.get(path, queryParameters: queryParameters, options: options);
+  }
+}
+
 class _FilterApi extends _SearchApi {
   @override
   Future<Response<dynamic>> get(String path,
@@ -82,6 +109,7 @@ void main() {
     tester.view.physicalSize = const Size(800, 1400);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
+    final api = _RefreshingRouteApi();
     await tester.pumpWidget(MaterialApp(
         home: Builder(
             builder: (context) => Scaffold(
@@ -89,7 +117,7 @@ void main() {
                     onPressed: () => Navigator.of(context).push(
                         MaterialPageRoute<void>(
                             builder: (_) =>
-                                DriverTripCreatePage(apiClient: _SearchApi()))),
+                                DriverTripCreatePage(apiClient: api))),
                     child: const Text('Открыть межгород'))))));
     await tester.tap(find.text('Открыть межгород'));
     await tester.pumpAndSettle();
@@ -113,6 +141,12 @@ void main() {
             reason: '$label: повтор ${attempt + 1}');
         expect(find.byType(BottomSheet), findsNothing);
         expect(find.text('Усть-Каменогорск'), findsWidgets);
+        expect(tester.takeException(), isNull);
+        api.hasSavedRoute = !api.hasSavedRoute;
+        await tester.pump(const Duration(seconds: 11));
+        await tester.pumpAndSettle();
+        expect(find.text(label).hitTestable(), findsOneWidget,
+            reason: 'Фоновое обновление не должно сворачивать заявку');
         expect(tester.takeException(), isNull);
       }
     }
