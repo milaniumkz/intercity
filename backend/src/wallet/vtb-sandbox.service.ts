@@ -125,7 +125,7 @@ export class VtbSandboxService {
         const payment = await this.prisma.vtbSandboxPayment.findFirst({ where: { OR: [
             ...(bankOrderId ? [{ bankOrderId }] : []), ...(orderNumber ? [{ id: orderNumber }] : []),
         ] } });
-        if (!payment || (bankOrderId && payment.bankOrderId && bankOrderId !== payment.bankOrderId)) return { success: true, ignored: true };
+        if (!payment || (orderNumber && orderNumber !== payment.id) || (bankOrderId && payment.bankOrderId && bankOrderId !== payment.bankOrderId)) return { success: true, ignored: true };
         // Callback status and redirects are hints only; always ask the authenticated bank API.
         const result = await this.verify(payment);
         return { success: true, paymentId: payment.id, status: result?.status, creditsWallet: false };
