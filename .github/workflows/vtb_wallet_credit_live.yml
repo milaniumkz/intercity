@@ -1,9 +1,10 @@
-name: Inspect VTB sandbox checkout fields
+name: Verify VTB sandbox wallet credit
 
 on:
-  push:
+  workflow_run:
+    workflows: [Deploy VPS]
+    types: [completed]
     branches: [main]
-    paths: [.github/workflows/vtb_wallet_credit_live.yml]
   workflow_dispatch:
 
 permissions:
@@ -11,6 +12,9 @@ permissions:
 
 jobs:
   verify:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.head_sha == 'a48a88ae46f2252e72e0d302bbd6b2a7d43d8da4' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 15
@@ -27,49 +31,152 @@ jobs:
           eval "$(ssh-agent -s)"
           ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
           echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
-      - name: Register an unpaid sandbox checkout for field inspection
+      - name: Create a temporary RUB wallet and sandbox checkout
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
-          ssh "$VPS_USER@$VPS_HOST" 'docker exec -i intercity-backend node' > "$RUNNER_TEMP/vtb-form.json" <<'JS'
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID" > "$RUNNER_TEMP/vtb-credit-probe.json" <<'REMOTE'
+          set -euo pipefail
+          [[ "$(basename "$(readlink -f /opt/intercity/current)")" == "a48a88ae46f2252e72e0d302bbd6b2a7d43d8da4" ]] || { echo 'Expected credit release is not active' >&2; exit 1; }
+          docker exec -i -e VTB_CREDIT_PROBE_RUN_ID="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
           const {randomUUID}=require('node:crypto');
-          const {VtbSandboxGateway}=require('./dist/src/payments/vtb-sandbox-gateway');
-          const gateway=new VtbSandboxGateway({userName:process.env.VTB_SANDBOX_USER_NAME,
-            password:Buffer.from(process.env.VTB_SANDBOX_PASSWORD_B64||'','base64').toString('utf8')});
-          const id=randomUUID();
-          gateway.register({orderNumber:id,amountMinor:70000,
-            returnUrl:'https://api.intercity.89-207-255-27.sslip.io/api/payments/vtb/sandbox/return?paymentId='+id})
-            .then(result=>console.log(JSON.stringify({paymentUrl:result.paymentUrl})))
-            .catch(()=>{console.error('Sandbox checkout registration failed');process.exitCode=1;});
+          const {PrismaClient}=require('@prisma/client');
+          const {VtbSandboxService}=require('./dist/src/wallet/vtb-sandbox.service');
+          const db=new PrismaClient(), run=process.env.VTB_CREDIT_PROBE_RUN_ID;
+          assert.match(run,/^[0-9]+$/);
+          const file=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','vtb-credit-probe-'+run+'.json');
+          (async()=>{
+           assert.equal(process.env.VTB_SANDBOX_ENABLED,'true');
+           assert.equal(process.env.VTB_SANDBOX_WALLET_CREDITS_ENABLED,'true');
+           assert.equal(fs.existsSync(file),false);
+           const fixture=await db.$transaction(async tx=>{
+            const city=await tx.city.create({data:{name:'VTB credit live QA '+run,countryCode:'RU',lat:56.8,lng:60.6,isActive:false}});
+            const user=await tx.user.create({data:{phone:'vtb-credit-live:'+randomUUID(),name:'VTB credit live QA '+run,
+              password:'unused-no-login-'+randomUUID(),role:'DRIVER',refCode:randomUUID(),refLink:'',cityId:city.id,
+              wallet:{create:{money:111,moneyRub:222,bonus:333,bonusRub:444}}},include:{wallet:true}});
+            const result={userId:user.id,cityId:city.id,walletId:user.wallet.id,paymentId:null};
+            fs.writeFileSync(file,JSON.stringify(result),{mode:0o600,flag:'wx'});
+            return result;
+           });
+           const service=new VtbSandboxService(db);
+           const payment=await service.create(fixture.userId,{amount:100,currency:'RUB',purpose:'TOPUP',requestKey:'live-credit-'+run});
+           fixture.paymentId=payment.id;
+           fs.writeFileSync(file,JSON.stringify(fixture),{mode:0o600});
+           assert.equal(payment.creditsWallet,true);assert.equal(payment.creditedAt,null);
+           assert.equal(payment.bankAmount,700);assert.equal(payment.bankCurrency,'KZT');assert(payment.paymentUrl);
+           console.log(JSON.stringify({paymentId:payment.id,paymentUrl:payment.paymentUrl}));
+          })().catch(()=>{console.error('VTB credit fixture creation failed');process.exitCode=1;}).finally(()=>db.$disconnect());
+          
           JS
-      - name: Inspect hosted checkout field metadata
+          REMOTE
+      - name: Pay through the real sandbox hosted bank form
         run: |
           npm install --prefix "$RUNNER_TEMP/vtb-browser" --ignore-scripts --no-package-lock --no-audit --no-fund playwright@1.56.1
           export BANK_BROWSER_MODULE="$RUNNER_TEMP/vtb-browser/node_modules/playwright"
           export BANK_BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable)"
           node <<'JS'
-          const fs=require('node:fs');
+          const fs=require('node:fs'),assert=require('node:assert/strict');
           const {chromium}=require(process.env.BANK_BROWSER_MODULE);
           (async()=>{
-            const data=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/vtb-form.json','utf8'));
-            const b=await chromium.launch({headless:true,executablePath:process.env.BANK_BROWSER_BIN,args:['--no-sandbox']});
-            try{
-              const p=await b.newPage({locale:'ru-RU',viewport:{width:1280,height:900}});
-              await p.goto(data.paymentUrl,{waitUntil:'domcontentloaded',timeout:60000});
-              await p.waitForSelector('input',{state:'attached',timeout:45000});
-              await p.waitForTimeout(2000);
-              for(const frame of p.frames()){
-                const fields=await frame.locator('input,select').evaluateAll(es=>es.map(e=>({
-                  tag:e.tagName,id:e.id,name:e.name,type:e.type,placeholder:e.placeholder,
-                  autocomplete:e.autocomplete,maxLength:e.maxLength,
-                  options:e.tagName==='SELECT'?[...e.options].map(o=>({value:o.value,label:o.label})):undefined,
-                })));
-                for(const field of fields)console.log('FIELD '+JSON.stringify(field));
-                const buttons=await frame.locator('button,input[type=submit]').evaluateAll(es=>es.map(e=>({id:e.id,name:e.name,text:e.textContent?.trim()})));
-                for(const button of buttons)console.log('BUTTON '+JSON.stringify(button));
-              }
-              console.log(JSON.stringify({sandboxCheckoutInspected:true,paymentSubmitted:false}));
-            }finally{await b.close();}
+           const meta=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/vtb-credit-probe.json','utf8'));
+           assert.equal(new URL(meta.paymentUrl).hostname,'vtbkz.rbsuat.com');
+           const b=await chromium.launch({headless:true,executablePath:process.env.BANK_BROWSER_BIN,args:['--no-sandbox']});
+           try{
+            const p=await b.newPage({locale:'ru-RU',viewport:{width:1280,height:900}});
+            await p.goto(meta.paymentUrl,{waitUntil:'domcontentloaded',timeout:60000});
+            await p.locator('#new-card-pan').waitFor({state:'visible',timeout:45000});
+            const text=await p.locator('body').innerText();
+            assert.match(text,/700(?:[.,]00)?/);assert.match(text,/KZT|₸|тенге/i);
+            // Public sandbox card from the bank's test-card documentation.
+            await p.locator('#new-card-pan').fill('2201382000000062');
+            await p.locator('#newCardExpiry').fill('12/34');
+            await p.locator('#newCardCvc').fill('123');
+            await p.getByRole('button',{name:'Оплатить',exact:true}).first().click();
+            await p.waitForURL(u=>u.hostname==='intercity.89-207-255-27.sslip.io'||u.hostname==='api.intercity.89-207-255-27.sslip.io',{timeout:60000});
+            console.log(JSON.stringify({sandboxBankFormPaid:true,amountKzt:700,returnHost:new URL(p.url()).hostname}));
+           }finally{await b.close();}
           })().catch(e=>{console.error(e.message);process.exitCode=1;});
+          
           JS
+      - name: Verify automatic credit and twenty callback repeats
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID" <<'REMOTE'
+          set -euo pipefail
+          docker exec -i -e VTB_CREDIT_PROBE_RUN_ID="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+          const {PrismaClient}=require('@prisma/client');
+          const {VtbSandboxService}=require('./dist/src/wallet/vtb-sandbox.service');
+          const {VtbSandboxGateway,verifiedVtbSandboxState}=require('./dist/src/payments/vtb-sandbox-gateway');
+          const db=new PrismaClient();
+          const file=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','vtb-credit-probe-'+process.env.VTB_CREDIT_PROBE_RUN_ID+'.json');
+          (async()=>{
+           const meta=JSON.parse(fs.readFileSync(file,'utf8'));
+           let payment;
+           for(let attempt=0;attempt<90;attempt++){
+            payment=await db.vtbSandboxPayment.findUniqueOrThrow({where:{id:meta.paymentId}});
+            if(payment.creditedAt)break;
+            await new Promise(resolve=>setTimeout(resolve,1000));
+           }
+           assert.equal(payment.status,'SUCCEEDED');assert(payment.creditedAt,'Automatic background credit');
+           const gateway=new VtbSandboxGateway({userName:process.env.VTB_SANDBOX_USER_NAME,
+            password:Buffer.from(process.env.VTB_SANDBOX_PASSWORD_B64||'','base64').toString('utf8')});
+           const bank=await gateway.status(payment.bankOrderId);
+           assert.equal(verifiedVtbSandboxState(bank,{orderNumber:payment.id,bankAmountMinor:70000}),'SUCCEEDED');
+           const service=new VtbSandboxService(db);
+           const results=await Promise.all(Array.from({length:20},()=>service.callback({mdOrder:payment.bankOrderId,orderNumber:payment.id,status:2})));
+           assert(results.every(x=>x.status==='SUCCEEDED'&&x.creditsWallet&&x.creditedAt));
+           const w=await db.wallet.findUniqueOrThrow({where:{id:meta.walletId}});
+           assert.equal(w.moneyRub,322);assert.equal(w.money,111);assert.equal(w.bonus,333);assert.equal(w.bonusRub,444);
+           const history=await db.topupRequest.findMany({where:{walletId:w.id}});
+           const ledger=await db.walletTransaction.findMany({where:{walletId:w.id}});
+           assert.equal(history.length,1);assert.equal(history[0].provider,'VTB_SANDBOX');assert.equal(history[0].status,'APPROVED');
+           assert.equal(ledger.length,1);assert.equal(ledger[0].amount,100);assert.equal(ledger[0].currency,'RUB');
+           assert.equal(ledger[0].type,'TOPUP_DEMO_CREDIT');
+           console.log(JSON.stringify({realSandboxCheckoutVerified:true,appAmountRub:100,bankAmountKzt:700,
+            balanceBeforeRub:222,balanceAfterRub:w.moneyRub,creditedRub:100,ledgerEntries:1,
+            repeatedCallbacks:20,automaticBackgroundCredit:true,otherBalancesUnchanged:true,productionBankEnabled:false}));
+          })().catch(e=>{console.error(JSON.stringify({walletCreditVerificationFailed:true,type:e?.constructor?.name,message:e?.message}));process.exitCode=1;})
+           .finally(()=>db.$disconnect());
+          
+          JS
+          REMOTE
+      - name: Remove temporary account, wallet, history and manifest
+        if: always()
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID" <<'REMOTE'
+          set -euo pipefail
+          docker exec -i -e VTB_CREDIT_PROBE_RUN_ID="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+          const {PrismaClient}=require('@prisma/client');
+          const db=new PrismaClient(),run=process.env.VTB_CREDIT_PROBE_RUN_ID;
+          assert.match(run,/^[0-9]+$/);
+          const file=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','vtb-credit-probe-'+run+'.json');
+          (async()=>{
+           if(!fs.existsSync(file)){console.log(JSON.stringify({creditFixtureCleanup:true,fixtureNotCreated:true}));return;}
+           const meta=JSON.parse(fs.readFileSync(file,'utf8'));
+           const user=await db.user.findUnique({where:{id:meta.userId}});
+           const city=await db.city.findUnique({where:{id:meta.cityId}});
+           if(user)assert(user.phone.startsWith('vtb-credit-live:'));
+           if(city)assert.equal(city.name,'VTB credit live QA '+run);
+           await db.$transaction(async tx=>{
+            await tx.vtbSandboxPayment.deleteMany({where:{userId:meta.userId}});
+            await tx.walletTransaction.deleteMany({where:{walletId:meta.walletId}});
+            await tx.topupRequest.deleteMany({where:{walletId:meta.walletId}});
+            await tx.wallet.deleteMany({where:{userId:meta.userId}});
+            await tx.user.deleteMany({where:{id:meta.userId}});
+            await tx.city.deleteMany({where:{id:meta.cityId}});
+           });
+           fs.unlinkSync(file);
+           console.log(JSON.stringify({creditFixtureCleanup:true,temporaryAccountRemoved:true,temporaryWalletAndHistoryRemoved:true}));
+          })().catch(()=>{console.error('VTB temporary fixture cleanup failed');process.exitCode=1;}).finally(()=>db.$disconnect());
+          
+          JS
+          REMOTE
