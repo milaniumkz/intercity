@@ -167,7 +167,7 @@ jobs:
             return user;
           }
           async function request(path,body,expected=201) {
-            const response = await fetch('http://127.0.0.1:8080/api'+path,{
+            const response = await fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api'+path,{
               method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),
               signal:AbortSignal.timeout(15000),
             });
@@ -189,7 +189,7 @@ jobs:
               stage='expired-access';
               const expired=jwt.sign({sub:driver.id,phone:driver.phone,role:driver.role,ver:driver.authVersion},
                 {secret:process.env.JWT_SECRET,expiresIn:-1});
-              const expiredResponse=await fetch('http://127.0.0.1:8080/api/me',{
+              const expiredResponse=await fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/me',{
                 headers:{Authorization:'Bearer '+expired},signal:AbortSignal.timeout(15000)});
               console.log(JSON.stringify({expiredAccessHttpStatus:expiredResponse.status}));
               assert.equal(expiredResponse.status,401,'Expired access must be rejected');
