@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, Redirect, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Query, Redirect, Request, UseGuards } from '@nestjs/common';
 import { IsIn, IsNumber, IsOptional, IsString, Matches } from 'class-validator';
 import { ApiBearerAuth, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -28,5 +28,5 @@ export class VtbSandboxBankController {
     constructor(private readonly service: VtbSandboxService) {}
     @Get('return') @Redirect() async returnToApp(@Query('paymentId') id: string) { return { url: await this.service.returnTarget(id || ''), statusCode: 302 }; }
     @Get('callback') callbackGet(@Query() query: Record<string, any>) { return this.service.callback(query); }
-    @Post('callback') callbackPost(@Body() body: Record<string, any>) { return this.service.callback(body || {}); }
+    @Post('callback') @HttpCode(200) callbackPost(@Body() body: Record<string, any>) { return this.service.callback(body || {}); }
 }

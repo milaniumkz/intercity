@@ -3140,7 +3140,8 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
             ],
             Card(
                 child: ExpansionTile(
-              key: ValueKey('route-panel-${_intercityRoutes.isEmpty}'),
+              // Refreshing saved routes must preserve the open application.
+              key: const ValueKey('driver-route-panel'),
               initiallyExpanded: _intercityRoutes.isEmpty,
               title: Text('Мои маршруты (${_intercityRoutes.length})',
                   style: const TextStyle(fontWeight: FontWeight.w700)),
