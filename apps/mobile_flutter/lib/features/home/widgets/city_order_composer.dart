@@ -257,7 +257,8 @@ class CityOrderComposer extends StatelessWidget {
                           Row(children: [
                             for (final value in [
                               paymentMethodCash,
-                              if (currency == 'KZT') paymentMethodCard,
+                              if (currency == 'KZT' || currency == 'RUB')
+                                paymentMethodCard,
                               paymentMethodBonus
                             ])
                               Expanded(
