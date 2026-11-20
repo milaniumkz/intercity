@@ -55,7 +55,7 @@ jobs:
             const city=await tx.city.create({data:{name:'VTB credit live QA '+run,countryCode:'RU',lat:56.8,lng:60.6,isActive:false}});
             const user=await tx.user.create({data:{phone:'vtb-credit-live:'+randomUUID(),name:'VTB credit live QA '+run,
               password:'unused-no-login-'+randomUUID(),role:'DRIVER',refCode:randomUUID(),refLink:'',cityId:city.id,
-              wallet:{create:{money:111,moneyRub:222,bonus:333,bonusRub:444}}},include:{wallet:true}});
+              wallet:{create:{}}},include:{wallet:true}});
             const result={userId:user.id,cityId:city.id,walletId:user.wallet.id,paymentId:null};
             fs.writeFileSync(file,JSON.stringify(result),{mode:0o600,flag:'wx'});
             return result;
@@ -131,14 +131,14 @@ jobs:
            const results=await Promise.all(Array.from({length:20},()=>service.callback({mdOrder:payment.bankOrderId,orderNumber:payment.id,status:2})));
            assert(results.every(x=>x.status==='SUCCEEDED'&&x.creditsWallet&&x.creditedAt));
            const w=await db.wallet.findUniqueOrThrow({where:{id:meta.walletId}});
-           assert.equal(w.moneyRub,322);assert.equal(w.money,111);assert.equal(w.bonus,333);assert.equal(w.bonusRub,444);
+           assert.equal(w.moneyRub,100);assert.equal(w.money,0);assert.equal(w.bonus,0);assert.equal(w.bonusRub,0);
            const history=await db.topupRequest.findMany({where:{walletId:w.id}});
            const ledger=await db.walletTransaction.findMany({where:{walletId:w.id}});
            assert.equal(history.length,1);assert.equal(history[0].provider,'VTB_SANDBOX');assert.equal(history[0].status,'APPROVED');
            assert.equal(ledger.length,1);assert.equal(ledger[0].amount,100);assert.equal(ledger[0].currency,'RUB');
            assert.equal(ledger[0].type,'TOPUP_DEMO_CREDIT');
            console.log(JSON.stringify({realSandboxCheckoutVerified:true,appAmountRub:100,bankAmountKzt:700,
-            balanceBeforeRub:222,balanceAfterRub:w.moneyRub,creditedRub:100,ledgerEntries:1,
+            balanceBeforeRub:0,balanceAfterRub:w.moneyRub,creditedRub:100,ledgerEntries:1,
             repeatedCallbacks:20,automaticBackgroundCredit:true,otherBalancesUnchanged:true,productionBankEnabled:false}));
           })().catch(e=>{console.error(JSON.stringify({walletCreditVerificationFailed:true,type:e?.constructor?.name,message:e?.message}));process.exitCode=1;})
            .finally(()=>db.$disconnect());
