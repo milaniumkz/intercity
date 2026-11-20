@@ -2,10 +2,10 @@ const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID
 const {PrismaClient}=require('@prisma/client');
 const {VtbSandboxService}=require('../dist/src/wallet/vtb-sandbox.service');
 const database=process.env.VTB_SANDBOX_TEST_DATABASE_URL;
-test('VTB sandbox: Russian RUB only, ownership, concurrent requests, forged callbacks and no real wallet credit',{skip:!database},async()=>{
+test('VTB sandbox: Russian RUB only, ownership, concurrent requests, forged callbacks and exactly-once wallet credit',{skip:!database},async()=>{
  const url=new URL(database);assert.ok(['localhost','127.0.0.1'].includes(url.hostname));assert.equal(url.pathname,'/vtb_sandbox_test');
- const p=new PrismaClient({datasources:{db:{url:database}}}),key=randomUUID(),cities=[],users=[],oldEnabled=process.env.VTB_SANDBOX_ENABLED;
- process.env.VTB_SANDBOX_ENABLED='true';
+ const p=new PrismaClient({datasources:{db:{url:database}}}),key=randomUUID(),cities=[],users=[],oldEnabled=process.env.VTB_SANDBOX_ENABLED,oldCredits=process.env.VTB_SANDBOX_WALLET_CREDITS_ENABLED;
+ process.env.VTB_SANDBOX_ENABLED='true';process.env.VTB_SANDBOX_WALLET_CREDITS_ENABLED='true';
  try {
   for(const countryCode of ['RU','KZ'])cities.push(await p.city.create({data:{name:'VTB sandbox '+countryCode+' '+key,countryCode,lat:56.8,lng:60.6}}));
   for(let i=0;i<2;i++)users.push(await p.user.create({data:{phone:'vtb-fixture:'+i+key,name:'VTB fixture',password:'not-a-real-password',refCode:randomUUID(),refLink:'test',role:'DRIVER',cityId:cities[i].id,wallet:{create:{money:111,moneyRub:222,bonus:333,bonusRub:444}}},include:{wallet:true}}));
@@ -35,11 +35,12 @@ test('VTB sandbox: Russian RUB only, ownership, concurrent requests, forged call
   bankState={...valid,orderStatus:2};
   assert.equal((await service.check(users[0].id,id)).status,'SUCCEEDED');
   const repeats=await Promise.all(Array.from({length:20},()=>service.callback({mdOrder:payment.bankOrderId,orderNumber:id,status:1})));
-  assert.ok(repeats.every(r=>r.status==='SUCCEEDED'&&r.creditsWallet===false));
+  assert.ok(repeats.every(r=>r.status==='SUCCEEDED'&&r.creditsWallet===true&&!!r.creditedAt));
   const wallet=await p.wallet.findUnique({where:{id:users[0].wallet.id}});
-  for(const field of ['money','moneyRub','bonus','bonusRub'])assert.equal(wallet[field],users[0].wallet[field]);
-  assert.equal(await p.topupRequest.count({where:{walletId:wallet.id}}),0);
-  assert.equal(await p.walletTransaction.count({where:{walletId:wallet.id}}),0);
+  for(const field of ['money','bonus','bonusRub'])assert.equal(wallet[field],users[0].wallet[field]);
+  assert.equal(wallet.moneyRub,users[0].wallet.moneyRub+100);
+  assert.equal(await p.topupRequest.count({where:{walletId:wallet.id}}),1);
+  assert.equal(await p.walletTransaction.count({where:{walletId:wallet.id}}),1);
   await p.user.update({where:{id:users[0].id},data:{role:'PASSENGER'}});
   await assert.rejects(service.create(users[0].id,{amount:100,currency:'RUB',requestKey:'passenger-topup'}),/водителю/);
   const trip=await service.create(users[0].id,{amount:100,currency:'RUB',purpose:'TRIP_TEST',requestKey:'trip-test'});
@@ -50,18 +51,19 @@ test('VTB sandbox: Russian RUB only, ownership, concurrent requests, forged call
   assert.equal((await service.instructions(users[0].id)).latestPayment.id,id);
   assert.equal(await p.order.count({where:{passengerId:users[0].id}}),0);
   const afterTrip=await p.wallet.findUnique({where:{id:users[0].wallet.id}});
-  for(const field of ['money','moneyRub','bonus','bonusRub'])assert.equal(afterTrip[field],users[0].wallet[field]);
-  assert.equal(await p.walletTransaction.count({where:{walletId:afterTrip.id}}),0);
+  for(const field of ['money','moneyRub','bonus','bonusRub'])assert.equal(afterTrip[field],wallet[field]);
+  assert.equal(await p.walletTransaction.count({where:{walletId:afterTrip.id}}),1);
   await p.user.update({where:{id:users[0].id},data:{role:'DRIVER'}});
   service.gateway.register=async()=>{throw Error('fixture-secret-must-not-leak')};
   const uncertain=await service.create(users[0].id,{...input,requestKey:'network-timeout'});
   assert.equal(uncertain.status,'UNKNOWN');assert.ok(!JSON.stringify(uncertain).includes('fixture-secret'));
-  assert.equal(uncertain.creditsWallet,false);
+  assert.equal(uncertain.creditsWallet,true);assert.equal(uncertain.creditedAt,null);
   process.env.VTB_SANDBOX_ENABLED='false';
   await assert.rejects(service.create(users[0].id,{...input,requestKey:'disabled'}),/ещё не настроена/);
  } finally {
   if(oldEnabled===undefined)delete process.env.VTB_SANDBOX_ENABLED;else process.env.VTB_SANDBOX_ENABLED=oldEnabled;
-  for(const u of users){await p.wallet.deleteMany({where:{userId:u.id}});await p.user.delete({where:{id:u.id}})}
+  if(oldCredits===undefined)delete process.env.VTB_SANDBOX_WALLET_CREDITS_ENABLED;else process.env.VTB_SANDBOX_WALLET_CREDITS_ENABLED=oldCredits;
+  for(const u of users){await p.walletTransaction.deleteMany({where:{walletId:u.wallet.id}});await p.topupRequest.deleteMany({where:{walletId:u.wallet.id}});await p.wallet.deleteMany({where:{userId:u.id}});await p.user.delete({where:{id:u.id}})}
   for(const c of cities)await p.city.delete({where:{id:c.id}});
   await p.$disconnect();
  }

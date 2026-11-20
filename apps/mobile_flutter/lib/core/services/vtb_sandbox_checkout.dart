@@ -38,7 +38,8 @@ class VtbSandboxCheckout {
     final data = Map<String, dynamic>.from(response.data as Map);
     final id = data['id']?.toString() ?? '';
     if (id.isEmpty || data['currency'] != 'RUB' ||
-        data['paymentMode'] != 'TEST' || data['creditsWallet'] != false) {
+        data['paymentMode'] != 'TEST' || data['creditsWallet'] is! bool ||
+        data['purpose'] != purpose || (purpose != 'TOPUP' && data['creditsWallet'] == true)) {
       throw const FormatException('Некорректный ответ тестовой оплаты ВТБ');
     }
     if (data['bankCurrency'] != 'KZT' || data['conversionRate'] != 7 ||
@@ -55,7 +56,7 @@ class VtbSandboxCheckout {
         title: const Text('Тестовая оплата ВТБ'),
         content: Text('Сумма в приложении: $appAmount ₽\nВ банке: $bankAmount ₸\n'
             'Курс приложения: 1 ₽ = 7 ₸.\nСумма списания с рублёвой карты зависит от курса её банка.\n'
-            'Тестовая операция не пополняет настоящий баланс и не оплачивает реальную поездку.'),
+            '${data['creditsWallet'] == true ? 'После подтверждения банком на баланс поступит $appAmount ₽. ВТБ: тестовый контур.' : 'Эта тестовая операция не зачисляет деньги на баланс и не оплачивает реальную поездку.'}'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
           FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Перейти в ВТБ')),
@@ -73,12 +74,19 @@ class VtbSandboxCheckout {
   static String message(Map<String, dynamic> data) {
     switch (data['status']) {
       case 'SUCCEEDED':
+        if (data['creditsWallet'] == true && data['creditedAt'] != null) {
+          final amount = (data['amount'] as num).toStringAsFixed(2);
+          return '$amount ₽ зачислено на баланс. ВТБ · тестовый контур.';
+        }
+        if (data['creditsWallet'] == true) {
+          return 'Оплата ВТБ подтверждена. Ожидаем зачисление: повторите проверку, повторно платить не нужно.';
+        }
         return 'Тестовая оплата ВТБ подтверждена. Настоящий баланс не изменён; реальная поездка не оплачена.';
       case 'FAILED':
       case 'CANCELLED':
         return 'Тестовая оплата ВТБ отклонена или отменена. Баланс не изменён.';
       default:
-        return (data['message'] ?? 'Ожидаем подтверждение тестовой оплаты ВТБ. Реальные деньги не зачисляются.').toString();
+        return (data['message'] ?? 'Ожидаем подтверждение оплаты ВТБ. Баланс пополнится после подтверждения банка.').toString();
     }
   }
 }

@@ -386,6 +386,7 @@ class _DriverWalletPageState extends State<DriverWalletPage>
             purpose: 'TOPUP', opener: widget.paymentOpener);
         if (!mounted) return;
         setState(() => _vtbPayment = result);
+        if (result['creditedAt'] != null) await _load();
         return;
       }
       final provider = await _chooseTopupProvider();
@@ -437,7 +438,10 @@ class _DriverWalletPageState extends State<DriverWalletPage>
     setState(() => _checkingVtb = true);
     try {
       final result = await VtbSandboxCheckout.check(_api, id);
-      if (mounted && _vtbPayment?['id'] == id) setState(() => _vtbPayment = result);
+      if (mounted && _vtbPayment?['id'] == id) {
+        setState(() => _vtbPayment = result);
+        if (result['creditedAt'] != null) await _load();
+      }
     } catch (e) {
       if (mounted) setState(() => _message = errorMessageRu(e));
     } finally {

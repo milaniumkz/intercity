@@ -1,4 +1,4 @@
-name: Verify VTB sandbox isolation
+name: Verify VTB sandbox wallet credits
 on:
   pull_request:
     paths:
@@ -41,4 +41,4 @@ jobs:
           npx prisma generate
           npx prisma db push --skip-generate
           npm run build
-          node --test test/vtb-sandbox-gateway.test.js test/vtb-sandbox-service.test.js
+          node --test test/vtb-sandbox-gateway.test.js test/vtb-sandbox-service.test.js test/vtb-sandbox-credit.test.js
