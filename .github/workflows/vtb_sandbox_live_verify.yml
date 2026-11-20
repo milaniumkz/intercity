@@ -34,7 +34,7 @@ jobs:
         run: |
           ssh "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
-          expected=00db5732de2fdaa70d99e234696ed08f0bd52301
+          expected=cd851b4ddee858e323445e53e4535d3344a165e4
           current="$(readlink -f /opt/intercity/current)"
           [[ "$(basename "$current")" == "$expected" ]] || { echo 'Expected VTB release is not active'; exit 1; }
           docker exec -i intercity-backend node <<'JS'
@@ -63,3 +63,65 @@ jobs:
             .finally(() => p.$disconnect());
           JS
           REMOTE
+      - name: Verify public API, callback acknowledgement, versions and bank return
+        run: |
+          python3 <<'PY'
+          import urllib.request,urllib.error,json,concurrent.futures
+          sha='cd851b4ddee858e323445e53e4535d3344a165e4'
+          api='https://api.intercity.89-207-255-27.sslip.io'
+          web='https://intercity.89-207-255-27.sslip.io'
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+           def redirect_request(self,*args):return None
+          opener=urllib.request.build_opener(NoRedirect)
+          checks=[
+           ('webVersion',web+'/version.json',None,200),
+           ('adminVersion','https://admin.intercity.89-207-255-27.sslip.io/version.json',None,200),
+           ('health',api+'/health',None,200),
+           ('walletAuth',api+'/api/wallet/vtb/sandbox',None,401),
+           ('createAuth',api+'/api/wallet/vtb/sandbox/payments',{'amount':100,'currency':'RUB'},401),
+           ('callback',api+'/api/payments/vtb/sandbox/callback',{'orderNumber':'442dde54-853f-49bd-9f8c-47a449b2e5cf'},200),
+           ('return',api+'/api/payments/vtb/sandbox/return?paymentId=442dde54-853f-49bd-9f8c-47a449b2e5cf&redirect=https://example.com',None,302)]
+          def probe(item):
+           name,url,body,expected=item
+           req=urllib.request.Request(url,data=None if body is None else json.dumps(body).encode(),headers={'Content-Type':'application/json'})
+           try:r=opener.open(req,timeout=20)
+           except urllib.error.HTTPError as e:r=e
+           data=r.read(1200).decode(); status=r.code
+           assert status==expected,(name,status,data)
+           if name.endswith('Version'):assert json.loads(data)['commit']==sha
+           if name=='callback':assert json.loads(data).get('ignored') is True
+           if name=='return':assert r.headers.get('Location','').startswith(web+'/#/driver/wallet?vtbSandboxPaymentId='),r.headers
+           return {'name':name,'status':status,'passed':True,'location':r.headers.get('Location') if name=='return' else None}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as p:
+           for result in p.map(probe,checks):print(json.dumps(result))
+          
+          PY
+      - name: Verify mobile web starts in Chromium
+        run: |
+          npm install --prefix "$RUNNER_TEMP/intercity-vtb-browser" --ignore-scripts --no-package-lock --no-audit --no-fund playwright@1.56.1
+          browser_bin="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          if [[ -z "$browser_bin" ]]; then
+            "$RUNNER_TEMP/intercity-vtb-browser/node_modules/.bin/playwright" install --with-deps chromium
+          fi
+          export INTERCITY_PLAYWRIGHT_MODULE="$RUNNER_TEMP/intercity-vtb-browser/node_modules/playwright"
+          export INTERCITY_BROWSER_EXECUTABLE="$browser_bin"
+          node <<'JS'
+          const assert = require('node:assert/strict');
+          const { chromium } = require(process.env.INTERCITY_PLAYWRIGHT_MODULE);
+          (async () => {
+            const browser = await chromium.launch({headless:true,
+              executablePath:process.env.INTERCITY_BROWSER_EXECUTABLE || undefined, args:['--no-sandbox']});
+            try {
+              const page = await browser.newPage({locale:'ru-RU', viewport:{width:393,height:852}});
+              const errors = [];
+              page.on('pageerror', error => errors.push(error.message));
+              const response = await page.goto('https://intercity.89-207-255-27.sslip.io/#/login',
+                {waitUntil:'domcontentloaded',timeout:60000});
+              assert.equal(response.status(),200);
+              await page.waitForSelector('flutter-view',{timeout:45000});
+              await page.waitForTimeout(3000);
+              assert.deepEqual(errors,[]);
+              console.log(JSON.stringify({webStarted:true,locale:'ru-RU',flutterViews:1,pageErrors:0}));
+            } finally { await browser.close(); }
+          })().catch(error => { console.error(error.message);process.exitCode=1; });
+          JS
