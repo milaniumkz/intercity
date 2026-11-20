@@ -1,3 +1,4 @@
+import '../../../core/api/review_demo.dart';
 import '../../../core/utils/location_permission_events.dart';
 import '../../../core/widgets/passenger_map_tiles.dart';
 import '../../../core/utils/freight_details.dart';
@@ -634,6 +635,21 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _fillLocationFromDevice() async {
+    if (ReviewDemo.active.value) {
+      _applyDriverPosition(Position(
+          latitude: 49.9489,
+          longitude: 82.6275,
+          timestamp: DateTime.now(),
+          accuracy: 10,
+          altitude: 0,
+          altitudeAccuracy: 0,
+          heading: 0,
+          headingAccuracy: 0,
+          speed: 0,
+          speedAccuracy: 0,
+          isMocked: true));
+      return;
+    }
     var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
@@ -2483,6 +2499,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
 
   Future<void> _startPositionStream() async {
+    if (ReviewDemo.active.value) return;
     await _positionStream?.cancel();
     _positionStream = null;
     try {

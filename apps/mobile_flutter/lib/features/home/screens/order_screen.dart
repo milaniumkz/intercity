@@ -1,3 +1,4 @@
+import '../../../core/api/review_demo.dart';
 import '../../../core/services/vtb_sandbox_checkout.dart';
 import '../../../core/utils/location_permission_events.dart';
 import '../../../core/widgets/passenger_map_tiles.dart';
@@ -12394,7 +12395,10 @@ class _OrderScreenState extends State<OrderScreen> {
     });
     try {
       BrowserLocation? location;
-      if (locationOverride != null) {
+      if (ReviewDemo.active.value) {
+        location = BrowserLocation(latitude: 49.9489, longitude: 82.6275,
+            accuracy: 10, timestamp: DateTime.now());
+      } else if (locationOverride != null) {
         location = locationOverride;
       } else if (widget.locationProvider != null) {
         location = await _locationSession.locate(widget.locationProvider!,

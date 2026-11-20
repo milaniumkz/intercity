@@ -90,6 +90,10 @@ case "$RELEASE_TARGET" in
     ;;
 esac
 
+if [[ -n "${INTERCITY_REVIEW_PASSWORD_SHA256:-}" ]]; then
+  flutter_args+=("--dart-define=INTERCITY_REVIEW_PASSWORD_SHA256=$INTERCITY_REVIEW_PASSWORD_SHA256")
+fi
+
 prepare_android_release_keystore_from_base64
 
 if [[ "$RUN_PREFLIGHT" == "1" ]]; then
