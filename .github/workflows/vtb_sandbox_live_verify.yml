@@ -1,4 +1,4 @@
-name: Verify deployed VTB sandbox
+name: Verify deployed VTB and authentication
 
 on:
   push:
@@ -34,7 +34,12 @@ jobs:
         run: |
           ssh "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
-          expected=cd851b4ddee858e323445e53e4535d3344a165e4
+          expected=fdaa4b6ebfcd2012bda8ed0c19b7efa24c341037
+          for ((attempt=0; attempt<60; attempt++)); do
+            current="$(readlink -f /opt/intercity/current)"
+            if [[ "$(basename "$current")" == "$expected" ]]; then break; fi
+            sleep 10
+          done
           current="$(readlink -f /opt/intercity/current)"
           [[ "$(basename "$current")" == "$expected" ]] || { echo 'Expected VTB release is not active'; exit 1; }
           docker exec -i intercity-backend node <<'JS'
@@ -67,7 +72,7 @@ jobs:
         run: |
           python3 <<'PY'
           import urllib.request,urllib.error,json,concurrent.futures
-          sha='cd851b4ddee858e323445e53e4535d3344a165e4'
+          sha='fdaa4b6ebfcd2012bda8ed0c19b7efa24c341037'
           api='https://api.intercity.89-207-255-27.sslip.io'
           web='https://intercity.89-207-255-27.sslip.io'
           class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -125,3 +130,84 @@ jobs:
             } finally { await browser.close(); }
           })().catch(error => { console.error(error.message);process.exitCode=1; });
           JS
+      - name: Verify persistent login using temporary accounts and remove them
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          [[ "$(basename "$(readlink -f /opt/intercity/current)")" == "fdaa4b6ebfcd2012bda8ed0c19b7efa24c341037" ]] || { echo 'Authentication release changed'; exit 1; }
+          docker exec -i intercity-backend node <<'JS'
+          const assert = require('node:assert/strict');
+          const {randomUUID,randomInt,randomBytes} = require('node:crypto');
+          const bcrypt = require('bcrypt');
+          const {PrismaClient} = require('@prisma/client');
+          const {JwtService} = require('@nestjs/jwt');
+          const {ConfigService} = require('@nestjs/config');
+          const {AuthService} = require('./dist/src/auth/auth.service');
+          const db = new PrismaClient(), jwt = new JwtService(), ids = [];
+          const auth = new AuthService(db,jwt,{},new ConfigService(),undefined);
+          const password = randomBytes(24).toString('base64url');
+          async function makeUser(role) {
+            const user = await db.user.create({data:{
+              phone:'+7000'+String(randomInt(10000000)).padStart(7,'0'),
+              name:'Temporary authentication verification',role,
+              password:await bcrypt.hash(password,4),refCode:randomUUID(),refLink:'',
+            }});
+            ids.push(user.id);
+            return user;
+          }
+          async function request(path,body,expected=201) {
+            const response = await fetch('http://127.0.0.1:8080/api'+path,{
+              method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),
+              signal:AbortSignal.timeout(15000),
+            });
+            assert.equal(response.status,expected,'Authentication HTTP status');
+            return response.json();
+          }
+          function verify(pair,user) {
+            assert.equal(jwt.verify(pair.accessToken,{secret:process.env.JWT_SECRET}).sub,user.id);
+            assert.equal(jwt.verify(pair.refreshToken,{secret:process.env.JWT_REFRESH_SECRET}).sub,user.id);
+          }
+          (async()=>{
+            try {
+              const driver=await makeUser('DRIVER'), passenger=await makeUser('PASSENGER');
+              const login=user=>request('/auth/login',{phone:user.phone,password});
+              const first=await login(driver), second=await login(driver), separate=await login(passenger);
+              const expired=jwt.sign({sub:driver.id,phone:driver.phone,role:driver.role,ver:driver.authVersion},
+                {secret:process.env.JWT_SECRET,expiresIn:-1});
+              const expiredResponse=await fetch('http://127.0.0.1:8080/api/me',{
+                headers:{Authorization:'Bearer '+expired},signal:AbortSignal.timeout(15000)});
+              assert.equal(expiredResponse.status,401,'Expired access must be rejected');
+              let a=await request('/auth/refresh',{refreshToken:first.refreshToken});
+              let b=await request('/auth/refresh',{refreshToken:second.refreshToken});
+              for(let i=0;i<20;i++) {
+                a=await auth.refreshToken(a.refreshToken);
+                b=await auth.refreshToken(b.refreshToken);
+                verify(a,driver);verify(b,driver);
+              }
+              const raced=await Promise.all(Array.from({length:20},()=>auth.refreshToken(a.refreshToken)));
+              assert.equal(new Set(raced.map(x=>x.refreshToken)).size,1,'Concurrent replacement');
+              for(const pair of raced) verify(pair,driver);
+              assert.equal(await db.refreshToken.count({where:{userId:driver.id,rotatedAt:null}}),2);
+              await db.refreshToken.update({where:{token:a.refreshToken},data:{rotatedAt:new Date(Date.now()-31000)}});
+              await request('/auth/refresh',{refreshToken:a.refreshToken},401);
+              verify(await request('/auth/refresh',{refreshToken:b.refreshToken}),driver);
+              verify(await request('/auth/refresh',{refreshToken:separate.refreshToken}),passenger);
+              console.log(JSON.stringify({authHttpVerified:true,expiredAccessRejected:true,automaticRefresh:true,
+                devicesKept:2,independentAccounts:2,rotationsPerPhone:20,concurrentRefreshes:20,
+                obsoleteTokenRejected:true,financialWrites:false}));
+            } finally {
+              if(ids.length) {
+                await db.refreshToken.deleteMany({where:{userId:{in:ids}}});
+                const removed=await db.user.deleteMany({where:{id:{in:ids}}});
+                assert.equal(removed.count,ids.length,'Temporary accounts cleanup');
+                console.log(JSON.stringify({temporaryAuthAccountsRemoved:removed.count}));
+              }
+            }
+          })().catch(()=>{console.error('Live authentication verification failed; no tokens or passwords printed');process.exitCode=1;})
+            .finally(()=>db.$disconnect());
+          
+          JS
+          REMOTE
