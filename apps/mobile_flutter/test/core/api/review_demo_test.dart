@@ -102,6 +102,16 @@ void main() {
     await api.post('/orders/$id/cancel');
     expect((await api.get('/driver/orders/active')).data, isNull);
     expect((await api.get('/wallet')).data['money'], 5000);
+    expect((await api.get('/orders/my')).data, isA<List>());
+    expect((await api.get('/intercity/requests/my')).data, isA<List>());
+    expect((await api.get('/driver/intercity/matching')).data, isA<List>());
+    final request =
+        await api.post('/intercity/requests', data: {'desiredPrice': 5000});
+    await api.post('/intercity/offers/demo-offer/accept');
+    expect(
+        (await api.get('/intercity/requests/${request.data['id']}'))
+            .data['status'],
+        'DRIVER_ASSIGNED');
     await expectLater(api.post('/wallet/topup-request', data: {'amount': 100}),
         throwsA(isA<DioException>()));
     expect(adapter.calls, 1);

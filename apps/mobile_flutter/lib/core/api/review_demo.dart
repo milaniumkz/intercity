@@ -160,6 +160,32 @@ class ReviewDemo {
       return online && order == null ? [sampleOrder()] : [];
     }
     if (path == '/driver/intercity/active') return null;
+    if (path == '/orders/my' || path == '/orders/history') {
+      return [
+        {...sampleOrder('demo-history'), 'status': 'COMPLETED'}
+      ];
+    }
+    if (path == '/intercity/requests/my' ||
+        path == '/intercity/requests/mine') {
+      return requests.values.toList();
+    }
+    if (path == '/driver/intercity/matching' ||
+        path == '/intercity/requests' && !write) {
+      return [
+        {
+          ...sampleOrder('demo-intercity'),
+          'requestType': 'INTERCITY',
+          'mode': 'INTERCITY',
+          'status': 'OPEN',
+          'seats': 2,
+          'departureAt': DateTime.now()
+              .add(const Duration(days: 1))
+              .toUtc()
+              .toIso8601String(),
+          'offers': []
+        }
+      ];
+    }
     if (path == '/driver/earnings') {
       return {
         'currency': q['currency'] ?? 'KZT',
@@ -317,6 +343,15 @@ class ReviewDemo {
       };
       requests[id] = request;
       return request;
+    }
+    if (path.startsWith('/intercity/offers/') && path.endsWith('/accept')) {
+      for (final request in requests.values) {
+        request['status'] = 'DRIVER_ASSIGNED';
+        for (final offer in request['offers'] as List? ?? []) {
+          offer['status'] = 'ACCEPTED';
+        }
+      }
+      return {'success': true};
     }
     if (path.startsWith('/intercity/requests/')) {
       final id = path.split('/')[3];
