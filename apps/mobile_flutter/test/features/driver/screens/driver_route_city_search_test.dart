@@ -77,7 +77,7 @@ void main() {
   });
 
   testWidgets(
-      'double selecting a departure city closes only the search and preserves the driver form',
+      '20 repeated departure and destination selections preserve the driver form even on double taps',
       (tester) async {
     tester.view.physicalSize = const Size(800, 1400);
     tester.view.devicePixelRatio = 1;
@@ -93,24 +93,29 @@ void main() {
                     child: const Text('Открыть межгород'))))));
     await tester.tap(find.text('Открыть межгород'));
     await tester.pumpAndSettle();
-    final from = find.text('Откуда');
-    await tester.ensureVisible(from);
-    await tester.tap(from);
-    await tester.pumpAndSettle();
-    final search = find.descendant(
-        of: find.byType(BottomSheet), matching: find.byType(TextField));
-    await tester.enterText(search, 'Усть');
-    await tester.pump(const Duration(milliseconds: 350));
-    await tester.pumpAndSettle();
-    final city = find.widgetWithText(ListTile, 'Усть-Каменогорск');
-    final select = tester.widget<ListTile>(city).onTap!;
-    select();
-    select();
-    await tester.pumpAndSettle();
-    expect(find.byType(DriverTripCreatePage), findsOneWidget);
-    expect(find.byType(BottomSheet), findsNothing);
-    expect(find.text('Усть-Каменогорск'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    for (var attempt = 0; attempt < 20; attempt++) {
+      for (final label in ['Откуда', 'Куда']) {
+        final field = find.text(label);
+        await tester.ensureVisible(field);
+        await tester.tap(field);
+        await tester.pumpAndSettle();
+        final search = find.descendant(
+            of: find.byType(BottomSheet), matching: find.byType(TextField));
+        await tester.enterText(search, 'Усть');
+        await tester.pump(const Duration(milliseconds: 350));
+        await tester.pumpAndSettle();
+        final city = find.widgetWithText(ListTile, 'Усть-Каменогорск');
+        final select = tester.widget<ListTile>(city).onTap!;
+        select();
+        select();
+        await tester.pumpAndSettle();
+        expect(find.byType(DriverTripCreatePage), findsOneWidget,
+            reason: '$label: повтор ${attempt + 1}');
+        expect(find.byType(BottomSheet), findsNothing);
+        expect(find.text('Усть-Каменогорск'), findsWidgets);
+        expect(tester.takeException(), isNull);
+      }
+    }
     await tester.pumpWidget(const SizedBox());
   });
 }
