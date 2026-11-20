@@ -49,6 +49,9 @@ test('VTB sandbox: Russian RUB only, ownership, concurrent requests, forged call
   assert.ok((await service.returnTarget(trip.id)).includes('#/order?'));
   assert.equal((await service.instructions(users[0].id)).latestPayment.id,id);
   assert.equal(await p.order.count({where:{passengerId:users[0].id}}),0);
+  const afterTrip=await p.wallet.findUnique({where:{id:users[0].wallet.id}});
+  for(const field of ['money','moneyRub','bonus','bonusRub'])assert.equal(afterTrip[field],users[0].wallet[field]);
+  assert.equal(await p.walletTransaction.count({where:{walletId:afterTrip.id}}),0);
   await p.user.update({where:{id:users[0].id},data:{role:'DRIVER'}});
   service.gateway.register=async()=>{throw Error('fixture-secret-must-not-leak')};
   const uncertain=await service.create(users[0].id,{...input,requestKey:'network-timeout'});

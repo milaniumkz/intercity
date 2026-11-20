@@ -748,8 +748,10 @@ class _OrderScreenState extends State<OrderScreen> {
   Future<void> _loadVtbAvailability() async {
     try {
       final info = await VtbSandboxCheckout.instructions(_api);
-      if (mounted) setState(() => _vtbTripAvailable =
-          info['eligible'] == true && info['available'] == true);
+      if (mounted) {
+        setState(() => _vtbTripAvailable =
+            info['eligible'] == true && info['available'] == true);
+      }
     } catch (_) {/* Kazakhstan card payments keep their existing provider. */}
   }
 
@@ -769,6 +771,7 @@ class _OrderScreenState extends State<OrderScreen> {
           amount: amount.toDouble(), purpose: 'TRIP_TEST', opener: widget.vtbPaymentOpener);
       if (!mounted) return;
       setState(() {
+        _vtbTripAvailable = true;
         _paymentMethod = paymentMethodCard;
         _statusText = VtbSandboxCheckout.message(result);
       });

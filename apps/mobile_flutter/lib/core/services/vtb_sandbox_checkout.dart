@@ -42,7 +42,9 @@ class VtbSandboxCheckout {
       throw const FormatException('Некорректный ответ тестовой оплаты ВТБ');
     }
     if (data['bankCurrency'] != 'KZT' || data['conversionRate'] != 7 ||
-        data['bankAmount'] is! num) throw const FormatException('Не подтверждён курс оплаты ВТБ');
+        data['bankAmount'] is! num) {
+      throw const FormatException('Не подтверждён курс оплаты ВТБ');
+    }
     final url = (data['paymentUrl'] ?? '').toString();
     if (url.isEmpty || !context.mounted) return data;
     final appAmount = (data['amount'] as num).toStringAsFixed(2);
