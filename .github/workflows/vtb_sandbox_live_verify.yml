@@ -147,7 +147,15 @@ jobs:
           const {ConfigService} = require('@nestjs/config');
           const {AuthService} = require('./dist/src/auth/auth.service');
           const db = new PrismaClient(), jwt = new JwtService(), ids = [];
-          const auth = new AuthService(db,jwt,{},new ConfigService(),undefined);
+          const instrumented = new Proxy(db,{get(target,key){
+            if(key==='$transaction') return async(...args)=>{
+              try{return await target.$transaction(...args);}
+              catch(error){console.error(JSON.stringify({transactionErrorType:error?.constructor?.name,transactionErrorCode:error?.code,status:error?.getStatus?.()}));throw error;}
+            };
+            return Reflect.get(target,key);
+          }});
+          const auth = new AuthService(instrumented,jwt,{},new ConfigService(),undefined);
+          let stage='initialise';
           const password = randomBytes(24).toString('base64url');
           async function makeUser(role) {
             const user = await db.user.create({data:{
@@ -163,6 +171,7 @@ jobs:
               method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),
               signal:AbortSignal.timeout(15000),
             });
+            console.log(JSON.stringify({authEndpoint:path,httpStatus:response.status,expected}));
             assert.equal(response.status,expected,'Authentication HTTP status');
             return response.json();
           }
@@ -172,25 +181,33 @@ jobs:
           }
           (async()=>{
             try {
+              stage='create-fixtures';
               const driver=await makeUser('DRIVER'), passenger=await makeUser('PASSENGER');
               const login=user=>request('/auth/login',{phone:user.phone,password});
+              stage='http-logins';
               const first=await login(driver), second=await login(driver), separate=await login(passenger);
+              stage='expired-access';
               const expired=jwt.sign({sub:driver.id,phone:driver.phone,role:driver.role,ver:driver.authVersion},
                 {secret:process.env.JWT_SECRET,expiresIn:-1});
               const expiredResponse=await fetch('http://127.0.0.1:8080/api/me',{
                 headers:{Authorization:'Bearer '+expired},signal:AbortSignal.timeout(15000)});
+              console.log(JSON.stringify({expiredAccessHttpStatus:expiredResponse.status}));
               assert.equal(expiredResponse.status,401,'Expired access must be rejected');
+              stage='http-refresh';
               let a=await request('/auth/refresh',{refreshToken:first.refreshToken});
               let b=await request('/auth/refresh',{refreshToken:second.refreshToken});
+              stage='twenty-rotations';
               for(let i=0;i<20;i++) {
                 a=await auth.refreshToken(a.refreshToken);
                 b=await auth.refreshToken(b.refreshToken);
                 verify(a,driver);verify(b,driver);
               }
+              stage='concurrent-refresh';
               const raced=await Promise.all(Array.from({length:20},()=>auth.refreshToken(a.refreshToken)));
               assert.equal(new Set(raced.map(x=>x.refreshToken)).size,1,'Concurrent replacement');
               for(const pair of raced) verify(pair,driver);
               assert.equal(await db.refreshToken.count({where:{userId:driver.id,rotatedAt:null}}),2);
+              stage='obsolete-token';
               await db.refreshToken.update({where:{token:a.refreshToken},data:{rotatedAt:new Date(Date.now()-31000)}});
               await request('/auth/refresh',{refreshToken:a.refreshToken},401);
               verify(await request('/auth/refresh',{refreshToken:b.refreshToken}),driver);
@@ -206,7 +223,7 @@ jobs:
                 console.log(JSON.stringify({temporaryAuthAccountsRemoved:removed.count}));
               }
             }
-          })().catch(()=>{console.error('Live authentication verification failed; no tokens or passwords printed');process.exitCode=1;})
+          })().catch(error=>{console.error(JSON.stringify({authenticationVerificationFailed:true,stage,errorType:error?.constructor?.name,status:error?.getStatus?.(),code:error?.code}));process.exitCode=1;})
             .finally(()=>db.$disconnect());
           
           JS
