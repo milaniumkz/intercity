@@ -61,6 +61,11 @@ export class VtbSandboxGateway {
         return { orderId: data.orderId as string, paymentUrl: formUrl.toString() };
     }
 
+    statusByOrderNumber(orderNumber: string) {
+        if (!/^[A-Za-z0-9_-]{1,36}$/.test(orderNumber)) throw new Error('Invalid merchant order identifier');
+        return this.request('getOrderStatusExtended.do', { orderNumber, language: 'ru' });
+    }
+
     status(orderId: string) {
         if (!/^[a-f0-9-]{36}$/i.test(orderId)) throw new Error('Invalid bank order identifier');
         return this.request('getOrderStatusExtended.do', { orderId, language: 'ru' });
@@ -73,7 +78,7 @@ export function verifiedVtbSandboxState(data: Record<string, any>, expected: { o
         data.orderNumber !== expected.orderNumber || String(data.currency) !== '643' ||
         !Number.isSafeInteger(data.amount) || data.amount !== expected.amountMinor) return 'UNVERIFIED';
     const status = Number(data.orderStatus);
-    if (status === 2 && Number(data.actionCode) === 0) return 'SUCCEEDED';
+    if (status === 2 && String(data.actionCode) === '0') return 'SUCCEEDED';
     if (status === 3 || status === 4) return 'CANCELLED';
     if (status === 6) return 'FAILED';
     return 'PENDING';

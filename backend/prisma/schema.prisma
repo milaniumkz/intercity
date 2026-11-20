@@ -98,6 +98,7 @@ model User {
   sentChatMessages   OrderChatMessage[]
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
+  vtbSandboxPayments VtbSandboxPayment[]
 }
 
 model City {
@@ -1268,4 +1269,22 @@ model AdminAttentionReceipt {
   lastError String?
   @@unique([alertId,audience,deviceId])
   @@index([audience,actorId,acknowledgedAt])
+}
+
+model VtbSandboxPayment {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestKey String
+  amountMinor Int
+  status String @default("CREATED")
+  bankOrderId String? @unique
+  paymentUrl String?
+  lastError String?
+  verifiedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, requestKey])
+  @@index([userId, createdAt])
 }
