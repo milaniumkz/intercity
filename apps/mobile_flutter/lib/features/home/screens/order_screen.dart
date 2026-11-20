@@ -772,7 +772,9 @@ class _OrderScreenState extends State<OrderScreen> {
       if (!mounted) return;
       setState(() {
         _vtbTripAvailable = true;
-        _paymentMethod = paymentMethodCard;
+        if (result['bankOpened'] == true) {
+          _paymentMethod = paymentMethodCard;
+        }
         _statusText = VtbSandboxCheckout.message(result);
       });
     } catch (e) {
