@@ -1,3 +1,4 @@
+import '../../../core/services/vtb_sandbox_checkout.dart';
 import '../../../core/utils/location_permission_events.dart';
 import '../../../core/widgets/passenger_map_tiles.dart';
 import '../../../core/services/technical_telemetry.dart';
@@ -389,6 +390,7 @@ class OrderScreen extends StatefulWidget {
     this.locationProvider,
     this.locationSession,
     this.mapTileProvider,
+    this.vtbPaymentOpener,
   });
 
   final String? resetToken;
@@ -400,6 +402,7 @@ class OrderScreen extends StatefulWidget {
   final Future<BrowserLocation?> Function()? locationProvider;
   final LocationSession? locationSession;
   final TileProvider? mapTileProvider;
+  final Future<bool> Function(BuildContext, String)? vtbPaymentOpener;
 
   @override
   State<OrderScreen> createState() => _OrderScreenState();
@@ -453,6 +456,9 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _cityMapReady = false;
   bool _cityMapFieldIsFrom = true;
   bool _citySubmitting = false;
+  bool _vtbTripBusy = false;
+  bool _vtbTripAvailable = false;
+  bool _vtbReturnHandled = false;
   bool _cityCommentExpanded = false;
   bool _cityCardsExpanded = false;
   bool _cityResolvingFrom = false;
@@ -714,6 +720,7 @@ class _OrderScreenState extends State<OrderScreen> {
     _loadCityOptions();
     _loadPassengerRuntimeSettings();
     unawaited(_loadSavedCardAvailability());
+    unawaited(_loadVtbAvailability());
     _draftReady = _restoreBoardDraft();
     _locationPermission = locationPermissionGrantedEvents().listen((_) async {
       _locationSession.permissionGranted();
@@ -736,6 +743,70 @@ class _OrderScreenState extends State<OrderScreen> {
     if (widget.autoLocateOnStart) {
       unawaited(_startAutomaticLocation());
     }
+  }
+
+  Future<void> _loadVtbAvailability() async {
+    try {
+      final info = await VtbSandboxCheckout.instructions(_api);
+      if (mounted) {
+        setState(() => _vtbTripAvailable =
+            info['eligible'] == true && info['available'] == true);
+      }
+    } catch (_) {/* Kazakhstan card payments keep their existing provider. */}
+  }
+
+  bool get _vtbTripSelected =>
+      _rideCurrency == 'RUB' && _paymentMethod == paymentMethodCard;
+
+  Future<void> _startVtbTripTest() async {
+    if (_vtbTripBusy) return;
+    final amount = _cityModeIndex == 1 ? _passengerAuctionPrice : _boardPrice;
+    if (amount == null || amount < 1) {
+      setState(() => _statusText = 'Сначала выберите адреса и дождитесь расчёта цены.');
+      return;
+    }
+    setState(() => _vtbTripBusy = true);
+    try {
+      final result = await VtbSandboxCheckout.pay(context, _api,
+          amount: amount.toDouble(), purpose: 'TRIP_TEST', opener: widget.vtbPaymentOpener);
+      if (!mounted) return;
+      setState(() {
+        _vtbTripAvailable = true;
+        _paymentMethod = paymentMethodCard;
+        _statusText = VtbSandboxCheckout.message(result);
+      });
+    } catch (e) {
+      if (mounted) setState(() => _statusText = errorMessageRu(e));
+    } finally {
+      if (mounted) setState(() => _vtbTripBusy = false);
+    }
+  }
+
+  void _resumeVtbPayment() {
+    if (_vtbReturnHandled) return;
+    _vtbReturnHandled = true;
+    final id = Uri.tryParse(currentRouteText(context))?.queryParameters['vtbSandboxPaymentId'];
+    if (id == null || !RegExp(r'^[a-f0-9-]{36}$', caseSensitive: false).hasMatch(id)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _draftReady;
+      if (!mounted) return;
+      try {
+        final result = await VtbSandboxCheckout.check(_api, id);
+        if (!mounted) return;
+        setState(() {
+          _rideCurrency = 'RUB';
+          _paymentMethod = paymentMethodCard;
+          _statusText = VtbSandboxCheckout.message(result);
+        });
+        await showDialog<void>(context: context, builder: (ctx) => AlertDialog(
+          title: const Text('Результат тестовой оплаты ВТБ'),
+          content: Text(VtbSandboxCheckout.message(result)),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Закрыть'))],
+        ));
+      } catch (e) {
+        if (mounted) setState(() => _statusText = errorMessageRu(e));
+      }
+    });
   }
 
   Future<void> _loadSavedCardAvailability() async {
@@ -772,6 +843,7 @@ class _OrderScreenState extends State<OrderScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _resumeVtbPayment();
     if (_boardSeeded) return;
     if (widget.initialStep != null) {
       _boardSeeded = true;
@@ -1320,6 +1392,10 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   void _selectPaymentAndContinue(String value) {
+    if (value == paymentMethodCard && _rideCurrency == 'RUB') {
+      unawaited(_startVtbTripTest());
+      return;
+    }
     if (!_paymentMethodEnabled(value)) return;
     setState(() => _paymentMethod = value);
     unawaited(_saveBoardDraft());
@@ -3187,7 +3263,7 @@ class _OrderScreenState extends State<OrderScreen> {
             ? _passengerAuctionPrice != null
             : _boardPrice != null) &&
         !resolving &&
-        !_loading;
+        !_loading && !_vtbTripBusy && !_vtbTripSelected;
     return Scaffold(
         body: SafeArea(
             child: CityOrderComposer(
@@ -3232,6 +3308,10 @@ class _OrderScreenState extends State<OrderScreen> {
       },
       paymentMethod: _paymentMethod,
       onPaymentSelected: (value) {
+        if (value == paymentMethodCard && _rideCurrency == 'RUB') {
+          unawaited(_startVtbTripTest());
+          return;
+        }
         if (value == paymentMethodCard && !_savedCardReady) {
           setState(() => _cityCardsExpanded = !_cityCardsExpanded);
           return;
@@ -3245,7 +3325,7 @@ class _OrderScreenState extends State<OrderScreen> {
         unawaited(_saveBoardDraft());
         _scheduleAutoBoard();
       },
-      cardAvailable: _savedCardReady,
+      cardAvailable: _savedCardReady || (_rideCurrency == 'RUB' && _vtbTripAvailable),
       currency: _rideCurrency,
       price: _cityModeIndex == 1
           ? (_passengerAuctionPrice == null
@@ -3978,6 +4058,17 @@ class _OrderScreenState extends State<OrderScreen> {
                       selected: _paymentMethod == paymentMethodCard,
                       onTap: () =>
                           _selectPaymentAndContinue(paymentMethodCard)),
+                  const SizedBox(height: 12),
+                ],
+                if (_rideCurrency == 'RUB') ...[
+                  _boardPaymentRow(
+                    title: 'Банковская карта · ВТБ',
+                    subtitle: 'Тестовая оплата · 1 ₽ = 7 ₸',
+                    icon: Icons.credit_card_rounded,
+                    selected: _paymentMethod == paymentMethodCard,
+                    onTap: () =>
+                        _selectPaymentAndContinue(paymentMethodCard),
+                  ),
                   const SizedBox(height: 12),
                 ],
                 _boardPaymentRow(
@@ -10685,6 +10776,11 @@ class _OrderScreenState extends State<OrderScreen> {
                       selected: selected,
                       enabled: enabled,
                       onTap: () {
+                        if (method == paymentMethodCard && _rideCurrency == 'RUB') {
+                          Navigator.of(sheetContext).pop();
+                          unawaited(_startVtbTripTest());
+                          return;
+                        }
                         if (!enabled) {
                           setState(
                             () => _statusText =
@@ -10783,7 +10879,8 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _paymentMethodEnabled(String method) =>
       paymentMethodsForRequestType(_requestType()).contains(method) &&
       (method != paymentMethodCard ||
-          (_rideCurrency == 'KZT' && _savedCardReady));
+          ((_rideCurrency == 'KZT' && _savedCardReady) ||
+              (_rideCurrency == 'RUB' && _vtbTripAvailable)));
 
   String _nextPaymentMethod(String current) {
     final methods = paymentMethodsForRequestType(_requestType())
@@ -10809,6 +10906,7 @@ class _OrderScreenState extends State<OrderScreen> {
   String _paymentMethodSubtitle(String method) {
     switch (method) {
       case paymentMethodCard:
+        if (_rideCurrency == 'RUB') return 'ВТБ · тестовый режим · реальная поездка не оплачивается';
         return 'Списание при начале поездки · •••• ${_savedCardLast4 ?? ''}';
       case paymentMethodCardTransfer:
         return 'Перевод водителю по реквизитам';
@@ -13594,7 +13692,7 @@ class _OrderScreenState extends State<OrderScreen> {
       'toLng': to.longitude,
       'mode': mode,
       'requestType': _requestType(),
-      'paymentMethod': _paymentMethod,
+      'paymentMethod': _vtbTripSelected ? paymentMethodCash : _paymentMethod,
       'vehicleClass': _supportsVehicleClass ? _vehicleClass : null,
       if (_mode() == 'CARGO')
         'itemWeightKg': double.tryParse(
@@ -13705,6 +13803,10 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   bool _validateBeforeCreate() {
+    if (_vtbTripSelected) {
+      _statusText = 'Оплата ВТБ пока тестовая: реальная поездка не оплачена. Выберите другой доступный способ для настоящего заказа.';
+      return false;
+    }
     if (_mode() == 'CARGO' && !_cargoDepartureReady) {
       _statusText = 'Выберите будущую дату и время подачи грузового транспорта';
       return false;

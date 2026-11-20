@@ -81,6 +81,19 @@ rollback_on_failure() {
 }
 trap rollback_on_failure EXIT
 
+# VTB sandbox credentials are sealed to a private key held only by this VPS.
+vtb_sealed="$RELEASE_DIR/infra/vps/vtb-sandbox.sealed.json"
+vtb_key="$SHARED_DIR/vtb-sandbox-secrets/private.pem"
+if [[ -f "$vtb_sealed" ]]; then
+  test -f "$vtb_key" || { echo 'VTB server decryption key is missing' >&2; exit 1; }
+  cp "$vtb_key" "$BACKUP_DIR/vtb-private.pem"
+  chmod 600 "$BACKUP_DIR/vtb-private.pem"
+  env_changed=1
+  python3 "$RELEASE_DIR/scripts/configure_vtb_sandbox.py" "$vtb_sealed" "$vtb_key" "$SHARED_DIR/.env"
+  cp "$SHARED_DIR/.env" "$RELEASE_DIR/infra/vps/.env"
+  chmod 600 "$RELEASE_DIR/infra/vps/.env"
+fi
+
 # Optional credential is transported separately, never bundled or printed.
 if [[ -n "$GEOCODER_CONFIG" && -f "$GEOCODER_CONFIG" ]]; then
   env_changed=1

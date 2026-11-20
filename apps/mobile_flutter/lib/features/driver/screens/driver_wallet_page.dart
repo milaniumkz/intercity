@@ -1,3 +1,4 @@
+import '../../../core/services/vtb_sandbox_checkout.dart';
 import 'dart:async';
 import 'package:go_router/go_router.dart';
 
@@ -106,6 +107,9 @@ class _DriverWalletPageState extends State<DriverWalletPage>
   final _payoutCtrl = TextEditingController(text: '1000');
   final _cardCtrl = TextEditingController();
   String _message = '';
+  Map<String, dynamic>? _vtbPayment;
+  bool _checkingVtb = false;
+  bool _currencyChosen = false;
   bool _loading = false;
   bool _topupBusy = false;
   bool _initialized = false;
@@ -134,6 +138,12 @@ class _DriverWalletPageState extends State<DriverWalletPage>
     if (_routeStage('seed')) {
       _wallet = {'money': 2860, 'bonuses': 2450};
       return;
+    }
+    final route = Uri.tryParse(currentRouteText(context));
+    final returned = route?.queryParameters['vtbSandboxPaymentId'];
+    if (returned != null && RegExp(r'^[a-f0-9-]{36}$', caseSensitive: false).hasMatch(returned)) {
+      _currency = 'RUB';
+      _vtbPayment = {'id': returned, 'status': 'PENDING'};
     }
     _load(reconcile: true);
   }
@@ -174,8 +184,15 @@ class _DriverWalletPageState extends State<DriverWalletPage>
     try {
       final res = await _api.get('/wallet?currency=$currency');
       if (!mounted || request != _walletRequest) return;
+      final loaded = Map<String, dynamic>.from(res.data as Map);
+      if (!_currencyChosen && loaded['countryCode'] == 'RU' && currency != 'RUB') {
+        _currencyChosen = true;
+        setState(() => _currency = 'RUB');
+        await _load(reconcile: reconcile);
+        return;
+      }
       setState(() {
-        _wallet = Map<String, dynamic>.from(res.data as Map);
+        _wallet = loaded;
         _bonusBalance = _asAmount(
           _wallet?['bonuses'] ??
               _wallet?['bonusBalance'] ??
@@ -185,6 +202,15 @@ class _DriverWalletPageState extends State<DriverWalletPage>
         );
         _message = '';
       });
+      if (_wallet?['countryCode'] == 'RU' && currency == 'RUB') {
+        try {
+          final info = await VtbSandboxCheckout.instructions(_api);
+          if (!mounted || request != _walletRequest) return;
+          final latest = info['latestPayment'];
+          if (latest is Map) setState(() => _vtbPayment = Map<String, dynamic>.from(latest));
+          if (reconcile && _vtbPayment != null) await _checkVtb();
+        } catch (_) {/* Ordinary wallet loading stays available while the bank is offline. */}
+      }
       if (reconcile) {
         final pending =
             (_wallet?['topups'] as List? ?? []).whereType<Map>().firstOrNull;
@@ -203,13 +229,13 @@ class _DriverWalletPageState extends State<DriverWalletPage>
     }
   }
 
-  Future<bool> _askTopupAmount() async {
+  Future<bool> _askTopupAmount({bool vtb = false}) async {
     _topupCtrl.clear();
     final form = GlobalKey<FormState>();
     return await showDialog<bool>(
             context: context,
             builder: (ctx) => AlertDialog(
-                  title: const Text('Пополнить баланс'),
+                  title: Text(vtb ? 'Тестовая оплата ВТБ · RUB' : 'Пополнить баланс'),
                   content: SingleChildScrollView(
                       child: Form(
                           key: form,
@@ -222,15 +248,15 @@ class _DriverWalletPageState extends State<DriverWalletPage>
                                 labelText: 'Сумма пополнения',
                                 suffixText: _currencySymbol,
                                 helperText:
-                                    'Укажите сумму, которую хотите внести'),
+                                    vtb ? 'Тестовая операция не пополняет настоящий баланс' : 'Укажите сумму, которую хотите внести'),
                             validator: (value) {
                               final amount = double.tryParse(
                                   (value ?? '').replaceAll(',', '.'));
                               if (amount == null ||
                                   !amount.isFinite ||
-                                  amount <= 0 ||
-                                  amount > 10000000) {
-                                return 'Введите сумму от 0,01 до 10 000 000';
+                                  amount < (vtb ? 1 : 0.01) ||
+                                  amount > (vtb ? 100000 : 10000000)) {
+                                return vtb ? 'Введите сумму от 1 до 100 000 рублей' : 'Введите сумму от 0,01 до 10 000 000';
                               }
                               if ((amount * 100 - (amount * 100).round())
                                       .abs() >
@@ -349,6 +375,19 @@ class _DriverWalletPageState extends State<DriverWalletPage>
     if (_topupBusy) return;
     setState(() => _topupBusy = true);
     try {
+      if (_wallet?['countryCode'] == 'RU') {
+        setState(() => _currency = 'RUB');
+        final info = await VtbSandboxCheckout.instructions(_api);
+        if (!mounted) return;
+        if (info['available'] != true) throw Exception((info['message'] ?? 'ВТБ в рублях пока недоступен').toString());
+        if (!await _askTopupAmount(vtb: true) || !mounted) return;
+        final result = await VtbSandboxCheckout.pay(context, _api,
+            amount: double.parse(_topupCtrl.text.replaceAll(',', '.')),
+            purpose: 'TOPUP', opener: widget.paymentOpener);
+        if (!mounted) return;
+        setState(() => _vtbPayment = result);
+        return;
+      }
       final provider = await _chooseTopupProvider();
       if (!mounted || provider == null) return;
       if (provider == 'KASPI') {
@@ -390,6 +429,34 @@ class _DriverWalletPageState extends State<DriverWalletPage>
     } finally {
       if (mounted) setState(() => _topupBusy = false);
     }
+  }
+
+  Future<void> _checkVtb() async {
+    final id = _vtbPayment?['id']?.toString();
+    if (id == null || _checkingVtb) return;
+    setState(() => _checkingVtb = true);
+    try {
+      final result = await VtbSandboxCheckout.check(_api, id);
+      if (mounted && _vtbPayment?['id'] == id) setState(() => _vtbPayment = result);
+    } catch (e) {
+      if (mounted) setState(() => _message = errorMessageRu(e));
+    } finally {
+      if (mounted) setState(() => _checkingVtb = false);
+    }
+  }
+
+  Widget _vtbStatus() {
+    if (_currency != 'RUB' || _wallet?['countryCode'] != 'RU' || _vtbPayment == null) {
+      return const SizedBox.shrink();
+    }
+    return Card(child: Padding(padding: const EdgeInsets.all(16),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('ВТБ · тестовая оплата в рублях', style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Text(VtbSandboxCheckout.message(_vtbPayment!)),
+        TextButton(onPressed: _checkingVtb ? null : _checkVtb,
+            child: const Text('Проверить тестовую оплату')),
+      ])));
   }
 
   void _beginTopupCheck(String id, {bool manual = false}) {
@@ -1152,6 +1219,8 @@ class _DriverWalletPageState extends State<DriverWalletPage>
                   _topupPoll?.cancel();
                   _pendingTopupId = null;
                   _topupStatusMessage = '';
+                  _currencyChosen = true;
+                  _vtbPayment = null;
                   _currency = values.single;
                   _bonusBalance = 0;
                   _wallet = null;
@@ -1200,6 +1269,7 @@ class _DriverWalletPageState extends State<DriverWalletPage>
                 ],
               ),
               _currencySelector(),
+              _vtbStatus(),
               if (_loading) const LinearProgressIndicator(),
               const SizedBox(height: 8),
               _driverWalletHero(money: money),
@@ -1354,6 +1424,7 @@ class _DriverWalletPageState extends State<DriverWalletPage>
                 ],
               ),
               _currencySelector(),
+              _vtbStatus(),
               if (_topupStatusMessage.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 ICPremiumInfoBanner(text: _topupStatusMessage),
