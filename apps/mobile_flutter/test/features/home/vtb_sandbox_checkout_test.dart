@@ -9,6 +9,7 @@ import 'package:intercity_mobile/core/services/app_preferences.dart';
 import 'package:intercity_mobile/core/services/vtb_sandbox_checkout.dart';
 import 'package:intercity_mobile/features/driver/screens/driver_wallet_page.dart';
 import 'package:intercity_mobile/features/home/screens/order_screen.dart';
+import 'package:intercity_mobile/features/home/widgets/city_order_composer.dart';
 import '../../support/memory_tile_provider.dart';
 
 class _VtbApi extends ApiClient {
@@ -144,12 +145,20 @@ void main() {
     await tester.ensureVisible(find.text('Карта'));
     await tester.tap(find.text('Карта'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Отмена'));
+    await tester.pumpAndSettle();
+    final composer = tester.widget<CityOrderComposer>(find.byType(CityOrderComposer));
+    expect(composer.paymentMethod, 'CASH');
+    expect(composer.canOrder, isTrue);
+    expect(opened, 0);
+    await tester.tap(find.text('Карта'));
+    await tester.pumpAndSettle();
     expect(find.textContaining('700.00 ₸'), findsOneWidget);
     await tester.tap(find.text('Перейти в ВТБ'));
     await tester.pumpAndSettle();
     expect(opened, 1);
-    expect(api.payments.single['purpose'], 'TRIP_TEST');
-    expect(api.payments.single['amount'], 100);
+    expect(api.payments.last['purpose'], 'TRIP_TEST');
+    expect(api.payments.last['amount'], 100);
     expect(api.realOrders, isEmpty);
     expect(find.textContaining('реальная поездка не оплачена'), findsWidgets);
   });

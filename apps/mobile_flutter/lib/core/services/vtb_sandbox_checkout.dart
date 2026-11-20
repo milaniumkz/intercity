@@ -46,7 +46,7 @@ class VtbSandboxCheckout {
       throw const FormatException('Не подтверждён курс оплаты ВТБ');
     }
     final url = (data['paymentUrl'] ?? '').toString();
-    if (url.isEmpty || !context.mounted) return data;
+    if (url.isEmpty || !context.mounted) return {...data, 'bankOpened': false};
     final appAmount = (data['amount'] as num).toStringAsFixed(2);
     final bankAmount = (data['bankAmount'] as num).toStringAsFixed(2);
     final confirmed = await showDialog<bool>(
@@ -63,11 +63,11 @@ class VtbSandboxCheckout {
       ),
     );
     if (confirmed != true || !context.mounted) {
-      return {...data, 'message': 'Переход к тестовой оплате отменён. Баланс не изменён.'};
+      return {...data, 'bankOpened': false, 'message': 'Переход к тестовой оплате отменён. Баланс не изменён.'};
     }
     final opened = await (opener ?? openBank)(context, url);
-    if (!opened) return {...data, 'message': 'Не удалось открыть ВТБ. Повторно оплачивать не нужно: проверьте созданную операцию.'};
-    return check(api, id);
+    if (!opened) return {...data, 'bankOpened': false, 'message': 'Не удалось открыть ВТБ. Повторно оплачивать не нужно: проверьте созданную операцию.'};
+    return {...(await check(api, id)), 'bankOpened': true};
   }
 
   static String message(Map<String, dynamic> data) {
