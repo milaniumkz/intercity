@@ -31,11 +31,15 @@ def configure(payload_path, private_key_path, env_path):
         raise ValueError('Invalid credential')
     if type(enabled) is not bool:
         raise ValueError('Invalid activation state')
+    credits = payload.get('walletCreditsEnabled', False)
+    if type(credits) is not bool:
+        raise ValueError('Invalid wallet credit state')
     target = Path(env_path)
     lines = target.read_text().splitlines()
-    pattern = re.compile(r'^\s*VTB_SANDBOX_(?:ENABLED|USER_NAME|PASSWORD|PASSWORD_B64)\s*=')
+    pattern = re.compile(r'^\s*VTB_SANDBOX_(?:ENABLED|USER_NAME|PASSWORD|PASSWORD_B64|WALLET_CREDITS_ENABLED)\s*=')
     lines = [line for line in lines if not pattern.match(line)]
     lines += ['VTB_SANDBOX_ENABLED='+str(enabled).lower(),
+              'VTB_SANDBOX_WALLET_CREDITS_ENABLED='+str(credits).lower(),
               'VTB_SANDBOX_USER_NAME='+username,
               'VTB_SANDBOX_PASSWORD_B64='+base64.b64encode(password.encode()).decode()]
     fd, temporary = tempfile.mkstemp(prefix='.vtb-env-',dir=target.parent)

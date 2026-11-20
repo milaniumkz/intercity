@@ -1287,6 +1287,8 @@ model VtbSandboxPayment {
   paymentUrl String?
   lastError String?
   verifiedAt DateTime?
+  creditsWallet Boolean @default(false)
+  creditedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

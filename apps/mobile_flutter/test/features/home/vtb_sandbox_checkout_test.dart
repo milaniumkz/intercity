@@ -14,13 +14,18 @@ import '../../support/memory_tile_provider.dart';
 
 class _VtbApi extends ApiClient {
   String country = 'RU';
+  String purpose = 'TOPUP';
+  double walletRub = 0;
+  bool bankCredited = false;
+  bool latestPending = false;
   final payments = <Map<String, dynamic>>[];
   final realOrders = <String>[];
   Map<String, dynamic> result({String status = 'PENDING'}) => {
     'id': '11111111-2222-3333-4444-555555555555',
     'amount': 100, 'currency': 'RUB', 'bankAmount': 700,
     'bankCurrency': 'KZT', 'conversionRate': 7,
-    'paymentMode': 'TEST', 'creditsWallet': false, 'status': status,
+    'paymentMode': 'TEST', 'purpose': purpose, 'creditsWallet': purpose == 'TOPUP', 'status': status,
+    'creditedAt': purpose == 'TOPUP' && bankCredited ? '2026-11-20T12:00:00Z' : null,
     'paymentUrl': 'https://vtbkz.rbsuat.com/payment/merchants/ecom/payment.html',
   };
   @override
@@ -28,9 +33,9 @@ class _VtbApi extends ApiClient {
       {Map<String, dynamic>? queryParameters, Options? options}) async {
     dynamic data = <String, dynamic>{};
     if (path.startsWith('/wallet?')) {
-      data = {'countryCode': country, 'money': 0, 'bonus': 0, 'transactions': [], 'topups': [], 'payouts': []};
+      data = {'countryCode': country, 'money': walletRub, 'bonus': 0, 'transactions': [], 'topups': [], 'payouts': []};
     } else if (path == '/wallet/vtb/sandbox') {
-      data = {'eligible': country == 'RU', 'available': country == 'RU', 'latestPayment': null};
+      data = {'eligible': country == 'RU', 'available': country == 'RU', 'latestPayment': latestPending ? result(status: bankCredited ? 'SUCCEEDED' : 'PENDING') : null};
     } else if (path == '/geo/cities') {
       data = [];
     } else if (path == '/app/runtime-settings') {
@@ -46,10 +51,15 @@ class _VtbApi extends ApiClient {
   Future<Response<dynamic>> post(String path, {dynamic data,
       Map<String, dynamic>? queryParameters, Options? options}) async {
     if (path == '/wallet/vtb/sandbox/payments') {
-      payments.add(Map<String, dynamic>.from(data as Map));
+      purpose = (data as Map)['purpose'].toString();
+      payments.add(Map<String, dynamic>.from(data));
       return Response(requestOptions: RequestOptions(path: path), data: result());
     }
     if (path.endsWith('/check')) {
+      if (purpose == 'TOPUP' && !bankCredited) {
+        walletRub += 100;
+        bankCredited = true;
+      }
       return Response(requestOptions: RequestOptions(path: path), data: result(status: 'SUCCEEDED'));
     }
     if (path == '/orders/preview') {
@@ -94,8 +104,26 @@ void main() {
     expect(opened, 1);
     expect(api.payments.single['currency'], 'RUB');
     expect(api.payments.single['purpose'], 'TOPUP');
-    expect(find.textContaining('Настоящий баланс не изменён'), findsOneWidget);
+    expect(find.textContaining('100.00 ₽ зачислено на баланс'), findsOneWidget);
+    expect(find.textContaining(RegExp(r'^100(?:[.,]00)?\s*₽$')), findsOneWidget);
     expect(api.realOrders, isEmpty);
+  });
+
+  testWidgets('bank return refreshes the visible rouble balance after credit', (tester) async {
+    await prepare(tester);
+    final api = _VtbApi()..latestPending = true;
+    final router = GoRouter(
+      initialLocation: '/driver/wallet?vtbSandboxPaymentId=11111111-2222-3333-4444-555555555555',
+      routes: [
+        GoRoute(path: '/driver/wallet', builder: (_, __) => DriverWalletPage(apiClient: api)),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('100.00 ₽ зачислено на баланс'), findsOneWidget);
+    expect(find.textContaining(RegExp(r'^100(?:[.,]00)?\s*₽$')), findsOneWidget);
+    expect(api.walletRub, 100);
   });
 
   testWidgets('Kazakhstan keeps Kaspi and Kassa24 and does not open VTB', (tester) async {
