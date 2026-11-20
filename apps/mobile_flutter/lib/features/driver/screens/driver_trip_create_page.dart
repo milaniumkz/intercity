@@ -60,6 +60,9 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   String? _routeToCityId;
   String _routeFromCityName = '';
   String _routeToCityName = '';
+  final _routePanelController = ExpansibleController();
+  bool _routePanelInitialLoad = true;
+  bool _routePanelTouched = false;
   DateTime? _routeDepartureAt;
 
   static DateTime _defaultDepartureTime() {
@@ -103,6 +106,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _routePanelController.dispose();
     _fromCityCtrl.dispose();
     _toCityCtrl.dispose();
     _pricePerSeatCtrl.dispose();
@@ -542,6 +546,9 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
 
     _refreshing = false;
     if (!mounted) return;
+    final collapseInitialPanel = _routePanelInitialLoad &&
+        !_routePanelTouched && intercityRoutes.isNotEmpty;
+    _routePanelInitialLoad = false;
     setState(() {
       _activeRequests = activeRequests;
       _loadWarning = warning;
@@ -551,6 +558,9 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
       _intercityRoutes = intercityRoutes;
       _loading = false;
     });
+    if (collapseInitialPanel) {
+      _routePanelController.collapse();
+    }
   }
 
   String _cityNameById(String? id) {
@@ -679,6 +689,7 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
   }
 
   Future<void> _openRouteCitySearch({required bool isFrom}) async {
+    _routePanelTouched = true;
     var dialogOpen = true;
     ModalRoute<dynamic>? searchRoute;
     final controller = TextEditingController();
@@ -3142,6 +3153,8 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                 child: ExpansionTile(
               // Refreshing saved routes must preserve the open application.
               key: const ValueKey('driver-route-panel'),
+              controller: _routePanelController,
+              onExpansionChanged: (_) => _routePanelTouched = true,
               initiallyExpanded: _intercityRoutes.isEmpty,
               title: Text('Мои маршруты (${_intercityRoutes.length})',
                   style: const TextStyle(fontWeight: FontWeight.w700)),
@@ -3152,7 +3165,19 @@ class _DriverTripCreatePageState extends State<DriverTripCreatePage> {
                       .map((route) =>
                           '${route['fromCity']} → ${route['toCity']} · ${route['seatsAvailable']} мест · ${formatRouteDeparture(DateTime.tryParse('${route['departureAt']}'), offsetMinutes: (route['departureOffsetMinutes'] as num?)?.toInt())}')
                       .join('\n')),
-              children: [_intercityRouteApplicationCard()],
+              children: [
+                Focus(
+                  onFocusChange: (focused) {
+                    if (focused) {
+                      _routePanelTouched = true;
+                    }
+                  },
+                  child: Listener(
+                    onPointerDown: (_) => _routePanelTouched = true,
+                    child: _intercityRouteApplicationCard(),
+                  ),
+                ),
+              ],
             )),
             const SizedBox(height: 14),
             Row(
