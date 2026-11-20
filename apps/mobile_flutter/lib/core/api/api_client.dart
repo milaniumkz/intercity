@@ -10,6 +10,7 @@ import 'package:intercity_shared/intercity_shared.dart';
 import '../constants/app_constants.dart';
 import '../services/secure_store.dart';
 import 'platform_api_adapter.dart';
+import 'review_demo.dart';
 
 abstract class ApiTokenStore {
   Future<String?> read(String key);
@@ -54,7 +55,10 @@ class ApiClient {
     _configureDio(_dio, baseUrl: resolvedBaseUrl);
     _configureDio(_refreshDio, baseUrl: resolvedBaseUrl);
     if (_loginFallbackDio != null) {
-      _configureDio(_loginFallbackDio!, baseUrl: resolvedBaseUrl);
+      _configureDio(_loginFallbackDio!,
+          baseUrl: resolvedBaseUrl == AppConstants.baseUrl
+              ? 'https://api.intercity.89-207-255-27.nip.io/api'
+              : resolvedBaseUrl);
       _loginFallbackDio!.options.connectTimeout = const Duration(seconds: 10);
       _loginFallbackDio!.options.sendTimeout = const Duration(seconds: 10);
       _loginFallbackDio!.options.receiveTimeout = const Duration(seconds: 15);
@@ -83,6 +87,9 @@ class ApiClient {
   Future<void>? _refreshFuture;
 
   static Future<void> init() async {
+    ReviewDemo.active.value =
+        await _globalStorage.read(ReviewDemo.storageKey) == 'true' &&
+            await _globalStorage.read(AppConstants.accessTokenKey) != null;
     final storedBaseUrl = await _globalStorage.read(AppConstants.apiBaseUrlKey);
     final resolvedBaseUrl = resolveInitialBaseUrlForTesting(
       storedBaseUrl: storedBaseUrl,
@@ -164,6 +171,26 @@ class ApiClient {
     RequestOptions options,
     RequestInterceptorHandler handler,
   ) async {
+    if (options.path == '/auth/login' &&
+        ReviewDemo.matchesLocalLogin(options.data)) {
+      handler.resolve(Response(requestOptions: options, statusCode: 201, data: {
+        'user': {...ReviewDemo.user},
+        'accessToken': 'review-demo-local-access',
+        'refreshToken': 'review-demo-local-refresh',
+      }));
+      return;
+    }
+    if (ReviewDemo.active.value && options.path != '/auth/login') {
+      try {
+        handler.resolve(Response(
+            requestOptions: options,
+            statusCode: 200,
+            data: ReviewDemo.respond(options)));
+      } on DioException catch (error) {
+        handler.reject(error);
+      }
+      return;
+    }
     if (options.path == '/auth/login' && _loginFallbackDio != null) {
       options.connectTimeout = const Duration(seconds: 8);
     }
@@ -412,8 +439,9 @@ class ApiClient {
           )
         : _roadCalculationOptions(path, options);
     try {
-      return await _dio.post<dynamic>(path,
-          data: data, options: primaryOptions);
+      final response =
+          await _dio.post<dynamic>(path, data: data, options: primaryOptions);
+      return _reviewLogin(path, response);
     } on DioException catch (error) {
       final transportFailure = error.response == null &&
           (error.type == DioExceptionType.connectionTimeout ||
@@ -423,8 +451,24 @@ class ApiClient {
       if (!isLogin || !transportFailure) rethrow;
       // Retry only sign-in, once, through a separate TLS-validated HTTP/1.1
       // connection. Never replay payments, orders, or a rejected password.
-      return fallback.post<dynamic>(path, data: data, options: options);
+      final response =
+          await fallback.post<dynamic>(path, data: data, options: options);
+      _dio.options.baseUrl = fallback.options.baseUrl;
+      _refreshDio.options.baseUrl = fallback.options.baseUrl;
+      _resolvedBaseUrl = fallback.options.baseUrl;
+      return _reviewLogin(path, response);
     }
+  }
+
+  Response<dynamic> _reviewLogin(String path, Response<dynamic> response) {
+    if (path == '/auth/login') {
+      ReviewDemo.reset();
+      if (response.data is Map && ReviewDemo.accepts(response.data['user'])) {
+        ReviewDemo.active.value = true;
+        response.data['user'] = {...ReviewDemo.user};
+      }
+    }
+    return response;
   }
 
   Future<Response<dynamic>> patch(
@@ -443,12 +487,19 @@ class ApiClient {
   }
 
   Future<void> setTokens(String accessToken, String refreshToken) async {
+    if (ReviewDemo.active.value) {
+      await _storage.write(ReviewDemo.storageKey, 'true');
+    } else {
+      await _storage.delete(ReviewDemo.storageKey);
+    }
     await _storage.write(AppConstants.accessTokenKey, accessToken);
     await _storage.write(AppConstants.refreshTokenKey, refreshToken);
     PwaSupport.refresh();
   }
 
   Future<void> clearTokens() async {
+    ReviewDemo.reset();
+    await _storage.delete(ReviewDemo.storageKey);
     IdentitySession.required.value = false;
     await _storage.delete(AppConstants.accessTokenKey);
     await _storage.delete(AppConstants.refreshTokenKey);

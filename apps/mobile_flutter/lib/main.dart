@@ -1,3 +1,4 @@
+import 'core/api/review_demo.dart';
 import 'core/utils/driver_entry.dart';
 import 'core/services/identity_session.dart';
 import 'features/auth/screens/face_verification_page.dart';
@@ -349,7 +350,30 @@ class _IntercityAppState extends ConsumerState<IntercityApp> {
             child: _ModeSwitcherOverlay(
               router: _router,
               messengerKey: _chatMessenger,
-              child: child ?? const SizedBox.shrink(),
+              child: ValueListenableBuilder<bool>(
+                valueListenable: ReviewDemo.active,
+                builder: (context, demo, _) {
+                  final content = child ?? const SizedBox.shrink();
+                  if (!demo) return content;
+                  return Column(children: [
+                    const SafeArea(
+                        bottom: false,
+                        child: Material(
+                            color: Color(0xFF5A28A6),
+                            child: SizedBox(
+                                width: double.infinity,
+                                child: Padding(
+                                    padding: EdgeInsets.all(8),
+                                    child: Text(
+                                        'Демонстрация • тестовые данные',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 13)))))),
+                    Expanded(child: content),
+                  ]);
+                },
+              ),
             ),
           ),
         );

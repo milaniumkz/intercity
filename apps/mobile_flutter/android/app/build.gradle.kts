@@ -97,3 +97,8 @@ if (hasGoogleServicesJson) {
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
+
+// Use the ML Kit native binaries built for 16 KB Android pages.
+dependencies {
+    implementation("com.google.mlkit:face-detection:16.1.7")
+}

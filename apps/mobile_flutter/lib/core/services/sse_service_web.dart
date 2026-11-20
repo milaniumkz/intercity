@@ -6,6 +6,7 @@ import 'dart:js_interop_unsafe';
 import 'package:web/web.dart' as web;
 
 import '../api/api_client.dart';
+import '../api/review_demo.dart';
 
 class SseConnection {
   SseConnection({required this.stream, required this.close});
@@ -19,6 +20,7 @@ class SseService {
     String path, {
     Map<String, dynamic>? queryParameters,
   }) async {
+    if (ReviewDemo.active.value) return null;
     final token = await ApiClient().getAccessToken();
     if (token == null || token.isEmpty) return null;
 

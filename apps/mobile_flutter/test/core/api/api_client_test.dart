@@ -9,6 +9,30 @@ import 'package:intercity_shared/intercity_shared.dart';
 
 void main() {
   group('Sign-in transport recovery', () {
+    test(
+        'production login recovers through alternate host and keeps it for profile',
+        () async {
+      final fallback = _buildMockDio((options) async {
+        expect(options.uri.host, 'api.intercity.89-207-255-27.nip.io');
+        return _jsonBody({'accessToken': 'access'});
+      });
+      final primary = _buildMockDio((options) async {
+        if (options.path == '/auth/login') {
+          throw DioException.receiveTimeout(
+              timeout: const Duration(seconds: 8), requestOptions: options);
+        }
+        expect(options.uri.host, 'api.intercity.89-207-255-27.nip.io');
+        return _jsonBody({'role': 'DRIVER'});
+      });
+      final client = ApiClient(
+          dio: primary,
+          loginFallbackDio: fallback,
+          tokenStore: _MemoryTokenStore(),
+          baseUrl: AppConstants.baseUrl);
+      await client.post('/auth/login',
+          data: {'phone': '+77001000002', 'password': 'test'});
+      expect((await client.get('/auth/me')).data['role'], 'DRIVER');
+    });
     test('retries a native timeout once with the same login and HTTPS URL',
         () async {
       var attempts = 0;
