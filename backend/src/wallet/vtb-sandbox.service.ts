@@ -117,6 +117,11 @@ export class VtbSandboxService implements OnModuleInit, OnModuleDestroy {
         const payment = await this.prisma.vtbSandboxPayment.upsert({
             where: { userId_requestKey: { userId, requestKey } }, update: {},
             create: { userId, requestKey, amountMinor: minor, bankAmountMinor: minor * VTB_KZT_PER_RUB, conversionRate: VTB_KZT_PER_RUB, purpose, creditsWallet: purpose === 'TOPUP' && this.walletCreditsEnabled },
+        }).catch(async error => {
+            // Concurrent compound-key upserts can race before Prisma's create.
+            // Reuse the winner; never turn a retry into another bank payment.
+            if (error?.code !== 'P2002') throw error;
+            return this.prisma.vtbSandboxPayment.findUniqueOrThrow({ where: { userId_requestKey: { userId, requestKey } } });
         });
         if (payment.amountMinor !== minor || payment.purpose !== purpose) throw new BadRequestException('Повторный запрос должен содержать ту же сумму');
         const claim = await this.prisma.vtbSandboxPayment.updateMany({ where: { id: payment.id, status: 'CREATED' }, data: { status: 'REGISTERING' } });

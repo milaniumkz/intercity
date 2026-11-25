@@ -165,6 +165,7 @@ model TripVerification {
 }
 
 model SavedPaymentCard {
+  provider String @default("KASSA24")
   id String @id @default(uuid())
   phone String
   userId String
@@ -180,6 +181,10 @@ model SavedPaymentCard {
   @@index([userId,active])
 }
 model CardBinding {
+  provider String @default("KASSA24")
+  paymentUrl String?
+  lastError String?
+  leaseUntil DateTime?
   id String @id @default(uuid())
   userId String
   phone String
@@ -191,12 +196,20 @@ model CardBinding {
   updatedAt DateTime @updatedAt
 }
 model TripCardPayment {
+  provider String @default("KASSA24")
+  bankOrderNumber String? @unique
+  bankOrderId String? @unique
+  bankAmountMinor Int?
+  conversionRate Int?
+  paymentUrl String?
+  chargeAttemptedAt DateTime?
+  bankCancellationUnsupported Boolean @default(false)
   id String @id
   kind String
   tripId String
   passengerId String
-  driverUserId String
-  cardId String
+  driverUserId String?
+  cardId String?
   amount Float
   currency String
   status String @default("PENDING")
@@ -213,6 +226,12 @@ model TripCardPayment {
   @@index([status,nextCheckAt])
 }
 model CardPaymentAttempt {
+  bankAmountMinor Int?
+  watchBank Boolean @default(false)
+  nextCheckAt DateTime @default(now())
+  leaseUntil DateTime?
+  paymentUrl String?
+  merchantOrderNumber String? @unique
   id String @id
   paymentId String
   number Int
@@ -221,6 +240,7 @@ model CardPaymentAttempt {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@unique([paymentId,number])
+  @@index([watchBank,nextCheckAt])
 }
 
 model Wallet {

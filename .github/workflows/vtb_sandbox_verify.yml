@@ -41,4 +41,4 @@ jobs:
           npx prisma generate
           npx prisma db push --skip-generate
           npm run build
-          node --test test/vtb-sandbox-gateway.test.js test/vtb-sandbox-service.test.js test/vtb-sandbox-credit.test.js
+          node --test test/vtb-sandbox-gateway.test.js test/vtb-sandbox-service.test.js test/vtb-sandbox-credit.test.js test/vtb-trip-payments.test.js

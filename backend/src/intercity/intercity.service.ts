@@ -566,6 +566,7 @@ export class IntercityService {
           acceptedAt: new Date(),
         },
       });
+      if (this.cardPayments?.prepareAcceptedTrip) await this.cardPayments.prepareAcceptedTrip(tx, 'INTERCITY', { ...freshOffer.request, price: freshOffer.price }, freshOffer.driverId);
       await tx.intercityOffer.updateMany({
         where: { requestId: freshOffer.requestId, id: { not: offerId } },
         data: { status: "REJECTED" },
@@ -576,6 +577,7 @@ export class IntercityService {
     });
     this.realtime?.publish?.({type:'intercity.requests.changed',entity:'system',at:new Date().toISOString()});
     if (!('alreadyAccepted' in result)) {
+      if (offer.request.currency === 'RUB' && offer.request.paymentMethod === 'CARD') this.cardPayments?.startAcceptedPayment?.('INTERCITY', offer.requestId);
       void this.push?.sendIntercityStatusToPassenger(offer.requestId, 'DRIVER_ASSIGNED').catch(() => false);
       void this.push?.sendToUser?.(offer.driverId,{title:'Пассажир принял вашу цену',body:'Заказ подтверждён, место забронировано. Откройте принятую заявку.',data:{type:'order_status',status:'INTERCITY_ACCEPTED',isIntercity:true,orderId:offer.requestId,route:'/driver/home?intercityRequestId='+offer.requestId}}).catch(()=>false);
     }
@@ -669,6 +671,8 @@ export class IntercityService {
         await lockIncomeAccounting(tx);
         const changed = await tx.intercityRequest.updateMany({ where: { id: requestId, status: request.status }, data: { status: target, completedAt } });
         if (changed.count !== 1) return tx.intercityRequest.findUniqueOrThrow({ where: { id: requestId } });
+        const paymentOffer = request.selectedOfferId ? await tx.intercityOffer.findUnique({where:{id:request.selectedOfferId}}) : null;
+        if (this.cardPayments?.settleInTransaction) await this.cardPayments.settleInTransaction(tx, 'INTERCITY', {...request, price: paymentOffer?.price ?? request.price, completedAt}, driverUserId);
         await this.chargeDriverForCompletedIntercityRequest(
           tx,
           request,

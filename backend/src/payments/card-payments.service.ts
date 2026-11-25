@@ -1,5 +1,6 @@
+import { VtbTripPaymentsService } from './vtb-trip-payments.service';
 import { lockIncomeAccounting, recordTaxIncome } from '../tax/tax-ledger';
-import { Injectable, BadRequestException, NotFoundException, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, OnModuleInit, OnModuleDestroy, Logger, Optional } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
@@ -16,7 +17,7 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
     private readonly demo = process.env.KASSA24_DEMO === 'true';
     private readonly encryptionSecret = process.env.KASSA24_TOKEN_ENCRYPTION_KEY || process.env.JWT_SECRET || '';
     readonly gateway = new Kassa24Gateway({baseUrl:process.env.KASSA24_API_URL || 'https://ecommerce.pult24.kz',login:this.login,password:process.env.KASSA24_PASSWORD || '',demo:this.demo});
-    constructor(private readonly prisma:PrismaService, private readonly realtime:RealtimeService, private readonly push:PushService) { }
+    constructor(private readonly prisma:PrismaService, private readonly realtime:RealtimeService, private readonly push:PushService, @Optional() private readonly vtb?:VtbTripPaymentsService) { }
     onModuleInit() { this.timer=setInterval(()=>void this.tick().catch(()=>this.logger.warn('Card payment reconciliation will retry')),2000); this.timer.unref(); }
     onModuleDestroy() { clearInterval(this.timer); }
     private key() { return createHash('sha256').update(`intercity:saved-payment-card:v1:${this.encryptionSecret}`).digest(); }
@@ -61,11 +62,13 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
     }
     private publicCard(card:any) { return {id:card.id,last4:card.last4,isDefault:card.isDefault}; }
     async listCards(userId:string) {
+        if (this.vtb && await this.vtb.isRussian(userId)) return this.vtb.cards(userId);
         const config=await this.configuration();
         const cards=await this.prisma.savedPaymentCard.findMany({where:{userId,active:true,demo:this.demo},orderBy:{createdAt:'desc'}});
         return {configured:config.configured,currencies:config.currencies,message:config.message,cards:cards.map(c=>this.publicCard(c))};
     }
     async bind(userId:string) {
+        if (this.vtb && await this.vtb.isRussian(userId)) return this.vtb.bind(userId);
         const config=await this.configuration();
         if (!config.configured) throw new BadRequestException(config.message);
         const phone=await this.customer(userId);
@@ -92,6 +95,7 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
         }
     }
     async syncCards(userId:string) {
+        if (this.vtb && await this.vtb.isRussian(userId)) return this.vtb.cards(userId,true);
         const config=await this.configuration();
         if (!config.configured) return this.listCards(userId);
         const phone=await this.customer(userId);
@@ -122,6 +126,7 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
         return this.listCards(userId);
     }
     async selectCard(userId:string,id:string) {
+        if (this.vtb && await this.vtb.isRussian(userId)) return this.vtb.select(userId,id);
         await this.prisma.$transaction(async tx=>{
             await tx.$executeRaw`SELECT id FROM "User" WHERE id=${userId} FOR UPDATE`;
             if (!await tx.user.findUnique({where:{id:userId}})) throw new BadRequestException('Аккаунт удалён');
@@ -133,6 +138,7 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
         return this.listCards(userId);
     }
     async removeCard(userId:string,id:string) {
+        if (this.vtb && await this.vtb.isRussian(userId)) return this.vtb.remove(userId,id);
         const card=await this.prisma.savedPaymentCard.findFirst({where:{id,userId,active:true}});
         if (!card) throw new NotFoundException('Карта не найдена');
         const pending=await this.prisma.tripCardPayment.count({where:{cardId:id,status:{in:['PENDING','PROCESSING','CHECKING']}}});
@@ -143,6 +149,7 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
         return this.listCards(userId);
     }
     async cardForOrder(userId:string,currency:string) {
+        if (currency==='RUB' && this.vtb) return this.vtb.cardForOrder(userId);
         const config=await this.configuration();
         if (!config.configured || currency!=='KZT') throw new BadRequestException(currency==='RUB'?'Автосписание в рублях пока недоступно. Выберите наличные или перевод.':'Оплата картой пока недоступна');
         const card=await this.prisma.savedPaymentCard.findFirst({where:{userId,active:true,isDefault:true,demo:this.demo}});
@@ -150,6 +157,7 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
         return card.id;
     }
     async schedule(tx:any,kind:string,trip:any,driverUserId:string) {
+        if (trip.paymentMethod==='CARD' && trip.currency==='RUB' && this.vtb) { await this.vtb.assertPaid(tx,kind,trip,driverUserId); return; }
         if (trip.paymentMethod!=='CARD') return;
         if (!trip.paymentCardId || trip.currency!=='KZT' || !Number.isFinite(trip.price) || trip.price<=0) throw new BadRequestException('Не удалось подготовить оплату поездки');
         await tx.tripCardPayment.upsert({where:{id:`${kind}:${trip.id}`},update:{},create:{id:`${kind}:${trip.id}`,kind,tripId:trip.id,passengerId:trip.passengerId,driverUserId,cardId:trip.paymentCardId,amount:trip.price,currency:trip.currency}});
@@ -170,16 +178,17 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
         if (this.running) return;
         this.running=true;
         try {
-            const pending=await this.prisma.tripCardPayment.findMany({where:{status:{in:['PENDING','PROCESSING','CHECKING','PAID','REFUND_PENDING']},nextCheckAt:{lte:new Date()},OR:[{leaseUntil:null},{leaseUntil:{lte:new Date()}}]},take:5,orderBy:{nextCheckAt:'asc'}});
+            const pending=await this.prisma.tripCardPayment.findMany({where:{provider:'KASSA24',status:{in:['PENDING','PROCESSING','CHECKING','PAID','REFUND_PENDING']},nextCheckAt:{lte:new Date()},OR:[{leaseUntil:null},{leaseUntil:{lte:new Date()}}]},take:5,orderBy:{nextCheckAt:'asc'}});
             for (const payment of pending) await this.processPayment(payment.id);
         } finally {this.running=false;}
     }
     async processPayment(id:string) {
         const lease=new Date(Date.now()+60000);
-        const claim=await this.prisma.tripCardPayment.updateMany({where:{id,status:{in:['PENDING','PROCESSING','CHECKING','PAID','REFUND_PENDING']},OR:[{leaseUntil:null},{leaseUntil:{lte:new Date()}}]},data:{leaseUntil:lease}});
+        const claim=await this.prisma.tripCardPayment.updateMany({where:{id,provider:'KASSA24',status:{in:['PENDING','PROCESSING','CHECKING','PAID','REFUND_PENDING']},OR:[{leaseUntil:null},{leaseUntil:{lte:new Date()}}]},data:{leaseUntil:lease}});
         if (!claim.count) return;
         try {
             const payment=await this.prisma.tripCardPayment.findUniqueOrThrow({where:{id}});
+            if (!payment.cardId || !payment.driverUserId) throw new BadRequestException('Реквизиты оплаты отсутствуют');
             const trip=payment.kind==='CITY'?await this.prisma.order.findUnique({where:{id:payment.tripId}}):await this.prisma.intercityRequest.findUnique({where:{id:payment.tripId}});
             if (!trip) return;
             if (payment.status==='PAID' && trip.status==='COMPLETED') {await this.creditEarnings(payment);return;}
@@ -290,7 +299,24 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
             await Promise.allSettled([payment.passengerId,payment.driverUserId].map(userId=>this.push.sendToUser(userId,{title:'Способ оплаты изменён',body:'Не удалось списать оплату с карты. Способ оплаты переведён на наличные.',data})));
         }
     }
+
+    async prepareAcceptedTrip(tx:any,kind:string,trip:any,driverUserId?:string) {
+        if (trip.currency==='RUB' && trip.paymentMethod==='CARD') {
+            if (!this.vtb) throw new BadRequestException('Оплата ВТБ пока недоступна');
+            await this.vtb.prepare(tx,kind,trip,driverUserId);
+        }
+    }
+    startAcceptedPayment(kind:string,tripId:string) {
+        if (this.vtb) void this.vtb.processPayment(kind+':'+tripId).catch(()=>this.logger.warn('VTB accepted-trip payment will retry'));
+    }
+    async settleInTransaction(tx:any,kind:string,trip:any,driverUserId:string) {
+        if (trip.currency==='RUB' && trip.paymentMethod==='CARD') {
+            if (!this.vtb) throw new BadRequestException('Оплата ВТБ пока недоступна');
+            await this.vtb.settle(tx,kind,trip,driverUserId);
+        }
+    }
     async state(kind:string,tripId:string) {
-        return this.prisma.tripCardPayment.findUnique({where:{id:`${kind}:${tripId}`},select:{status:true,attempts:true,amount:true,currency:true,lastError:true,paidAt:true}});
+        return this.prisma.tripCardPayment.findUnique({where:{id:`${kind}:${tripId}`},select:{status:true,attempts:true,amount:true,currency:true,lastError:true,paidAt:true,provider:true,paymentUrl:true,bankAmountMinor:true,conversionRate:true}})
+            .then(payment => payment && payment.provider === 'VTB_SANDBOX' && payment.status !== 'ACTION_REQUIRED' ? {...payment,paymentUrl:null} : payment);
     }
 }
