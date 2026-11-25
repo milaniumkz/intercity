@@ -7,3 +7,6 @@ CREATE UNIQUE INDEX "TripCardPayment_bankOrderId_key" ON "TripCardPayment"("bank
 ALTER TABLE "CardPaymentAttempt" ADD COLUMN "merchantOrderNumber" TEXT;
 CREATE UNIQUE INDEX "CardPaymentAttempt_merchantOrderNumber_key" ON "CardPaymentAttempt"("merchantOrderNumber");
 ALTER TABLE "TripCardPayment" ADD COLUMN "bankCancellationUnsupported" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "CardPaymentAttempt" ADD COLUMN "watchBank" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN "nextCheckAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, ADD COLUMN "leaseUntil" TIMESTAMP(3), ADD COLUMN "paymentUrl" TEXT;
+CREATE INDEX "CardPaymentAttempt_watchBank_nextCheckAt_idx" ON "CardPaymentAttempt"("watchBank", "nextCheckAt");
+ALTER TABLE "CardPaymentAttempt" ADD COLUMN "bankAmountMinor" INTEGER;

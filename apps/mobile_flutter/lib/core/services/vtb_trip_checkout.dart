@@ -13,7 +13,7 @@ class VtbTripCheckout {
     Future<bool> Function(BuildContext, String)? opener,
   }) async {
     var payment = await check(api, kind, tripId);
-    const finished = ['PAID', 'SETTLED', 'FAILED', 'REFUNDED', 'CANCELLED', 'CASH'];
+    const finished = ['PAID', 'SETTLED', 'FAILED', 'REFUNDED', 'CANCELLED', 'CASH', 'REFUND_PENDING'];
     for (var form = 0; form < 3; form++) {
       for (var i = 0; i < 5 && payment['paymentUrl'] == null &&
           !finished.contains(payment['status']); i++) {

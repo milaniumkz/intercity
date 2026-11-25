@@ -226,6 +226,11 @@ model TripCardPayment {
   @@index([status,nextCheckAt])
 }
 model CardPaymentAttempt {
+  bankAmountMinor Int?
+  watchBank Boolean @default(false)
+  nextCheckAt DateTime @default(now())
+  leaseUntil DateTime?
+  paymentUrl String?
   merchantOrderNumber String? @unique
   id String @id
   paymentId String
@@ -235,6 +240,7 @@ model CardPaymentAttempt {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@unique([paymentId,number])
+  @@index([watchBank,nextCheckAt])
 }
 
 model Wallet {

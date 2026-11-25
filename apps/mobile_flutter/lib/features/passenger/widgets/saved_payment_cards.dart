@@ -180,7 +180,7 @@ class _SavedPaymentCardsState extends State<SavedPaymentCards> with WidgetsBindi
                   icon: const Icon(Icons.refresh))
             ]),
             Text(_vtb
-                ? 'Для поездок в рублях. Банк списывает тенге по курсу 1 ₽ = 7 ₸. Сохранённая карта выбирается для следующего заказа.'
+                ? 'Для поездок в рублях. Оплата запускается после принятия заказа водителем. Банк списывает тенге по курсу 1 ₽ = 7 ₸. Сохранённая карта выбирается для следующего заказа.'
                 : 'Для поездок в тенге. Стоимость списывается при начале поездки.'),
             if (_busy) const LinearProgressIndicator(),
             for (final card in _cards)

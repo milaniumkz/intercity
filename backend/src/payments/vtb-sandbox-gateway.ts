@@ -34,7 +34,7 @@ export class VtbSandboxGateway {
             throw new BadGatewayException('Некорректный ответ тестового шлюза ВТБ');
         }
         if ((('success' in data && data.success !== true) || ('errorCode' in data && String(data.errorCode) !== '0')) &&
-            !(acceptDuplicate && method === 'register.do' && String(data.errorCode) === '1' && data.orderId && data.formUrl)) {
+            !(acceptDuplicate && method === 'register.do' && String(data.errorCode) === '1')) {
             const code = /^\d{1,3}$/.test(String(data.errorCode)) ? String(data.errorCode) : 'unknown';
             // Do not expose provider messages, request bodies or credentials.
             throw new VtbSandboxApiError(code);
@@ -49,7 +49,7 @@ export class VtbSandboxGateway {
         }
         const returnUrl = new URL(input.returnUrl);
         if (returnUrl.protocol !== 'https:' || returnUrl.username || returnUrl.password) throw new Error('HTTPS return URL required');
-        const data = await this.request('register.do', {
+        let data = await this.request('register.do', {
             orderNumber: input.orderNumber, amount: String(input.amountMinor),
             currency: '398', language: 'ru', returnUrl: returnUrl.toString(),
             description: 'InterCity: sandbox payment',
@@ -59,6 +59,15 @@ export class VtbSandboxGateway {
             ...(input.forceBinding ? { features: 'FORCE_CREATE_BINDING' } : {}),
             ...(input.callbackUrl ? { dynamicCallbackUrl: input.callbackUrl } : {}),
         }, input.acceptDuplicate === true);
+        if (input.acceptDuplicate && String(data.errorCode) === '1') {
+            const existing = await this.statusByOrderNumber(input.orderNumber);
+            const id = existing.attributes?.find((a: any) => a.name === 'mdOrder')?.value;
+            if (existing.orderNumber !== input.orderNumber || existing.amount !== input.amountMinor || String(existing.currency) !== '398' || !/^[a-f0-9-]{36}$/i.test(id || '')) throw new BadGatewayException('Не удалось восстановить проверенную операцию ВТБ');
+            // The current sandbox merchant uses this bank-hosted default form.
+            const url = new URL('https://vtbkz.rbsuat.com/payment/merchants/ecom/payment.html');
+            url.searchParams.set('mdOrder', id); url.searchParams.set('language', 'ru');
+            data = { orderId: id, formUrl: url.toString() };
+        }
         if (typeof data.orderId !== 'string' || !/^[a-f0-9-]{36}$/i.test(data.orderId) || typeof data.formUrl !== 'string') {
             throw new BadGatewayException('ВТБ не вернул реквизиты тестовой оплаты');
         }
@@ -73,7 +82,7 @@ export class VtbSandboxGateway {
     bindings(clientId: string) { return this.request('getBindings.do', { clientId, language: 'ru' }); }
     unbind(bindingId: string) { return this.request('unBindCard.do', { bindingId }); }
     payBinding(orderId: string, bindingId: string) {
-        return this.request('paymentOrderBinding.do', { mdOrder: orderId, bindingId, tii: 'F', language: 'ru' });
+        return this.request('paymentOrderBinding.do', { mdOrder: orderId, bindingId, tii: 'U', language: 'ru' });
     }
     refund(orderId: string, amountMinor: number, refundId: string) {
         if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0 || !/^[a-f0-9-]{36}$/i.test(refundId)) throw new Error('Invalid refund');
