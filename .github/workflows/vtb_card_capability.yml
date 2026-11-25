@@ -37,8 +37,8 @@ jobs:
           const r=await fetch('https://vtbkz.rbsuat.com/payment/rest/'+method,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body,signal:AbortSignal.timeout(20000)});assert(r.ok);return r.json();}
           (async()=>{assert.equal(process.env.VTB_SANDBOX_ENABLED,'true');const clientId=randomUUID(),orderNumber=randomUUID();
           const list=await call('getBindings.do',{clientId});console.error(JSON.stringify({bindingListCode:list.errorCode??0}));
-          const r=await call('register.do',{clientId,orderNumber,amount:'0',currency:'398',returnUrl:'https://intercity.89-207-255-27.sslip.io/#/profile/payments',features:['VERIFY','FORCE_CREATE_BINDING']});
-          assert.equal(String(r.errorCode??0),'0','Zero-payment bank binding refused, code '+String(r.errorCode));
+          const r=await call('register.do',{clientId,orderNumber,amount:'700',currency:'398',returnUrl:'https://intercity.89-207-255-27.sslip.io/#/profile/payments',features:[]});
+          assert.equal(String(r.errorCode??0),'0','Initial payment registration refused, code '+String(r.errorCode));
           fs.writeFileSync(file,JSON.stringify({clientId,orderNumber,bankId:r.orderId}),{mode:0o600});
           console.log(JSON.stringify({paymentUrl:r.formUrl}));
           })().catch(e=>{console.error(e.message);process.exitCode=1;});
@@ -53,8 +53,10 @@ jobs:
           (async()=>{const meta=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/probe.json','utf8'));
           if(new URL(meta.paymentUrl).hostname!=='vtbkz.rbsuat.com')throw Error('Unexpected bank');
           const b=await chromium.launch({headless:true,executablePath:process.env.BANK_BROWSER_BIN,args:['--no-sandbox']});try{const p=await b.newPage({locale:'ru-RU'});
-          await p.goto(meta.paymentUrl,{waitUntil:'domcontentloaded'});await p.locator('#new-card-pan').fill('2201382000000062');await p.locator('#newCardExpiry').fill('12/34');await p.locator('#newCardCvc').fill('123');
-          await p.locator('button[type=submit]').first().click();await p.waitForURL(u=>u.hostname==='intercity.89-207-255-27.sslip.io',{timeout:60000});console.log('Hosted zero-payment binding completed');
+          await p.goto(meta.paymentUrl,{waitUntil:'domcontentloaded'});console.log(JSON.stringify({checkboxes:await p.locator('input[type=checkbox]').evaluateAll(es=>es.map(e=>({id:e.id,name:e.name,checked:e.checked,label:e.labels?.[0]?.innerText}))) }));
+          const save=p.getByLabel(/сохранить|запомнить/i).first();if(await save.count())await save.check();
+          await p.locator('#new-card-pan').fill('2201382000000062');await p.locator('#newCardExpiry').fill('12/34');await p.locator('#newCardCvc').fill('123');
+          await p.getByRole('button',{name:'Оплатить',exact:true}).first().click();await p.waitForURL(u=>u.hostname==='intercity.89-207-255-27.sslip.io',{timeout:60000});console.log('Hosted zero-payment binding completed');
           }finally{await b.close();}})().catch(e=>{console.error(e.message);process.exitCode=1;});
           JS
       - name: Verify binding payment and remove sandbox fixtures
@@ -71,7 +73,7 @@ jobs:
           const r=await fetch('https://vtbkz.rbsuat.com/payment/rest/'+method,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body,signal:AbortSignal.timeout(20000)});assert(r.ok);return r.json();}
           (async()=>{if(!fs.existsSync(file))return;const m=JSON.parse(fs.readFileSync(file,'utf8'));
           const s=await call('getOrderStatusExtended.do',{orderId:m.bankId});const list=await call('getBindings.do',{clientId:m.clientId});const bindings=list.bindings||[];
-          console.log(JSON.stringify({verificationBankStatus:s.orderStatus,verificationAmount:s.amount,bindings:bindings.length,listCode:list.errorCode??0}));
+          console.log(JSON.stringify({verificationBankStatus:s.orderStatus,verificationAmount:s.amount,hasStatusBinding:!!s.bindingInfo?.bindingId,bindings:bindings.length,listCode:list.errorCode??0}));
           try{if(bindings.length){const bindingId=bindings[0].bindingId,orderNumber=randomUUID();
           const r=await call('register.do',{orderNumber,clientId:m.clientId,amount:'700',currency:'398',returnUrl:'https://intercity.89-207-255-27.sslip.io/#/order'});assert.equal(String(r.errorCode??0),'0');m.chargeBankId=r.orderId;m.chargeOrderNumber=orderNumber;fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});
           const pay=await call('paymentOrderBinding.do',{mdOrder:r.orderId,bindingId,tii:'F',language:'ru'});
@@ -79,6 +81,6 @@ jobs:
           console.log(JSON.stringify({bindingChargeCode:pay.errorCode??0,bindingChargeStatus:status.orderStatus,bindingChargeAmount:status.amount,hasRedirect:!!pay.redirect}));
           if(Number(status.orderStatus)===2){const refund=await call('refund.do',{orderId:r.orderId,amount:'700',currency:'398',externalRefundId:orderNumber});const after=await call('getOrderStatusExtended.do',{orderId:r.orderId});console.log(JSON.stringify({refundCode:refund.errorCode??0,refundStatus:after.orderStatus}));assert.equal(Number(after.orderStatus),4);}
           }}
-          finally{for(const b of bindings){const r=await call('unBindCard.do',{bindingId:b.bindingId});assert.equal(String(r.errorCode??0),'0');}fs.unlinkSync(file);console.log('Sandbox capability fixtures removed');}
+          finally{if(Number(s.orderStatus)===2){await call('refund.do',{orderId:m.bankId,amount:'700',currency:'398',externalRefundId:m.orderNumber});const refunded=await call('getOrderStatusExtended.do',{orderId:m.bankId});console.log(JSON.stringify({initialPaymentRefundStatus:refunded.orderStatus}));assert.equal(Number(refunded.orderStatus),4);}for(const b of bindings){const r=await call('unBindCard.do',{bindingId:b.bindingId});assert.equal(String(r.errorCode??0),'0');}fs.unlinkSync(file);console.log('Sandbox capability fixtures removed');}
           })().catch(e=>{console.error(e.message);process.exitCode=1;});
           JS
