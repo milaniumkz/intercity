@@ -24,51 +24,22 @@ jobs:
           eval "$(ssh-agent -s)"
           ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
           echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
-      - name: Register an unpaid sandbox form
+      - name: Diagnose cancellation of known unpaid sandbox orders
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
-          ssh "$VPS_USER@$VPS_HOST" "docker exec -i -e PROBE_RUN=$GITHUB_RUN_ID intercity-backend node" > "$RUNNER_TEMP/probe.json" <<'JS'
+          ssh "$VPS_USER@$VPS_HOST" "docker exec -i -e PROBE_RUN=$GITHUB_RUN_ID intercity-backend node" <<'JS'
           const fs=require('node:fs'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
           const file='/app/technical-data/vtb-capability-'+process.env.PROBE_RUN+'.json';
           const auth={userName:process.env.VTB_SANDBOX_USER_NAME,password:process.env.VTB_SANDBOX_PASSWORD||Buffer.from(process.env.VTB_SANDBOX_PASSWORD_B64||'','base64').toString()};
           async function call(method,values){const body=new URLSearchParams({...auth,...values});if(values.features){body.delete('features');for(const v of values.features)body.append('features',v);}
           const r=await fetch('https://vtbkz.rbsuat.com/payment/rest/'+method,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body,signal:AbortSignal.timeout(20000)});assert(r.ok);return r.json();}
-          (async()=>{assert.equal(process.env.VTB_SANDBOX_ENABLED,'true');const orderNumber=randomUUID(),clientId=randomUUID();
-          const r=await call('register.do',{orderNumber,clientId,amount:'100',currency:'398',returnUrl:'https://intercity.89-207-255-27.sslip.io/'});assert.equal(String(r.errorCode??0),'0');
-          fs.writeFileSync(file,JSON.stringify({bankId:r.orderId,orderNumber}),{mode:0o600});console.log(JSON.stringify({paymentUrl:r.formUrl}));
-          })().catch(e=>{console.error(e.message);process.exitCode=1;});
-          JS
-      - name: Inspect bank form embedding
-        run: |
-          npm install --prefix "$RUNNER_TEMP/bank" --ignore-scripts --no-package-lock --no-audit --no-fund playwright@1.56.1
-          export BANK_BROWSER_MODULE="$RUNNER_TEMP/bank/node_modules/playwright"
-          export BANK_BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable)"
-          node <<'JS'
-          const fs=require('node:fs'),{chromium}=require(process.env.BANK_BROWSER_MODULE);
-          (async()=>{const meta=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/probe.json','utf8'));const b=await chromium.launch({headless:true,executablePath:process.env.BANK_BROWSER_BIN,args:['--no-sandbox']});
-          try{const p=await b.newPage({locale:'ru-RU',viewport:{width:1200,height:950}});await p.route('**/flutter_bootstrap.js',r=>r.abort());
-          await p.goto('https://intercity.89-207-255-27.sslip.io/',{waitUntil:'domcontentloaded'});await p.setContent('<iframe id="bank-frame" style="width:1100px;height:900px;border:0"></iframe>');
-          let security={};p.on('response',async r=>{if(r.url()===meta.paymentUrl){const h=await r.allHeaders();security={xFrameOptions:h['x-frame-options']||null,frameAncestors:(h['content-security-policy']||'').match(/frame-ancestors[^;]*/)?.[0]||null};}});
-          await p.locator('#bank-frame').evaluate((el,url)=>el.src=url,meta.paymentUrl);
-          let embedded=false;try{await p.frameLocator('#bank-frame').locator('#new-card-pan').waitFor({state:'visible',timeout:30000});embedded=true;}catch{}
-          console.log(JSON.stringify({bankIframeCardFormVisible:embedded,...security}));
-          }finally{await b.close();}})().catch(e=>{console.error(e.message);process.exitCode=1;});
-          JS
-      - name: Decline the unpaid order and remove fixture
-        if: always()
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-        run: |
-          ssh "$VPS_USER@$VPS_HOST" "docker exec -i -e PROBE_RUN=$GITHUB_RUN_ID intercity-backend node"  <<'JS'
-          const fs=require('node:fs'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
-          const file='/app/technical-data/vtb-capability-'+process.env.PROBE_RUN+'.json';
-          const auth={userName:process.env.VTB_SANDBOX_USER_NAME,password:process.env.VTB_SANDBOX_PASSWORD||Buffer.from(process.env.VTB_SANDBOX_PASSWORD_B64||'','base64').toString()};
-          async function call(method,values){const body=new URLSearchParams({...auth,...values});if(values.features){body.delete('features');for(const v of values.features)body.append('features',v);}
-          const r=await fetch('https://vtbkz.rbsuat.com/payment/rest/'+method,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body,signal:AbortSignal.timeout(20000)});assert(r.ok);return r.json();}
-          (async()=>{for(const target of [file,'/app/technical-data/vtb-capability-45601280290.json']){if(!fs.existsSync(target))continue;const m=JSON.parse(fs.readFileSync(target,'utf8'));let s=await call('getOrderStatusExtended.do',{orderId:m.bankId});let code=0;if(Number(s.orderStatus)!==6){const r=await call('decline.do',{orderId:m.bankId,orderNumber:m.orderNumber,language:'ru'});code=r.errorCode??0;s=await call('getOrderStatusExtended.do',{orderId:m.bankId});}
-          console.log(JSON.stringify({unpaidDeclineCode:code,unpaidBankStatus:s.orderStatus,paidAmount:s.paymentAmountInfo?.depositedAmount??0}));assert.equal(Number(s.orderStatus),6);fs.unlinkSync(target);}
-          })().catch(e=>{console.error(e.message);process.exitCode=1;});
+          (async()=>{for(const run of ['45601280290','45601612402']){const target='/app/technical-data/vtb-capability-'+run+'.json';if(!fs.existsSync(target))continue;const m=JSON.parse(fs.readFileSync(target,'utf8'));
+          let status=await call('getOrderStatusExtended.do',{orderId:m.bankId});
+          if(Number(status.orderStatus)!==6){for(const values of [{orderId:m.bankId,orderNumber:m.orderNumber,language:'ru'},{orderId:m.bankId,orderNumber:m.orderNumber,merchantLogin:'intercity',language:'ru'}]){
+           const r=await call('decline.do',values);console.log(JSON.stringify({declineCode:r.errorCode??0,message:String(r.errorMessage||'').slice(0,200),explicitMerchant:!!values.merchantLogin}));if(String(r.errorCode??0)==='0')break;}}
+          status=await call('getOrderStatusExtended.do',{orderId:m.bankId});console.log(JSON.stringify({bankStatus:status.orderStatus,paidAmount:status.paymentAmountInfo?.depositedAmount??0}));
+          if(Number(status.orderStatus)===6){fs.unlinkSync(target);console.log('Unpaid sandbox fixture closed');}
+          }})().catch(e=>{console.error(e.message);process.exitCode=1;});
           JS
