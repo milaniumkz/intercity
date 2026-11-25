@@ -1,8 +1,7 @@
 import 'package:flutter_tts/flutter_tts.dart';
 
-import 'text_to_speech_service_base.dart';
-
 import 'speech_playback_speed.dart';
+import 'text_to_speech_service_base.dart';
 
 TextToSpeechService createTextToSpeechService() {
   return _NativeTextToSpeechService();

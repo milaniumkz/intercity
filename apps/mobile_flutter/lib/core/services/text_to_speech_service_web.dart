@@ -3,9 +3,8 @@ import 'dart:js_interop';
 
 import 'package:web/web.dart' as web;
 
-import 'text_to_speech_service_base.dart';
-
 import 'speech_playback_speed.dart';
+import 'text_to_speech_service_base.dart';
 import 'navigation_voice_catalog.dart';
 
 TextToSpeechService createTextToSpeechService() {
@@ -70,6 +69,7 @@ class _BrowserTextToSpeechService implements TextToSpeechService {
       _navigationAudio
         ..src = Uri.base.resolve(recording).toString()
         ..volume = _volume.clamp(0, 1)
+        ..defaultPlaybackRate = _speechRate.clamp(0.75, 1.25)
         ..playbackRate = _speechRate.clamp(0.75, 1.25)
         ..onended = ((web.Event _) => _completeSpeak(completer)).toJS
         ..onerror = ((web.Event _) => _completeSpeak(completer)).toJS;

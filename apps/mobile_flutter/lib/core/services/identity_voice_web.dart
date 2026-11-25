@@ -8,6 +8,7 @@ class IdentityVoice {
     ..src =
         Uri.base.resolve('assets/assets/sounds/identity/prepare.wav').toString()
     ..preload = 'auto'
+    ..defaultPlaybackRate = speechPlaybackSpeedMultiplier
     ..playbackRate = speechPlaybackSpeedMultiplier;
   bool muted = false;
   bool failed = false;
