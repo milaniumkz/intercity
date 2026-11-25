@@ -54,7 +54,7 @@ jobs:
           if(new URL(meta.paymentUrl).hostname!=='vtbkz.rbsuat.com')throw Error('Unexpected bank');
           const b=await chromium.launch({headless:true,executablePath:process.env.BANK_BROWSER_BIN,args:['--no-sandbox']});try{const p=await b.newPage({locale:'ru-RU'});
           await p.goto(meta.paymentUrl,{waitUntil:'domcontentloaded'});console.log(JSON.stringify({checkboxes:await p.locator('input[type=checkbox]').evaluateAll(es=>es.map(e=>({id:e.id,name:e.name,checked:e.checked,label:e.labels?.[0]?.innerText}))) }));
-          const save=p.locator('#save-card');if(await save.count()){await save.check();if(!await save.isChecked())throw Error('Save-card consent was not selected');}
+          const save=p.locator('label[for="save-card"]');const visible=await save.isVisible();console.log(JSON.stringify({saveCardConsentVisible:visible}));if(visible){await save.click();if(!await p.locator('#save-card').isChecked())throw Error('Save-card consent was not selected');}
           await p.locator('#new-card-pan').fill('2201382000000062');await p.locator('#newCardExpiry').fill('12/34');await p.locator('#newCardCvc').fill('123');
           await p.getByRole('button',{name:'Оплатить',exact:true}).first().click();await p.waitForURL(u=>u.hostname==='intercity.89-207-255-27.sslip.io',{timeout:60000});console.log('Hosted save-card payment completed');
           }finally{await b.close();}})().catch(e=>{console.error(e.message);process.exitCode=1;});
@@ -72,7 +72,7 @@ jobs:
           async function call(method,values){const body=new URLSearchParams({...auth,...values});if(values.features){body.delete('features');for(const v of values.features)body.append('features',v);}
           const r=await fetch('https://vtbkz.rbsuat.com/payment/rest/'+method,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body,signal:AbortSignal.timeout(20000)});assert(r.ok);return r.json();}
           (async()=>{if(!fs.existsSync(file))return;const m=JSON.parse(fs.readFileSync(file,'utf8'));
-          const s=await call('getOrderStatusExtended.do',{orderId:m.bankId});const list=await call('getBindings.do',{clientId:m.clientId});const bindings=list.bindings||[];
+          const s=await call('getOrderStatusExtended.do',{orderId:m.bankId});const list=await call('getBindings.do',{clientId:m.clientId});const bindings=list.bindings||[];if(!bindings.length&&s.bindingInfo?.bindingId)bindings.push({bindingId:s.bindingInfo.bindingId});
           console.log(JSON.stringify({verificationBankStatus:s.orderStatus,verificationAmount:s.amount,hasStatusBinding:!!s.bindingInfo?.bindingId,bindings:bindings.length,listCode:list.errorCode??0}));
           try{if(bindings.length){const bindingId=bindings[0].bindingId,orderNumber=randomUUID();
           const r=await call('register.do',{orderNumber,clientId:m.clientId,amount:'100',currency:'398',returnUrl:'https://intercity.89-207-255-27.sslip.io/#/order'});assert.equal(String(r.errorCode??0),'0');m.chargeBankId=r.orderId;m.chargeOrderNumber=orderNumber;fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});
