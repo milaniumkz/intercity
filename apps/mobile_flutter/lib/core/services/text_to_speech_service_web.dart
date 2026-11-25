@@ -4,6 +4,8 @@ import 'dart:js_interop';
 import 'package:web/web.dart' as web;
 
 import 'text_to_speech_service_base.dart';
+
+import 'speech_playback_speed.dart';
 import 'navigation_voice_catalog.dart';
 
 TextToSpeechService createTextToSpeechService() {
@@ -14,7 +16,7 @@ class _BrowserTextToSpeechService implements TextToSpeechService {
   final _navigationAudio = web.HTMLAudioElement()..preload = 'auto';
   int _generation = 0;
   String _language = 'en-US';
-  double _speechRate = 1.0;
+  double _speechRate = speechPlaybackSpeedMultiplier;
   double _volume = 1.0;
   double _pitch = 1.0;
   bool _awaitSpeakCompletion = false;
@@ -39,7 +41,7 @@ class _BrowserTextToSpeechService implements TextToSpeechService {
 
   @override
   Future<void> setSpeechRate(double rate) async {
-    _speechRate = rate;
+    _speechRate = rate * speechPlaybackSpeedMultiplier;
   }
 
   @override
