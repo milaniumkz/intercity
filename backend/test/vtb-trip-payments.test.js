@@ -18,6 +18,8 @@ test('binding and refund requests use bank tokens, client ownership, KZT and a s
  assert.equal(requests[0].body.get('currency'),'398');assert.equal(requests[0].body.get('bindingId'),'protected-bank-binding');assert.equal(requests[0].body.get('clientId'),'owner');
  const id=randomUUID();await g.refund(randomUUID(),100,id);assert.equal(requests[1].body.get('externalRefundId'),id);assert.equal(requests[1].body.get('amount'),'100');
  assert.equal(requests[1].body.has('cvc'),false);
+ const merchantOrder=randomUUID(),bankOrder=randomUUID();await g.decline(bankOrder,merchantOrder);
+ assert.equal(requests[2].body.get('orderId'),bankOrder);assert.equal(requests[2].body.get('orderNumber'),merchantOrder);
 });
 const database=process.env.VTB_SANDBOX_TEST_DATABASE_URL;
 test('VTB trip payments: real database atomic net earnings, 20 repeats, cancellation, binding refund, CVC fallback and isolation',{skip:!database},async()=>{

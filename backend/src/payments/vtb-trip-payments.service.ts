@@ -341,7 +341,7 @@ export class VtbTripPaymentsService implements OnModuleInit, OnModuleDestroy {
                     await this.gateway.refund(p.bankOrderId!, p.bankAmountMinor!, p.bankOrderNumber!);
                 } else if (state === 'PENDING') {
                     if (Number(bank.orderStatus) === 1) await this.gateway.reverse(p.bankOrderId!);
-                    else await this.gateway.decline(p.bankOrderId!);
+                    else await this.gateway.decline(p.bankOrderId!, p.bankOrderNumber!);
                 }
                 bank = await this.gateway.status(p.bankOrderId!);
                 state = vtbTripBankState(bank, p.bankOrderNumber!, p.bankAmountMinor!);

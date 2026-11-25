@@ -80,7 +80,7 @@ export class VtbSandboxGateway {
         return this.request('refund.do', { orderId, amount: String(amountMinor), currency: '398', externalRefundId: refundId, language: 'ru' });
     }
     reverse(orderId: string) { return this.request('reverse.do', { orderId, language: 'ru' }); }
-    decline(orderId: string) { return this.request('decline.do', { orderId, language: 'ru' }); }
+    decline(orderId: string, orderNumber: string) { return this.request('decline.do', { orderId, orderNumber, language: 'ru' }); }
 
     statusByOrderNumber(orderNumber: string) {
         if (!/^[A-Za-z0-9_-]{1,36}$/.test(orderNumber)) throw new Error('Invalid merchant order identifier');
