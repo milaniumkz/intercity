@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 
+import 'speech_playback_speed.dart';
+
 class IdentityVoice {
   AudioPlayer? _player;
   bool muted = false;
@@ -14,6 +16,7 @@ class IdentityVoice {
     try {
       final player = _player ??= AudioPlayer();
       await player.stop();
+      await player.setPlaybackRate(speechPlaybackSpeedMultiplier);
       await player.play(AssetSource('sounds/identity/$cue.wav'));
       failed = false;
     } catch (_) {

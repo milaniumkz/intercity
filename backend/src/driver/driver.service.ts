@@ -1,3 +1,4 @@
+import { CardPaymentsService } from '../payments/card-payments.service';
 import {requireNoDuplicateDeparture} from '../common/intercity-departure-duplicate';
 import { DriverDocumentService } from '../identity/driver-document.service';
 import { driverTaxChecksEnabled } from '../tax/driver-tax-mode';
@@ -36,6 +37,7 @@ export class DriverService {
         private taxService: TaxService,
         @Optional() private technicalService?: TechnicalService,
         @Optional() private identityDocuments?: DriverDocumentService,
+        @Optional() private cardPayments?: CardPaymentsService,
     ) { }
 
     async createProfile(userId: string, dto: CreateDriverProfileDto) {
@@ -416,7 +418,9 @@ export class DriverService {
     async getActiveOrder(driverUserId: string) {
         const profile = await this.prisma.driverProfile.findUnique({where:{userId:driverUserId},select:{id:true}});
         if (!profile) return null;
-        return this.prisma.order.findFirst({where:{driverId:profile.id,status:{in:['DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS']}},include:{passenger:{select:clientUserSelect}},orderBy:{createdAt:'desc'}});
+        const order = await this.prisma.order.findFirst({where:{driverId:profile.id,status:{in:['DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS']}},include:{passenger:{select:clientUserSelect}},orderBy:{createdAt:'desc'}});
+        if (order && this.cardPayments) return {...order,cardPayment:await this.cardPayments.state('CITY',order.id)};
+        return order;
     }
 
     async getNearbyOrders(driverUserId: string) {
@@ -769,11 +773,13 @@ export class DriverService {
                 dispatchDriverId: null, dispatchExpiresAt: null, dispatchRetryAt: null },
         });
         if (accepted.count !== 1) throw new BadRequestException('Время ответа истекло или заказ предложен другому водителю');
+        if (this.cardPayments?.prepareAcceptedTrip) await this.cardPayments.prepareAcceptedTrip(tx, 'CITY', order, driverUserId);
         const activity = await applyDriverActivity(tx, profile.id, `accept:city:${orderId}:${profile.id}`, DRIVER_ACTIVITY_RULES.acceptReward);
         return { order: await tx.order.findUnique({ where: { id: orderId } }), activity };
 
         });
         const updated = result.order;
+        if (order.currency === 'RUB' && order.paymentMethod === 'CARD') this.cardPayments?.startAcceptedPayment?.('CITY', order.id);
         this.realtimeService.publish({ type: 'driver.activity.updated', entity: 'driver', entityId: profile.id, at: new Date().toISOString(), payload: { activityScore: result.activity.activityScore } });
         await this.recordRideEventSafe({
             orderId: order.id,

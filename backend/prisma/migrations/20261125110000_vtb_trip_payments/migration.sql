@@ -1,0 +1,12 @@
+ALTER TABLE "SavedPaymentCard" ADD COLUMN "provider" TEXT NOT NULL DEFAULT 'KASSA24';
+ALTER TABLE "CardBinding" ADD COLUMN "provider" TEXT NOT NULL DEFAULT 'KASSA24', ADD COLUMN "paymentUrl" TEXT, ADD COLUMN "lastError" TEXT, ADD COLUMN "leaseUntil" TIMESTAMP(3);
+ALTER TABLE "TripCardPayment" ADD COLUMN "provider" TEXT NOT NULL DEFAULT 'KASSA24', ADD COLUMN "bankOrderNumber" TEXT, ADD COLUMN "bankOrderId" TEXT, ADD COLUMN "bankAmountMinor" INTEGER, ADD COLUMN "conversionRate" INTEGER, ADD COLUMN "paymentUrl" TEXT, ADD COLUMN "chargeAttemptedAt" TIMESTAMP(3);
+ALTER TABLE "TripCardPayment" ALTER COLUMN "driverUserId" DROP NOT NULL, ALTER COLUMN "cardId" DROP NOT NULL;
+CREATE UNIQUE INDEX "TripCardPayment_bankOrderNumber_key" ON "TripCardPayment"("bankOrderNumber");
+CREATE UNIQUE INDEX "TripCardPayment_bankOrderId_key" ON "TripCardPayment"("bankOrderId");
+ALTER TABLE "CardPaymentAttempt" ADD COLUMN "merchantOrderNumber" TEXT;
+CREATE UNIQUE INDEX "CardPaymentAttempt_merchantOrderNumber_key" ON "CardPaymentAttempt"("merchantOrderNumber");
+ALTER TABLE "TripCardPayment" ADD COLUMN "bankCancellationUnsupported" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "CardPaymentAttempt" ADD COLUMN "watchBank" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN "nextCheckAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, ADD COLUMN "leaseUntil" TIMESTAMP(3), ADD COLUMN "paymentUrl" TEXT;
+CREATE INDEX "CardPaymentAttempt_watchBank_nextCheckAt_idx" ON "CardPaymentAttempt"("watchBank", "nextCheckAt");
+ALTER TABLE "CardPaymentAttempt" ADD COLUMN "bankAmountMinor" INTEGER;

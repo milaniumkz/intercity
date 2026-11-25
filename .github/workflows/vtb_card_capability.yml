@@ -1,0 +1,43 @@
+name: Probe VTB sandbox bank form
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/vtb_card_capability.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 8
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+      - name: Inspect authenticated bank failure timestamp fields
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" "docker exec -i -e PROBE_RUN=$GITHUB_RUN_ID intercity-backend node" <<'JS'
+          const fs=require('node:fs'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+          const file='/app/technical-data/vtb-capability-'+process.env.PROBE_RUN+'.json';
+          const auth={userName:process.env.VTB_SANDBOX_USER_NAME,password:process.env.VTB_SANDBOX_PASSWORD||Buffer.from(process.env.VTB_SANDBOX_PASSWORD_B64||'','base64').toString()};
+          async function call(method,values){const body=new URLSearchParams({...auth,...values});if(values.features){body.delete('features');for(const v of values.features)body.append('features',v);}
+          const r=await fetch('https://vtbkz.rbsuat.com/payment/rest/'+method,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body,signal:AbortSignal.timeout(20000)});assert(r.ok);return r.json();}
+          (async()=>{const target='/app/technical-data/vtb-capability-45602451633.json';const m=JSON.parse(fs.readFileSync(target,'utf8'));
+          for(const version of [undefined,'30']){const values={orderId:m.bankId};if(version)values.orderStatusVersion=version;const s=await call('getOrderStatusExtended.do',values);
+          console.log(JSON.stringify({version:version||'default',keys:Object.keys(s),orderStatus:s.orderStatus,actionCode:s.actionCode,authDateTime:s.authDateTime,date:s.date,creationDate:s.creationDate,paymentAmountInfo:s.paymentAmountInfo,cardAuthKeys:Object.keys(s.cardAuthInfo||{}),errorCode:s.errorCode,actionCodeDescription:s.actionCodeDescription}));}
+          console.log(JSON.stringify({paymentUrl:m.paymentUrl}));
+          })().catch(e=>{console.error(e.message);process.exitCode=1;});
+          JS

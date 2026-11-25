@@ -38,7 +38,8 @@ export class AccountDeletionService implements OnModuleInit, OnModuleDestroy {
             const intercity = await tx.intercityRequest.findFirst({where: {OR: [{passengerId: userId},{selectedDriverId: userId}], status: {in: ['ACCEPTED','DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS']}}});
             const sharing = await tx.rideSharingTrip.findFirst({where: {status: {in: ['IN_PROGRESS','STARTED']}, OR: [{driverId: userId},{bookings: {some: {passengerId: userId, status: {not: 'CANCELLED'}}}}]}});
             if (active || intercity || sharing) throw new ConflictException('Завершите текущую поездку, затем удалите аккаунт. Обращаться в поддержку не нужно.');
-            if (await tx.tripCardPayment.findFirst({where: {OR: [{passengerId: userId},{driverUserId: userId}], status: {in: ['PENDING','PROCESSING','CHECKING','PAID','REFUND_PENDING']}}})) throw new ConflictException('Дождитесь завершения обработки оплаты и повторите удаление');
+            if (await tx.tripCardPayment.findFirst({where: {OR: [{passengerId: userId},{driverUserId: userId}], status: {in: ['PENDING','PROCESSING','CHECKING','ACTION_REQUIRED','PAID','REFUND_PENDING']}}})) throw new ConflictException('Дождитесь завершения обработки оплаты и повторите удаление');
+            if (await tx.cardBinding.findFirst({where:{userId,provider:'VTB_SANDBOX',status:{in:['CREATED','PENDING','CHECKING','REFUND_PENDING']}}})) throw new ConflictException('Дождитесь завершения привязки карты и возврата 1 ₸');
             // Retain only anonymous accounting references, never the original account.
             const archiveId = randomUUID();
             await tx.user.create({data: {id: archiveId, phone: `erased:${archiveId}`, name: 'Удалённый аккаунт', password: '', refCode: `erased:${archiveId}`, refLink: ''}});
