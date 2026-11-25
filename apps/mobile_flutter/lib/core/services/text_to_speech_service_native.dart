@@ -1,5 +1,6 @@
 import 'package:flutter_tts/flutter_tts.dart';
 
+import 'speech_playback_speed.dart';
 import 'text_to_speech_service_base.dart';
 
 TextToSpeechService createTextToSpeechService() {
@@ -28,7 +29,7 @@ class _NativeTextToSpeechService implements TextToSpeechService {
 
   @override
   Future<void> setSpeechRate(double rate) async {
-    await _tts.setSpeechRate(rate);
+    await _tts.setSpeechRate(rate * speechPlaybackSpeedMultiplier);
   }
 
   @override

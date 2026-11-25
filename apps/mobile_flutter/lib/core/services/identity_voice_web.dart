@@ -1,11 +1,15 @@
 import 'dart:js_interop';
 import 'package:web/web.dart' as web;
 
+import 'speech_playback_speed.dart';
+
 class IdentityVoice {
   final web.HTMLAudioElement _audio = web.HTMLAudioElement()
     ..src =
         Uri.base.resolve('assets/assets/sounds/identity/prepare.wav').toString()
-    ..preload = 'auto';
+    ..preload = 'auto'
+    ..defaultPlaybackRate = speechPlaybackSpeedMultiplier
+    ..playbackRate = speechPlaybackSpeedMultiplier;
   bool muted = false;
   bool failed = false;
   void play(String cue) {
