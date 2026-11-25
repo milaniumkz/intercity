@@ -24,53 +24,20 @@ jobs:
           eval "$(ssh-agent -s)"
           ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
           echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
-      - name: Prepare the official declined-card scenario
+      - name: Inspect authenticated bank failure timestamp fields
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
-          ssh "$VPS_USER@$VPS_HOST" "docker exec -i -e PROBE_RUN=$GITHUB_RUN_ID intercity-backend node" > "$RUNNER_TEMP/probe.json" <<'JS'
+          ssh "$VPS_USER@$VPS_HOST" "docker exec -i -e PROBE_RUN=$GITHUB_RUN_ID intercity-backend node" <<'JS'
           const fs=require('node:fs'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
           const file='/app/technical-data/vtb-capability-'+process.env.PROBE_RUN+'.json';
           const auth={userName:process.env.VTB_SANDBOX_USER_NAME,password:process.env.VTB_SANDBOX_PASSWORD||Buffer.from(process.env.VTB_SANDBOX_PASSWORD_B64||'','base64').toString()};
           async function call(method,values){const body=new URLSearchParams({...auth,...values});if(values.features){body.delete('features');for(const v of values.features)body.append('features',v);}
           const r=await fetch('https://vtbkz.rbsuat.com/payment/rest/'+method,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body,signal:AbortSignal.timeout(20000)});assert(r.ok);return r.json();}
-          (async()=>{let meta=null;
-          for(const run of ['45601612402','45601280290']){const target='/app/technical-data/vtb-capability-'+run+'.json';if(!fs.existsSync(target))continue;const m=JSON.parse(fs.readFileSync(target,'utf8'));const s=await call('getOrderStatusExtended.do',{orderId:m.bankId});if(Number(s.orderStatus)===6){fs.unlinkSync(target);continue;}
-          if(Number(s.orderStatus)!==0)continue;const duplicate=await call('register.do',{orderNumber:m.orderNumber,amount:'100',currency:'398',returnUrl:'https://intercity.89-207-255-27.sslip.io/'});
-          console.error(JSON.stringify({duplicateRegistrationCode:duplicate.errorCode??0,duplicateHasForm:!!duplicate.formUrl,duplicateSameBankId:duplicate.orderId===m.bankId}));
-          if(duplicate.formUrl){meta={...m,paymentUrl:duplicate.formUrl,sourceFile:target};break;}}
-          if(!meta){const orderNumber=randomUUID();const r=await call('register.do',{orderNumber,amount:'100',currency:'398',returnUrl:'https://intercity.89-207-255-27.sslip.io/'});assert.equal(String(r.errorCode??0),'0');meta={bankId:r.orderId,orderNumber,paymentUrl:r.formUrl};}
-          fs.writeFileSync(file,JSON.stringify(meta),{mode:0o600});console.log(JSON.stringify({paymentUrl:meta.paymentUrl}));
-          })().catch(e=>{console.error(e.message);process.exitCode=1;});
-          JS
-      - name: Submit official test card with invalid CVC
-        run: |
-          npm install --prefix "$RUNNER_TEMP/bank" --ignore-scripts --no-package-lock --no-audit --no-fund playwright@1.56.1
-          export BANK_BROWSER_MODULE="$RUNNER_TEMP/bank/node_modules/playwright"
-          export BANK_BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable)"
-          node <<'JS'
-          const fs=require('node:fs'),{chromium}=require(process.env.BANK_BROWSER_MODULE);
-          (async()=>{const meta=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/probe.json','utf8'));const b=await chromium.launch({headless:true,executablePath:process.env.BANK_BROWSER_BIN,args:['--no-sandbox']});try{const p=await b.newPage({locale:'ru-RU'});await p.goto(meta.paymentUrl,{waitUntil:'domcontentloaded'});
-          await p.locator('#new-card-pan').fill('2201382000000062');await p.locator('#newCardExpiry').fill('12/34');await p.locator('#newCardCvc').fill('000');await p.getByRole('button',{name:'Оплатить',exact:true}).first().click();await p.waitForTimeout(8000);
-          console.log(JSON.stringify({officialInvalidCvcScenarioSubmitted:true}));
-          }finally{await b.close();}})().catch(e=>{console.error(e.message);process.exitCode=1;});
-          JS
-      - name: Verify the bank decline and remove fixture
-        if: always()
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-        run: |
-          ssh "$VPS_USER@$VPS_HOST" "docker exec -i -e PROBE_RUN=$GITHUB_RUN_ID intercity-backend node"  <<'JS'
-          const fs=require('node:fs'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
-          const file='/app/technical-data/vtb-capability-'+process.env.PROBE_RUN+'.json';
-          const auth={userName:process.env.VTB_SANDBOX_USER_NAME,password:process.env.VTB_SANDBOX_PASSWORD||Buffer.from(process.env.VTB_SANDBOX_PASSWORD_B64||'','base64').toString()};
-          async function call(method,values){const body=new URLSearchParams({...auth,...values});if(values.features){body.delete('features');for(const v of values.features)body.append('features',v);}
-          const r=await fetch('https://vtbkz.rbsuat.com/payment/rest/'+method,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body,signal:AbortSignal.timeout(20000)});assert(r.ok);return r.json();}
-          (async()=>{if(!fs.existsSync(file))return;const m=JSON.parse(fs.readFileSync(file,'utf8'));const s=await call('getOrderStatusExtended.do',{orderId:m.bankId});
-          console.log(JSON.stringify({failedCardBankStatus:s.orderStatus,failedCardActionCode:s.actionCode,amount:s.amount,currency:s.currency,depositedAmount:s.paymentAmountInfo?.depositedAmount??0}));
-          assert.equal(Number(s.orderStatus),6);assert.equal(Number(s.paymentAmountInfo?.depositedAmount??0),0);fs.unlinkSync(file);
-          if(m.sourceFile&&['/app/technical-data/vtb-capability-45601612402.json','/app/technical-data/vtb-capability-45601280290.json'].includes(m.sourceFile)&&fs.existsSync(m.sourceFile))fs.unlinkSync(m.sourceFile);
+          (async()=>{const target='/app/technical-data/vtb-capability-45602451633.json';const m=JSON.parse(fs.readFileSync(target,'utf8'));
+          for(const version of [undefined,'30']){const values={orderId:m.bankId};if(version)values.orderStatusVersion=version;const s=await call('getOrderStatusExtended.do',values);
+          console.log(JSON.stringify({version:version||'default',keys:Object.keys(s),orderStatus:s.orderStatus,actionCode:s.actionCode,authDateTime:s.authDateTime,date:s.date,creationDate:s.creationDate,paymentAmountInfo:s.paymentAmountInfo,cardAuthKeys:Object.keys(s.cardAuthInfo||{}),errorCode:s.errorCode,actionCodeDescription:s.actionCodeDescription}));}
+          console.log(JSON.stringify({paymentUrl:m.paymentUrl}));
           })().catch(e=>{console.error(e.message);process.exitCode=1;});
           JS
