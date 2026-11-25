@@ -13,28 +13,36 @@ class VtbTripCheckout {
     Future<bool> Function(BuildContext, String)? opener,
   }) async {
     var payment = await check(api, kind, tripId);
-    for (var i = 0; i < 5 && payment['paymentUrl'] == null &&
-        !['PAID', 'SETTLED', 'FAILED', 'REFUNDED', 'CANCELLED', 'WAITING_DRIVER'].contains(payment['status']); i++) {
-      await Future<void>.delayed(const Duration(seconds: 1));
+    const finished = ['PAID', 'SETTLED', 'FAILED', 'REFUNDED', 'CANCELLED', 'CASH'];
+    for (var form = 0; form < 3; form++) {
+      for (var i = 0; i < 5 && payment['paymentUrl'] == null &&
+          !finished.contains(payment['status']); i++) {
+        await Future<void>.delayed(const Duration(seconds: 1));
+        payment = await check(api, kind, tripId);
+      }
+      if (!context.mounted || finished.contains(payment['status'])) { return payment; }
+      final url = Uri.tryParse(payment['paymentUrl']?.toString() ?? '');
+      if (url == null || url.scheme != 'https' || url.host != 'vtbkz.rbsuat.com' ||
+          !url.path.startsWith('/payment/') || url.userInfo.isNotEmpty) {
+        throw StateError('ВТБ ещё готовит форму оплаты. Нажмите «Оплатить через ВТБ» в заказе через несколько секунд.');
+      }
+      final attempt = payment['attempts'] ?? 1;
+      var nextAttempt = false;
+      if (opener != null) {
+        await opener(context, url.toString());
+      } else {
+        await showPaymentModal(context, url.toString(),
+          title: 'ВТБ · ${payment['amount']} ₽ = ${payment['bankAmount']} ₸ · попытка $attempt/3 · тест',
+          isCompleted: () async {
+            payment = await check(api, kind, tripId);
+            nextAttempt = (payment['attempts'] ?? 1) != attempt;
+            return nextAttempt || finished.contains(payment['status']);
+          });
+      }
       payment = await check(api, kind, tripId);
+      if (!nextAttempt) { return payment; }
     }
-    if (!context.mounted || ['PAID', 'SETTLED', 'FAILED', 'REFUNDED', 'CANCELLED'].contains(payment['status'])) return payment;
-    final url = Uri.tryParse(payment['paymentUrl']?.toString() ?? '');
-    if (url == null || url.scheme != 'https' || url.host != 'vtbkz.rbsuat.com' ||
-        !url.path.startsWith('/payment/') || url.userInfo.isNotEmpty) {
-      throw StateError('ВТБ ещё готовит форму оплаты. Нажмите «Оплатить через ВТБ» в заказе через несколько секунд.');
-    }
-    if (opener != null) {
-      await opener(context, url.toString());
-    } else {
-      await showPaymentModal(context, url.toString(),
-        title: 'ВТБ · ${payment['amount']} ₽ = ${payment['bankAmount']} ₸ · тест',
-        isCompleted: () async {
-          payment = await check(api, kind, tripId);
-          return ['PAID', 'SETTLED', 'FAILED', 'REFUNDED', 'CANCELLED'].contains(payment['status']);
-        });
-    }
-    return check(api, kind, tripId);
+    return payment;
   }
 }
 
@@ -84,12 +92,12 @@ class _VtbTripPaymentPanelState extends State<VtbTripPaymentPanel> {
     final payment = raw is Map ? raw : const <String, dynamic>{};
     final status = payment['status']?.toString();
     final settled = status == 'PAID' || status == 'SETTLED';
-    final terminal = ['FAILED', 'CANCELLED', 'REFUNDED', 'REFUND_PENDING', 'WAITING_DRIVER'].contains(status);
+    final terminal = ['FAILED', 'CANCELLED', 'REFUNDED', 'REFUND_PENDING', 'CASH'].contains(status);
     final amount = payment['amount'];
     final bankMinor = payment['bankAmountMinor'];
     final bankAmount = bankMinor is num ? bankMinor / 100 : null;
     final message = settled ? 'Оплачено через ВТБ'
-        : status == 'WAITING_DRIVER' ? 'ВТБ: списание после принятия заказа водителем'
+        : status == 'CASH' ? 'Три попытки оплаты не прошли. Заказ переведён на наличные.'
         : status == 'REFUND_PENDING' ? 'ВТБ: возврат оплаты подтверждается банком'
         : status == 'REFUNDED' ? 'ВТБ: оплата возвращена'
         : status == 'FAILED' ? 'ВТБ отклонил оплату. Отмените заказ и повторите его.'

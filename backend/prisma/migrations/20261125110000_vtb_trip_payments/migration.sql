@@ -4,3 +4,5 @@ ALTER TABLE "TripCardPayment" ADD COLUMN "provider" TEXT NOT NULL DEFAULT 'KASSA
 ALTER TABLE "TripCardPayment" ALTER COLUMN "driverUserId" DROP NOT NULL, ALTER COLUMN "cardId" DROP NOT NULL;
 CREATE UNIQUE INDEX "TripCardPayment_bankOrderNumber_key" ON "TripCardPayment"("bankOrderNumber");
 CREATE UNIQUE INDEX "TripCardPayment_bankOrderId_key" ON "TripCardPayment"("bankOrderId");
+ALTER TABLE "CardPaymentAttempt" ADD COLUMN "merchantOrderNumber" TEXT;
+CREATE UNIQUE INDEX "CardPaymentAttempt_merchantOrderNumber_key" ON "CardPaymentAttempt"("merchantOrderNumber");

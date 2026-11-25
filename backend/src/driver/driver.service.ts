@@ -418,7 +418,9 @@ export class DriverService {
     async getActiveOrder(driverUserId: string) {
         const profile = await this.prisma.driverProfile.findUnique({where:{userId:driverUserId},select:{id:true}});
         if (!profile) return null;
-        return this.prisma.order.findFirst({where:{driverId:profile.id,status:{in:['DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS']}},include:{passenger:{select:clientUserSelect}},orderBy:{createdAt:'desc'}});
+        const order = await this.prisma.order.findFirst({where:{driverId:profile.id,status:{in:['DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','IN_PROGRESS']}},include:{passenger:{select:clientUserSelect}},orderBy:{createdAt:'desc'}});
+        if (order && this.cardPayments) return {...order,cardPayment:await this.cardPayments.state('CITY',order.id)};
+        return order;
     }
 
     async getNearbyOrders(driverUserId: string) {

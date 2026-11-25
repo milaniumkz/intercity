@@ -24,8 +24,8 @@ test('VTB trip payments: real database atomic net earnings, 20 repeats, cancella
  const url=new URL(database);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.pathname,'/vtb_sandbox_test');
  const db=new PrismaClient({datasources:{db:{url:database}}}),users=[],cityIds=[],orderIds=[],requestIds=[];
  const saved={};for(const [key,value]of Object.entries({VTB_SANDBOX_ENABLED:'true',VTB_SANDBOX_USER_NAME:'qa-api',VTB_SANDBOX_PASSWORD:'test-only',JWT_SECRET:'vtb-trip-test-only-secret-'.repeat(4)})){saved[key]=process.env[key];process.env[key]=value;}
- const events=[], realtime={publish:e=>events.push(e)},push={sendToUser:async()=>{},sendOrderStatusToPassenger:async()=>{},sendIntercityStatusToPassenger:async()=>false};
- const vtb=new VtbTripPaymentsService(db,realtime),payments=new CardPaymentsService(db,realtime,push,vtb),orders=new OrdersService(db,{}, {},realtime,push,payments),intercity=new IntercityService(db,{},payments,realtime,push);
+ const events=[],pushes=[], realtime={publish:e=>events.push(e)},push={sendToUser:async(user,payload)=>pushes.push({user,payload}),sendOrderStatusToPassenger:async()=>{},sendIntercityStatusToPassenger:async()=>false};
+ const vtb=new VtbTripPaymentsService(db,realtime,push),payments=new CardPaymentsService(db,realtime,push,vtb),orders=new OrdersService(db,{}, {},realtime,push,payments),intercity=new IntercityService(db,{},payments,realtime,push);
  const bank=new Map(),byNumber=new Map(),refunds=new Set(),registerCalls=[],bindings=[],charges=[];
  let payAutomatically=false;
  vtb.gateway.register=async input=>{
@@ -47,7 +47,7 @@ test('VTB trip payments: real database atomic net earnings, 20 repeats, cancella
  async function user(role){const id=randomUUID();const u=await db.user.create({data:{phone:'qa:'+id,name:'VTB QA',password:'test-only',role,cityId:city.id,refCode:id,refLink:'',wallet:{create:{}}}});users.push(u.id);return u;}
  const passenger=await user('PASSENGER'),driver=await user('DRIVER'),other=await user('PASSENGER');
  const profile=await db.driverProfile.create({data:{userId:driver.id,status:'APPROVED'}});
- const make=async(cardId=null)=>{const o=await db.order.create({data:{passengerId:passenger.id,driverId:profile.id,status:'DRIVER_ARRIVED',mode:'CITY',requestType:'CITY_FIXED',currency:'RUB',price:100,commissionAmount:10,fromLat:56.8,fromLng:60.6,toLat:56.81,toLng:60.61,fromAddress:'QA A',toAddress:'QA B',paymentMethod:'CARD',paymentCardId:cardId}});orderIds.push(o.id);await db.$transaction(tx=>vtb.prepare(tx,'CITY',o));return o;};
+ const make=async(cardId=null)=>{const o=await db.order.create({data:{passengerId:passenger.id,driverId:profile.id,status:'DRIVER_ARRIVED',mode:'CITY',requestType:'CITY_FIXED',currency:'RUB',price:100,commissionAmount:10,fromLat:56.8,fromLng:60.6,toLat:56.81,toLng:60.61,fromAddress:'QA A',toAddress:'QA B',paymentMethod:'CARD',paymentCardId:cardId}});orderIds.push(o.id);await db.$transaction(tx=>vtb.prepare(tx,'CITY',o,driver.id));return o;};
  const ride=await make(),id='CITY:'+ride.id;
  await assert.rejects(orders.updateOrderStatus(ride.id,'IN_PROGRESS',{userId:driver.id,role:'DRIVER'}),/не подтвердил оплату/);
  await assert.rejects(vtb.checkout(other.id,'CITY',ride.id),/не найдена/);
@@ -102,8 +102,21 @@ test('VTB trip payments: real database atomic net earnings, 20 repeats, cancella
  await intercity.updateDriverRequestStatus(driver.id,request.id,'IN_PROGRESS');await intercity.updateDriverRequestStatus(driver.id,request.id,'COMPLETED');
  assert.equal((await db.tripCardPayment.findUnique({where:{id:ip.id}})).status,'SETTLED');
  assert.equal((await db.wallet.findUnique({where:{userId:driver.id}})).moneyRub,190);
+
+ const failed=await make(card.id),failedId='CITY:'+failed.id;const chargeCount=charges.length,noticeCount=pushes.length;
+ vtb.gateway.payBinding=async(bankId,token)=>{charges.push({id:bankId,token});bank.get(bankId).orderStatus=6;};
+ for(let i=0;i<3;i++)await vtb.processPayment(failedId);
+ const cashPayment=await db.tripCardPayment.findUniqueOrThrow({where:{id:failedId}});
+ assert.equal(cashPayment.status,'CASH');assert.equal(cashPayment.attempts,3);assert.equal(charges.length-chargeCount,3);
+ assert.equal((await db.order.findUnique({where:{id:failed.id}})).paymentMethod,'CASH');
+ assert.equal(await db.cardPaymentAttempt.count({where:{paymentId:failedId,status:'FAILED'}}),3);
+ for(let i=0;i<20;i++)await vtb.processPayment(failedId);
+ assert.equal(charges.length-chargeCount,3);assert.equal(pushes.length-noticeCount,2);
+ assert.deepEqual(new Set(pushes.slice(noticeCount).map(x=>x.user)),new Set([passenger.id,driver.id]));
+ assert(events.some(e=>e.type==='driver.payment.changed'&&e.payload.paymentStatus==='CASH'));
+ assert.equal(await db.walletTransaction.count({where:{orderId:failed.id,type:'CARD_RIDE_EARNINGS'}}),0);
  assert.equal((await payments.state('CITY',ride.id)).provider,'VTB_SANDBOX');
- console.log(JSON.stringify({cityNetRub:90,intercityAgreedFareRub:100,repeatedVerifications:20,repeatedCompletions:20,bindingRefundKzt:1,automaticChargeOnce:true,cvcFallbackSameOrder:true,rollbackVerified:true,paymentOnlyAfterDriverAcceptance:true}));
+ console.log(JSON.stringify({cityNetRub:90,intercityAgreedFareRub:100,repeatedVerifications:20,repeatedCompletions:20,bindingRefundKzt:1,automaticChargeOnce:true,cvcFallbackSameOrder:true,rollbackVerified:true,paymentOnlyAfterDriverAcceptance:true,threeDeclinesSwitchToCash:true,bothParticipantsNotified:true}));
  }finally{
  await db.taxIncomeEntry.deleteMany({where:{sourceId:{in:[...orderIds,...requestIds]}}});
  await db.walletTransaction.deleteMany({where:{wallet:{userId:{in:users}}}});
@@ -111,6 +124,7 @@ test('VTB trip payments: real database atomic net earnings, 20 repeats, cancella
  await db.rideEvent.deleteMany({where:{orderId:{in:orderIds}}});
  await db.driverActivityEvent.deleteMany({where:{driver:{userId:{in:users}}}}).catch(()=>{});
  await db.order.deleteMany({where:{id:{in:orderIds}}});await db.intercityOffer.deleteMany({where:{requestId:{in:requestIds}}});await db.intercityRequest.deleteMany({where:{id:{in:requestIds}}});
+ await db.cardPaymentAttempt.deleteMany({where:{paymentId:{in:[...orderIds.map(id=>'CITY:'+id),...requestIds.map(id=>'INTERCITY:'+id)]}}});
  await db.cardBinding.deleteMany({where:{userId:{in:users}}});await db.savedPaymentCard.deleteMany({where:{userId:{in:users}}});await db.tripCardPayment.deleteMany({where:{passengerId:{in:users}}});
 await db.driverServiceStats.deleteMany({where:{driver:{userId:{in:users}}}}).catch(()=>{});
  await db.driverProfile.deleteMany({where:{userId:{in:users}}});await db.wallet.deleteMany({where:{userId:{in:users}}});await db.user.deleteMany({where:{id:{in:users}}});await db.city.deleteMany({where:{id:{in:cityIds}}});

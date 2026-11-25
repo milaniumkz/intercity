@@ -225,6 +225,7 @@ model TripCardPayment {
   @@index([status,nextCheckAt])
 }
 model CardPaymentAttempt {
+  merchantOrderNumber String? @unique
   id String @id
   paymentId String
   number Int
