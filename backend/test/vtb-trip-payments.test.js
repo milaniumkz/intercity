@@ -72,6 +72,17 @@ test('VTB trip payments: real database atomic net earnings, 20 repeats, cancella
  }
  const cancelled=await make();await vtb.processPayment('CITY:'+cancelled.id);p=await db.tripCardPayment.findUniqueOrThrow({where:{id:'CITY:'+cancelled.id}});bank.get(p.bankOrderId).orderStatus=2;await vtb.processPayment(p.id);await db.order.update({where:{id:cancelled.id},data:{status:'CANCELLED'}});
  await Promise.all(Array.from({length:20},()=>vtb.processPayment(p.id)));await vtb.processPayment(p.id);assert.equal((await db.tripCardPayment.findUnique({where:{id:p.id}})).status,'REFUNDED');assert(refunds.has(p.bankOrderNumber));assert.equal(await db.walletTransaction.count({where:{orderId:cancelled.id,type:'CARD_RIDE_EARNINGS'}}),0);
+ const unpaidCancel=await make();await vtb.processPayment('CITY:'+unpaidCancel.id);
+ const unpaidPayment=await db.tripCardPayment.findUniqueOrThrow({where:{id:'CITY:'+unpaidCancel.id}});
+ await orders.cancelOrder(unpaidCancel.id,passenger.id);
+ const originalDecline=vtb.gateway.decline;let deniedDeclines=0;
+ vtb.gateway.decline=async()=>{deniedDeclines++;const {VtbSandboxApiError}=require('../dist/src/payments/vtb-sandbox-gateway');throw new VtbSandboxApiError('8');};
+ for(let i=0;i<20;i++)await vtb.processPayment(unpaidPayment.id);
+ assert.equal(deniedDeclines,1);assert.equal((await db.tripCardPayment.findUnique({where:{id:unpaidPayment.id}})).status,'REFUND_PENDING');
+ bank.get(unpaidPayment.bankOrderId).orderStatus=2;await vtb.processPayment(unpaidPayment.id);
+ assert.equal((await db.tripCardPayment.findUnique({where:{id:unpaidPayment.id}})).status,'REFUNDED');
+ assert.equal(await db.walletTransaction.count({where:{orderId:unpaidCancel.id,type:'CARD_RIDE_EARNINGS'}}),0);
+ vtb.gateway.decline=originalDecline;
  const initialRefunds=refunds.size;const bound=await vtb.bind(passenger.id);const binding=await db.cardBinding.findUniqueOrThrow({where:{id:bound.bindingId}});assert.equal(bank.get(binding.providerId).amount,100);bank.get(binding.providerId).orderStatus=2;
  bindings.push({bindingId:'test-only-bank-token',clientId:passenger.id,maskedPan:'220138******0062'});
  await Promise.all(Array.from({length:20},()=>vtb.processBinding(binding.id)));assert.equal((await db.cardBinding.findUnique({where:{id:binding.id}})).status,'SYNCED');assert.equal(refunds.size,initialRefunds+1);
@@ -118,7 +129,7 @@ test('VTB trip payments: real database atomic net earnings, 20 repeats, cancella
  assert(events.some(e=>e.type==='driver.payment.changed'&&e.payload.paymentStatus==='CASH'));
  assert.equal(await db.walletTransaction.count({where:{orderId:failed.id,type:'CARD_RIDE_EARNINGS'}}),0);
  assert.equal((await payments.state('CITY',ride.id)).provider,'VTB_SANDBOX');
- console.log(JSON.stringify({cityNetRub:90,intercityAgreedFareRub:100,repeatedVerifications:20,repeatedCompletions:20,bindingRefundKzt:1,automaticChargeOnce:true,cvcFallbackSameOrder:true,rollbackVerified:true,paymentOnlyAfterDriverAcceptance:true,threeDeclinesSwitchToCash:true,bothParticipantsNotified:true}));
+ console.log(JSON.stringify({cityNetRub:90,intercityAgreedFareRub:100,repeatedVerifications:20,repeatedCompletions:20,bindingRefundKzt:1,automaticChargeOnce:true,cvcFallbackSameOrder:true,rollbackVerified:true,paymentOnlyAfterDriverAcceptance:true,threeDeclinesSwitchToCash:true,bothParticipantsNotified:true,lateCancelledChargeRefunded:true}));
  }finally{
  await db.taxIncomeEntry.deleteMany({where:{sourceId:{in:[...orderIds,...requestIds]}}});
  await db.walletTransaction.deleteMany({where:{wallet:{userId:{in:users}}}});

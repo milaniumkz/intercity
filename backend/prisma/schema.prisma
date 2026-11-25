@@ -203,6 +203,7 @@ model TripCardPayment {
   conversionRate Int?
   paymentUrl String?
   chargeAttemptedAt DateTime?
+  bankCancellationUnsupported Boolean @default(false)
   id String @id
   kind String
   tripId String

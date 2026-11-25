@@ -291,6 +291,7 @@ export class VtbTripPaymentsService implements OnModuleInit, OnModuleDestroy {
     async processPayment(id: string) {
         const claim = await this.prisma.tripCardPayment.updateMany({ where: { id, provider: PROVIDER, status: { in: ACTIVE }, OR: [{ leaseUntil: null }, { leaseUntil: { lte: new Date() } }] }, data: { leaseUntil: new Date(Date.now() + 120000) } });
         if (!claim.count) return;
+        let retryDelay = 5000;
         try {
             let p = await this.prisma.tripCardPayment.findUniqueOrThrow({ where: { id } });
             await this.prisma.cardPaymentAttempt.upsert({where:{id:p.id+':'+p.attempts},update:{providerId:p.bankOrderId||undefined},create:{id:p.id+':'+p.attempts,paymentId:p.id,number:p.attempts,merchantOrderNumber:p.bankOrderNumber,providerId:p.bankOrderId,status:'PROCESSING'}});
@@ -341,10 +342,21 @@ export class VtbTripPaymentsService implements OnModuleInit, OnModuleDestroy {
                     await this.gateway.refund(p.bankOrderId!, p.bankAmountMinor!, p.bankOrderNumber!);
                 } else if (state === 'PENDING') {
                     if (Number(bank.orderStatus) === 1) await this.gateway.reverse(p.bankOrderId!);
-                    else await this.gateway.decline(p.bankOrderId!, p.bankOrderNumber!);
+                    else if (!p.bankCancellationUnsupported) {
+                        try { await this.gateway.decline(p.bankOrderId!, p.bankOrderNumber!); }
+                        catch (error) {
+                            if (!(error instanceof VtbSandboxApiError) || error.code !== '8') throw error;
+                            p = await this.prisma.tripCardPayment.update({where:{id},data:{bankCancellationUnsupported:true,status:'REFUND_PENDING'}});
+                        }
+                    }
                 }
                 bank = await this.gateway.status(p.bankOrderId!);
                 state = vtbTripBankState(bank, p.bankOrderNumber!, p.bankAmountMinor!);
+                if (state === 'PENDING' && p.bankCancellationUnsupported) {
+                    retryDelay = 30000;
+                    await this.prisma.tripCardPayment.update({where:{id},data:{status:'REFUND_PENDING',lastError:'Заказ отменён. Если банк подтвердит списание по старой форме, сумма автоматически вернётся.'}});
+                    return;
+                }
                 if (!['REFUNDED','REVERSED','FAILED'].includes(state)) throw new Error('Cancellation awaits bank');
                 await this.prisma.cardPaymentAttempt.update({where:{id:p.id+':'+p.attempts},data:{status:['REFUNDED','REVERSED'].includes(state)?'REFUNDED':'CANCELLED'}});
                 await this.prisma.tripCardPayment.update({ where: { id }, data: { status: ['REFUNDED','REVERSED'].includes(state) ? 'REFUNDED' : 'CANCELLED', refundedAt: ['REFUNDED','REVERSED'].includes(state) ? new Date() : null, lastError: null } });
@@ -363,6 +375,6 @@ export class VtbTripPaymentsService implements OnModuleInit, OnModuleDestroy {
             this.realtime.publish({ type: 'order.payment.changed', entity: 'order', entityId: p.tripId, at: new Date().toISOString(), payload: { tripId: p.tripId, kind: p.kind, paymentMethod: 'CARD', paymentStatus: state } });
         } catch {
             await this.prisma.tripCardPayment.updateMany({ where: { id, earningsCredited: false, status: { in: ACTIVE } }, data: { lastError: 'Проверяем оплату ВТБ. Повторное списание не запускается.' } });
-        } finally { await this.prisma.tripCardPayment.update({ where: { id }, data: { leaseUntil: null, nextCheckAt: new Date(Date.now() + 5000) } }); }
+        } finally { await this.prisma.tripCardPayment.update({ where: { id }, data: { leaseUntil: null, nextCheckAt: new Date(Date.now() + retryDelay) } }); }
     }
 }

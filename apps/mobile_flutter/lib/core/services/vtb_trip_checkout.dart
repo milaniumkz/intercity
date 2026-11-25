@@ -98,6 +98,8 @@ class _VtbTripPaymentPanelState extends State<VtbTripPaymentPanel> {
     final bankAmount = bankMinor is num ? bankMinor / 100 : null;
     final message = settled ? 'Оплачено через ВТБ'
         : status == 'CASH' ? 'Три попытки оплаты не прошли. Заказ переведён на наличные.'
+        : status == 'REFUND_PENDING' && trip['status'] == 'CANCELLED' && payment['paidAt'] == null
+            ? 'Заказ отменён. Оплачивать его не нужно.'
         : status == 'REFUND_PENDING' ? 'ВТБ: возврат оплаты подтверждается банком'
         : status == 'REFUNDED' ? 'ВТБ: оплата возвращена'
         : status == 'FAILED' ? 'ВТБ отклонил оплату. Отмените заказ и повторите его.'

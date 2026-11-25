@@ -6,3 +6,4 @@ CREATE UNIQUE INDEX "TripCardPayment_bankOrderNumber_key" ON "TripCardPayment"("
 CREATE UNIQUE INDEX "TripCardPayment_bankOrderId_key" ON "TripCardPayment"("bankOrderId");
 ALTER TABLE "CardPaymentAttempt" ADD COLUMN "merchantOrderNumber" TEXT;
 CREATE UNIQUE INDEX "CardPaymentAttempt_merchantOrderNumber_key" ON "CardPaymentAttempt"("merchantOrderNumber");
+ALTER TABLE "TripCardPayment" ADD COLUMN "bankCancellationUnsupported" BOOLEAN NOT NULL DEFAULT false;
