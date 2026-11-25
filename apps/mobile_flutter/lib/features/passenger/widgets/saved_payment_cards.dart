@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/utils/error_message_ru.dart';
+import '../../../core/utils/payment_modal.dart';
 
 class SavedPaymentCards extends StatefulWidget {
   const SavedPaymentCards({super.key, this.apiClient, this.onReadyChanged});
@@ -15,6 +16,8 @@ class _SavedPaymentCardsState extends State<SavedPaymentCards> {
   late final _api = widget.apiClient ?? ApiClient();
   List<Map<String, dynamic>> _cards = [];
   bool _configured = false;
+  bool _vtb = false;
+  bool _canBind = true;
   bool _busy = true;
   String _message = '';
   @override
@@ -42,6 +45,8 @@ class _SavedPaymentCardsState extends State<SavedPaymentCards> {
       setState(() {
         _cards = cards;
         _configured = data['configured'] == true;
+        _vtb = data['provider'] == 'VTB_SANDBOX';
+        _canBind = data['cardBindingAvailable'] != false;
         _message = data['message']?.toString() ?? '';
       });
       final selected = cards.where((c) => c['isDefault'] == true);
@@ -63,13 +68,28 @@ class _SavedPaymentCardsState extends State<SavedPaymentCards> {
     setState(() => _busy = true);
     try {
       final response = await _api.post('/payments/cards/bind');
-      final uri = Uri.parse('${response.data['url']}');
-      if (uri.scheme != 'https' ||
-          !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-        throw Exception('Не удалось открыть Kassa24');
+      final uri = Uri.tryParse(response.data['url']?.toString() ?? '');
+      if (uri == null || uri.scheme != 'https') {
+        throw Exception('Банк ещё готовит форму. Обновите карты через несколько секунд.');
       }
-      if (mounted) {
-        setState(() => _message =
+      if (_vtb) {
+        if (uri.host != 'vtbkz.rbsuat.com' || !uri.path.startsWith('/payment/')) {
+          throw Exception('Некорректная ссылка ВТБ');
+        }
+        if (!mounted) return;
+        await showPaymentModal(context, uri.toString(),
+          title: 'Привязка карты ВТБ · 1 ₸ с возвратом · тест',
+          isCompleted: () async {
+            final result = await _api.get('/payments/cards');
+            final binding = result.data['binding'];
+            return binding is Map && ['SYNCED', 'NOT_SAVED', 'CANCELLED'].contains(binding['status']);
+          });
+        if (mounted) await _load();
+      } else {
+        if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+          throw Exception('Не удалось открыть Kassa24');
+        }
+        if (mounted) setState(() => _message =
             'Завершите привязку в Kassa24, затем нажмите «Обновить карты».');
       }
     } catch (e) {
@@ -132,8 +152,9 @@ class _SavedPaymentCardsState extends State<SavedPaymentCards> {
                   onPressed: _busy ? null : () => _load(sync: true),
                   icon: const Icon(Icons.refresh))
             ]),
-            const Text(
-                'Для поездок в тенге. Стоимость списывается при начале поездки.'),
+            Text(_vtb
+                ? 'Для поездок в рублях. Банк списывает тенге по курсу 1 ₽ = 7 ₸. Сохранённая карта выбирается для следующего заказа.'
+                : 'Для поездок в тенге. Стоимость списывается при начале поездки.'),
             if (_busy) const LinearProgressIndicator(),
             for (final card in _cards)
               ListTile(
@@ -150,14 +171,15 @@ class _SavedPaymentCardsState extends State<SavedPaymentCards> {
                       tooltip: 'Отвязать карту',
                       onPressed: _busy ? null : () => _remove(card),
                       icon: const Icon(Icons.delete_outline))),
-            if (_configured)
+            if (_configured && _canBind)
               OutlinedButton.icon(
                   onPressed: _busy ? null : _bind,
                   icon: const Icon(Icons.add),
-                  label: const Text('Добавить карту')),
-            if (_configured)
-              const Text(
-                  'Добавляя карту, вы разрешаете списание согласованной стоимости заказанных поездок. Данные карты вводятся в защищённой форме Kassa24.'),
+                  label: Text(_vtb ? 'Добавить карту · 1 ₸ с возвратом' : 'Добавить карту')),
+            if (_configured && _canBind)
+              Text(_vtb
+                  ? 'Данные карты и CVC вводятся только в форме ВТБ. Проверочный 1 ₸ возвращается автоматически. Для сохранения отметьте «Сохранить карту» в форме банка. При следующем заказе ВТБ может запросить CVC или 3-D Secure.'
+                  : 'Добавляя карту, вы разрешаете списание согласованной стоимости заказанных поездок. Данные карты вводятся в защищённой форме Kassa24.'),
             if (_message.isNotEmpty)
               Padding(
                   padding: const EdgeInsets.only(top: 8),

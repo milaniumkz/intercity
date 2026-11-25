@@ -1,3 +1,4 @@
+import '../../../core/services/vtb_trip_checkout.dart';
 import '../../../core/widgets/passenger_map_tiles.dart';
 import '../../../core/utils/route_query.dart';
 import '../widgets/passenger_offers_panel.dart';
@@ -502,6 +503,9 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     try {
       await _api.post('/orders/offers/$id/accept');
       await _loadOrder();
+      if (mounted && _order?['currency'] == 'RUB' && _order?['paymentMethod'] == 'CARD') {
+        await VtbTripCheckout.open(context, _api, kind: 'CITY', tripId: widget.orderId);
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -755,7 +759,10 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      bottomNavigationBar: const PassengerBottomNav(currentIndex: 0),
+      bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+        VtbTripPaymentPanel(api: _api, kind: 'CITY', tripId: widget.orderId, trip: _order),
+        const PassengerBottomNav(currentIndex: 0),
+      ]),
       backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
       resizeToAvoidBottomInset: !showAuctionOffers,
       body: SafeArea(
@@ -1023,7 +1030,10 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     final canCancel = order != null &&
         !_isFinal(_effectiveStatus(order, (order['status'] ?? '').toString()));
     return Scaffold(
-      bottomNavigationBar: const PassengerBottomNav(currentIndex: 0),
+      bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+        VtbTripPaymentPanel(api: _api, kind: 'CITY', tripId: widget.orderId, trip: _order),
+        const PassengerBottomNav(currentIndex: 0),
+      ]),
       backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
       body: SafeArea(
         child: Stack(
@@ -1290,7 +1300,10 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
         : '—';
     final eta = order == null ? '3 мин' : _arrivalText(order);
     return Scaffold(
-      bottomNavigationBar: const PassengerBottomNav(currentIndex: 0),
+      bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+        VtbTripPaymentPanel(api: _api, kind: 'CITY', tripId: widget.orderId, trip: _order),
+        const PassengerBottomNav(currentIndex: 0),
+      ]),
       backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
       body: SafeArea(
         child: Column(

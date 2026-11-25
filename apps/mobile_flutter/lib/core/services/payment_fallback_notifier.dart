@@ -61,6 +61,9 @@ String cardPaymentStatusLabel(Map<String, dynamic> trip) {
   if (status == 'PAID' || status == 'SETTLED') {
     return 'Картой · оплачено';
   }
+  if (status == 'ACTION_REQUIRED') return 'Картой · ожидаем оплату ВТБ';
+  if (status == 'FAILED') return 'Оплата картой отклонена';
+  if (status == 'CANCELLED') return 'Оплата картой отменена';
   if (status == 'CASH') {
     return 'Наличными';
   }

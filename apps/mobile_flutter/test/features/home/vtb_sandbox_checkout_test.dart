@@ -20,6 +20,8 @@ class _VtbApi extends ApiClient {
   bool latestPending = false;
   final payments = <Map<String, dynamic>>[];
   final realOrders = <String>[];
+  final tripCheckouts = <String>[];
+  String? orderPaymentMethod;
   Map<String, dynamic> result({String status = 'PENDING'}) => {
     'id': '11111111-2222-3333-4444-555555555555',
     'amount': 100, 'currency': 'RUB', 'bankAmount': 700,
@@ -66,6 +68,12 @@ class _VtbApi extends ApiClient {
       return Response(requestOptions: RequestOptions(path: path),
           data: {'price': 100, 'currency': 'RUB', 'distance': 2.1, 'duration': 4});
     }
+    if (path.startsWith('/payments/vtb/trips/')) {
+      tripCheckouts.add(path);
+      return Response(requestOptions: RequestOptions(path: path),
+        data: {...result(status: 'ACTION_REQUIRED'), 'provider': 'VTB_SANDBOX'});
+    }
+    if (path == '/orders') orderPaymentMethod = (data as Map)['paymentMethod']?.toString();
     realOrders.add(path);
     return Response(requestOptions: RequestOptions(path: path), data: {'id': 'must-not-be-created'});
   }
@@ -146,7 +154,7 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('Russian trip card opens VTB test checkout and cannot publish a real paid order', (tester) async {
+  testWidgets('Russian card selection keeps CARD and publishes a linked order before opening VTB', (tester) async {
     await prepare(tester);
     final api = _VtbApi();
     var opened = 0;
@@ -159,6 +167,7 @@ void main() {
       'modeIndex': 0, 'paymentMethod': 'CASH',
     }));
     final router = GoRouter(initialLocation: '/order/fixed', routes: [
+      GoRoute(path: '/order/searching/:id', builder: (_, state) => const Scaffold(body: Text('linked-order'))),
       GoRoute(path: '/order/:stage', builder: (_, state) => OrderScreen(
         routeStage: state.pathParameters['stage'], apiClient: api,
         enableLiveMap: false, autoLocateOnStart: false,
@@ -173,22 +182,19 @@ void main() {
     await tester.ensureVisible(find.text('Карта'));
     await tester.tap(find.text('Карта'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Отмена'));
-    await tester.pumpAndSettle();
     final composer = tester.widget<CityOrderComposer>(find.byType(CityOrderComposer));
-    expect(composer.paymentMethod, 'CASH');
+    expect(composer.paymentMethod, 'CARD');
     expect(composer.canOrder, isTrue);
     expect(opened, 0);
-    await tester.tap(find.text('Карта'));
+    expect(api.payments, isEmpty);
+    composer.onOrder();
     await tester.pumpAndSettle();
-    expect(find.textContaining('700.00 ₸'), findsOneWidget);
-    await tester.tap(find.text('Перейти в ВТБ'));
-    await tester.pumpAndSettle();
+    expect(api.orderPaymentMethod, 'CARD');
+    expect(api.realOrders, contains('/orders'));
+    expect(api.tripCheckouts, contains('/payments/vtb/trips/CITY/must-not-be-created/checkout'));
     expect(opened, 1);
-    expect(api.payments.last['purpose'], 'TRIP_TEST');
-    expect(api.payments.last['amount'], 100);
-    expect(api.realOrders, isEmpty);
-    expect(find.textContaining('реальная поездка не оплачена'), findsWidgets);
+    expect(find.text('linked-order'), findsOneWidget);
+
   });
 
   testWidgets('cancelling the currency quote does not open the bank', (tester) async {

@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:ui_web' as ui_web;
 
 import 'package:flutter/material.dart';
@@ -5,7 +7,7 @@ import 'package:web/web.dart' as web;
 
 import '../theme/theme_controller.dart';
 
-Future<bool> showPaymentModal(BuildContext context, String url) async {
+Future<bool> showPaymentModal(BuildContext context, String url, {String title = 'Пополнение баланса', Future<bool> Function()? isCompleted}) async {
   if (Uri.tryParse(url) == null || !context.mounted) return false;
   final viewType =
       'intercity-inline-payment-${DateTime.now().microsecondsSinceEpoch}';
@@ -22,10 +24,30 @@ Future<bool> showPaymentModal(BuildContext context, String url) async {
 
   ui_web.platformViewRegistry.registerViewFactory(viewType, (_) => iframe);
 
+  BuildContext? activeDialog;
+  Timer? poll;
+  var checking = false;
+  var closing = false;
+  if (isCompleted != null) {
+    poll = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (checking || closing) return;
+      checking = true;
+      try {
+        if (await isCompleted() && activeDialog != null && activeDialog!.mounted && !closing) {
+          closing = true;
+          Navigator.pop(activeDialog!);
+        }
+      } catch (_) { /* The same bank order remains available for another check. */ }
+      finally { checking = false; }
+    });
+  }
+  try {
   await showDialog<void>(
     context: context,
     barrierDismissible: false,
-    builder: (dialogContext) => Dialog.fullscreen(
+    builder: (dialogContext) {
+      activeDialog = dialogContext;
+      return Dialog.fullscreen(
       backgroundColor: Colors.white,
       child: SafeArea(
         child: Column(
@@ -49,9 +71,9 @@ Future<bool> showPaymentModal(BuildContext context, String url) async {
                     color: AppTheme.primaryColor,
                     tooltip: 'Назад',
                   ),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Пополнение баланса',
+                      title,
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontWeight: FontWeight.w900,
@@ -59,7 +81,10 @@ Future<bool> showPaymentModal(BuildContext context, String url) async {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 48),
+                  IconButton(
+                    tooltip: 'Открыть банк отдельно',
+                    onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+                    icon: const Icon(Icons.open_in_new)),
                 ],
               ),
             ),
@@ -67,7 +92,14 @@ Future<bool> showPaymentModal(BuildContext context, String url) async {
           ],
         ),
       ),
-    ),
+    );
+    },
   );
+  } finally {
+    closing = true;
+    poll?.cancel();
+    iframe.removeAttribute('src');
+    iframe.remove();
+  }
   return true;
 }

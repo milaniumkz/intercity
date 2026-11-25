@@ -1,3 +1,4 @@
+import '../../../core/services/vtb_trip_checkout.dart';
 import '../../../core/widgets/passenger_map_tiles.dart';
 import '../widgets/driver_rating_dialog.dart';
 import '../../../core/utils/route_query.dart';
@@ -419,6 +420,9 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
       if (!mounted) return;
       await _loadRequest();
       if (!mounted) return;
+      if (mounted && _request?['currency'] == 'RUB' && _request?['paymentMethod'] == 'CARD') {
+        await VtbTripCheckout.open(context, _api, kind: 'INTERCITY', tripId: widget.requestId);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _actionError = errorMessageRu(e));
@@ -2036,7 +2040,10 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
 
     return Scaffold(
       backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
-      bottomNavigationBar: const PassengerBottomNav(currentIndex: 1),
+      bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+        VtbTripPaymentPanel(api: _api, kind: 'INTERCITY', tripId: widget.requestId, trip: _request),
+        const PassengerBottomNav(currentIndex: 1),
+      ]),
       body: SafeArea(
         child: Stack(
           children: [
@@ -2385,7 +2392,10 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
     };
     return Scaffold(
       backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
-      bottomNavigationBar: const PassengerBottomNav(currentIndex: 1),
+      bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+        VtbTripPaymentPanel(api: _api, kind: 'INTERCITY', tripId: widget.requestId, trip: _request),
+        const PassengerBottomNav(currentIndex: 1),
+      ]),
       body: SafeArea(
         child: Stack(
           children: [

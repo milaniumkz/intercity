@@ -186,7 +186,7 @@ export class VtbTripPaymentsService implements OnModuleInit, OnModuleDestroy {
             note: 'Оплата поездки ВТБ · тестовый контур',
         } });
         await tx.tripCardPayment.update({ where: { id }, data: { status: 'SETTLED', earningsCredited: true, driverUserId } });
-        await recordTaxIncome(tx, { key: 'driver-income:' + kind + ':' + trip.id, userId: driverUserId, sourceKind: kind,
+        await recordTaxIncome(tx, { key: 'driver-income:' + kind + ':' + trip.id, userId: driverUserId, sourceKind: kind === 'CITY' ? 'CITY' : 'INTERCITY',
             sourceId: trip.id, gross: p.amount, currency: 'RUB', occurredAt: trip.completedAt || new Date() });
     }
     async checkout(userId: string, kind: string, tripId: string) {

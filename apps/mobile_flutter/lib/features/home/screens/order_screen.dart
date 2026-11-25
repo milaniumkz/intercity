@@ -1,3 +1,4 @@
+import '../../../core/services/vtb_trip_checkout.dart';
 import '../../../core/services/vtb_sandbox_checkout.dart';
 import '../../../core/utils/location_permission_events.dart';
 import '../../../core/widgets/passenger_map_tiles.dart';
@@ -456,7 +457,6 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _cityMapReady = false;
   bool _cityMapFieldIsFrom = true;
   bool _citySubmitting = false;
-  bool _vtbTripBusy = false;
   bool _vtbTripAvailable = false;
   bool _vtbReturnHandled = false;
   bool _cityCommentExpanded = false;
@@ -758,30 +758,13 @@ class _OrderScreenState extends State<OrderScreen> {
   bool get _vtbTripSelected =>
       _rideCurrency == 'RUB' && _paymentMethod == paymentMethodCard;
 
-  Future<void> _startVtbTripTest() async {
-    if (_vtbTripBusy) return;
-    final amount = _cityModeIndex == 1 ? _passengerAuctionPrice : _boardPrice;
-    if (amount == null || amount < 1) {
-      setState(() => _statusText = 'Сначала выберите адреса и дождитесь расчёта цены.');
-      return;
-    }
-    setState(() => _vtbTripBusy = true);
-    try {
-      final result = await VtbSandboxCheckout.pay(context, _api,
-          amount: amount.toDouble(), purpose: 'TRIP_TEST', opener: widget.vtbPaymentOpener);
-      if (!mounted) return;
-      setState(() {
-        _vtbTripAvailable = true;
-        if (result['bankOpened'] == true) {
-          _paymentMethod = paymentMethodCard;
-        }
-        _statusText = VtbSandboxCheckout.message(result);
-      });
-    } catch (e) {
-      if (mounted) setState(() => _statusText = errorMessageRu(e));
-    } finally {
-      if (mounted) setState(() => _vtbTripBusy = false);
-    }
+  Future<void> _selectVtbTripCard() async {
+    if (!_vtbTripAvailable) return;
+    setState(() {
+      _paymentMethod = paymentMethodCard;
+      _statusText = 'ВТБ: оплата согласованной стоимости заказа. В банке сумма в тенге по курсу 1 ₽ = 7 ₸.';
+    });
+    await _saveBoardDraft();
   }
 
   void _resumeVtbPayment() {
@@ -1395,7 +1378,7 @@ class _OrderScreenState extends State<OrderScreen> {
 
   void _selectPaymentAndContinue(String value) {
     if (value == paymentMethodCard && _rideCurrency == 'RUB') {
-      unawaited(_startVtbTripTest());
+      unawaited(_selectVtbTripCard());
       return;
     }
     if (!_paymentMethodEnabled(value)) return;
@@ -3265,7 +3248,7 @@ class _OrderScreenState extends State<OrderScreen> {
             ? _passengerAuctionPrice != null
             : _boardPrice != null) &&
         !resolving &&
-        !_loading && !_vtbTripBusy && !_vtbTripSelected;
+        !_loading;
     return Scaffold(
         body: SafeArea(
             child: CityOrderComposer(
@@ -3311,7 +3294,7 @@ class _OrderScreenState extends State<OrderScreen> {
       paymentMethod: _paymentMethod,
       onPaymentSelected: (value) {
         if (value == paymentMethodCard && _rideCurrency == 'RUB') {
-          unawaited(_startVtbTripTest());
+          unawaited(_selectVtbTripCard());
           return;
         }
         if (value == paymentMethodCard && !_savedCardReady) {
@@ -10780,7 +10763,7 @@ class _OrderScreenState extends State<OrderScreen> {
                       onTap: () {
                         if (method == paymentMethodCard && _rideCurrency == 'RUB') {
                           Navigator.of(sheetContext).pop();
-                          unawaited(_startVtbTripTest());
+                          unawaited(_selectVtbTripCard());
                           return;
                         }
                         if (!enabled) {
@@ -13694,7 +13677,7 @@ class _OrderScreenState extends State<OrderScreen> {
       'toLng': to.longitude,
       'mode': mode,
       'requestType': _requestType(),
-      'paymentMethod': _vtbTripSelected ? paymentMethodCash : _paymentMethod,
+      'paymentMethod': _paymentMethod,
       'vehicleClass': _supportsVehicleClass ? _vehicleClass : null,
       if (_mode() == 'CARGO')
         'itemWeightKg': double.tryParse(
@@ -13805,10 +13788,6 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   bool _validateBeforeCreate() {
-    if (_vtbTripSelected) {
-      _statusText = 'Оплата ВТБ пока тестовая: реальная поездка не оплачена. Выберите другой доступный способ для настоящего заказа.';
-      return false;
-    }
     if (_mode() == 'CARGO' && !_cargoDepartureReady) {
       _statusText = 'Выберите будущую дату и время подачи грузового транспорта';
       return false;
@@ -14081,6 +14060,14 @@ class _OrderScreenState extends State<OrderScreen> {
         );
         final orderId = (response.data['id'] ?? '').toString();
         if (!mounted) return;
+        if (_vtbTripSelected && _requestType() != requestTypeCityAuction) {
+          try {
+            await VtbTripCheckout.open(context, _api, kind: 'CITY', tripId: orderId, opener: widget.vtbPaymentOpener);
+          } catch (e) {
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMessageRu(e))));
+          }
+          if (!mounted) return;
+        }
         _clearRoute();
         context.go('/order/searching/$orderId');
       }
