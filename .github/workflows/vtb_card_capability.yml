@@ -68,7 +68,7 @@ jobs:
           const auth={userName:process.env.VTB_SANDBOX_USER_NAME,password:process.env.VTB_SANDBOX_PASSWORD||Buffer.from(process.env.VTB_SANDBOX_PASSWORD_B64||'','base64').toString()};
           async function call(method,values){const body=new URLSearchParams({...auth,...values});if(values.features){body.delete('features');for(const v of values.features)body.append('features',v);}
           const r=await fetch('https://vtbkz.rbsuat.com/payment/rest/'+method,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body,signal:AbortSignal.timeout(20000)});assert(r.ok);return r.json();}
-          (async()=>{if(!fs.existsSync(file))return;const m=JSON.parse(fs.readFileSync(file,'utf8'));const r=await call('decline.do',{orderId:m.bankId,language:'ru'});const s=await call('getOrderStatusExtended.do',{orderId:m.bankId});
-          console.log(JSON.stringify({unpaidDeclineCode:r.errorCode??0,unpaidBankStatus:s.orderStatus,paidAmount:s.paymentAmountInfo?.depositedAmount??0}));assert.equal(String(r.errorCode??0),'0');assert.equal(Number(s.orderStatus),6);fs.unlinkSync(file);
+          (async()=>{for(const target of [file,'/app/technical-data/vtb-capability-45601280290.json']){if(!fs.existsSync(target))continue;const m=JSON.parse(fs.readFileSync(target,'utf8'));let s=await call('getOrderStatusExtended.do',{orderId:m.bankId});let code=0;if(Number(s.orderStatus)!==6){const r=await call('decline.do',{orderId:m.bankId,orderNumber:m.orderNumber,language:'ru'});code=r.errorCode??0;s=await call('getOrderStatusExtended.do',{orderId:m.bankId});}
+          console.log(JSON.stringify({unpaidDeclineCode:code,unpaidBankStatus:s.orderStatus,paidAmount:s.paymentAmountInfo?.depositedAmount??0}));assert.equal(Number(s.orderStatus),6);fs.unlinkSync(target);}
           })().catch(e=>{console.error(e.message);process.exitCode=1;});
           JS
