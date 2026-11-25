@@ -23,7 +23,7 @@ test('VTB trip payments: real database atomic net earnings, 20 repeats, cancella
  const url=new URL(database);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.pathname,'/vtb_sandbox_test');
  const db=new PrismaClient({datasources:{db:{url:database}}}),users=[],cityIds=[],orderIds=[],requestIds=[];
  const saved={};for(const [key,value]of Object.entries({VTB_SANDBOX_ENABLED:'true',VTB_SANDBOX_USER_NAME:'qa-api',VTB_SANDBOX_PASSWORD:'test-only',JWT_SECRET:'vtb-trip-test-only-secret-'.repeat(4)})){saved[key]=process.env[key];process.env[key]=value;}
- const events=[], realtime={publish:e=>events.push(e)},push={sendToUser:async()=>{},sendOrderStatusToPassenger:async()=>{}};
+ const events=[], realtime={publish:e=>events.push(e)},push={sendToUser:async()=>{},sendOrderStatusToPassenger:async()=>{},sendIntercityStatusToPassenger:async()=>false};
  const vtb=new VtbTripPaymentsService(db,realtime),payments=new CardPaymentsService(db,realtime,push,vtb),orders=new OrdersService(db,{}, {},realtime,push,payments),intercity=new IntercityService(db,{},payments,realtime,push);
  const bank=new Map(),byNumber=new Map(),refunds=new Set(),registerCalls=[],bindings=[],charges=[];
  let payAutomatically=false;
