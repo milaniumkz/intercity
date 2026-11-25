@@ -13,7 +13,7 @@ export class VtbTripPaymentsController {
         return { url: await this.service.returnTarget(kind || '', tripId || ''), statusCode: 302 };
     }
     @Post('callback') @HttpCode(200)
-    async callback(@Body() _body: any) { await this.service.tick(); return { ok: true }; }
+    callback(@Body() _body: any) { void this.service.tick().catch(() => undefined); return { ok: true }; }
     @Get('callback')
-    async callbackGet() { await this.service.tick(); return { ok: true }; }
+    callbackGet() { void this.service.tick().catch(() => undefined); return { ok: true }; }
 }

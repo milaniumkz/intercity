@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/api/api_client.dart';
@@ -12,18 +13,32 @@ class SavedPaymentCards extends StatefulWidget {
   State<SavedPaymentCards> createState() => _SavedPaymentCardsState();
 }
 
-class _SavedPaymentCardsState extends State<SavedPaymentCards> {
+class _SavedPaymentCardsState extends State<SavedPaymentCards> with WidgetsBindingObserver {
   late final _api = widget.apiClient ?? ApiClient();
   List<Map<String, dynamic>> _cards = [];
   bool _configured = false;
   bool _vtb = false;
   bool _canBind = true;
   bool _busy = true;
+  Timer? _bindingPoll;
   String _message = '';
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _bindingPoll?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !_busy) { _load(); }
   }
 
   Future<void> _load({bool sync = false}) async {
@@ -49,6 +64,16 @@ class _SavedPaymentCardsState extends State<SavedPaymentCards> {
         _canBind = data['cardBindingAvailable'] != false;
         _message = data['message']?.toString() ?? '';
       });
+      final binding = data['binding'];
+      final pending = binding is Map && ['CREATED', 'PENDING', 'CHECKING', 'REFUND_PENDING'].contains(binding['status']);
+      if (pending) {
+        _bindingPoll ??= Timer.periodic(const Duration(seconds: 3), (_) {
+          if (mounted && !_busy) { _load(); }
+        });
+      } else {
+        _bindingPoll?.cancel();
+        _bindingPoll = null;
+      }
       final selected = cards.where((c) => c['isDefault'] == true);
       widget.onReadyChanged?.call(_configured && selected.isNotEmpty,
           selected.isEmpty ? null : '${selected.first['last4']}');
