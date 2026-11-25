@@ -313,6 +313,7 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
         }
     }
     async state(kind:string,tripId:string) {
-        return this.prisma.tripCardPayment.findUnique({where:{id:`${kind}:${tripId}`},select:{status:true,attempts:true,amount:true,currency:true,lastError:true,paidAt:true,provider:true,paymentUrl:true,bankAmountMinor:true,conversionRate:true}});
+        return this.prisma.tripCardPayment.findUnique({where:{id:`${kind}:${tripId}`},select:{status:true,attempts:true,amount:true,currency:true,lastError:true,paidAt:true,provider:true,paymentUrl:true,bankAmountMinor:true,conversionRate:true}})
+            .then(payment => payment && payment.provider === 'VTB_SANDBOX' && payment.status !== 'ACTION_REQUIRED' ? {...payment,paymentUrl:null} : payment);
     }
 }

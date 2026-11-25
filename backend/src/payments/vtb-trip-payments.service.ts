@@ -79,7 +79,7 @@ export class VtbTripPaymentsService implements OnModuleInit, OnModuleDestroy {
             bindingAmount: 1, bindingCurrency: 'KZT', cardBindingAvailable: canBind,
             message: !canBind ? 'ВТБ · тестовый контур. Банк ещё не включил сохранение карт для InterCity. Пока вводите карту на странице ВТБ при оплате поездки.' : 'ВТБ · тестовый контур. Привязка: 1 ₸ с автоматическим возвратом. Выберите «Сохранить карту» в форме банка. При поездке банк может запросить CVC или 3-D Secure.',
             cards: cards.map(c => ({ id: c.id, last4: c.last4, isDefault: c.isDefault })),
-            binding: binding ? { id: binding.id, status: binding.status, url: binding.paymentUrl, message: binding.lastError } : null };
+            binding: binding ? { id: binding.id, status: binding.status, url: binding.status === 'PENDING' ? binding.paymentUrl : null, message: binding.lastError } : null };
     }
     async syncCards(userId: string) {
         let data: any;
@@ -146,7 +146,7 @@ export class VtbTripPaymentsService implements OnModuleInit, OnModuleDestroy {
         });
         await this.processBinding(binding.id);
         const current = await this.prisma.cardBinding.findUniqueOrThrow({ where: { id: binding.id } });
-        return { bindingId: current.id, url: current.paymentUrl, provider: PROVIDER, amount: 1, currency: 'KZT', status: current.status,
+        return { bindingId: current.id, url: current.status === 'PENDING' ? current.paymentUrl : null, provider: PROVIDER, amount: 1, currency: 'KZT', status: current.status,
             message: 'Отметьте «Сохранить карту», оплатите 1 ₸. После подтверждения ВТБ сумма автоматически возвращается.' };
     }
     async cardForOrder(userId: string) {
@@ -201,7 +201,7 @@ export class VtbTripPaymentsService implements OnModuleInit, OnModuleDestroy {
     }
     private publicPayment(p: any) {
         return { provider: PROVIDER, status: p.status, amount: p.amount, currency: 'RUB', bankAmount: p.bankAmountMinor / 100,
-            bankCurrency: 'KZT', conversionRate: p.conversionRate, paymentMode: 'TEST', paymentUrl: p.paymentUrl,
+            bankCurrency: 'KZT', conversionRate: p.conversionRate, paymentMode: 'TEST', paymentUrl: p.status === 'ACTION_REQUIRED' ? p.paymentUrl : null,
             paidAt: p.paidAt, lastError: p.lastError, earningsCredited: p.earningsCredited };
     }
     async returnTarget(kind: string, tripId: string) {
@@ -227,7 +227,7 @@ export class VtbTripPaymentsService implements OnModuleInit, OnModuleDestroy {
             if (!b.providerId) {
                 const r = await this.gateway.register({ orderNumber: id, amountMinor: 100, clientId: b.userId, acceptDuplicate: true,
                     returnUrl: this.api('return?kind=BIND&tripId=' + id), callbackUrl: this.api('callback') });
-                b = await this.prisma.cardBinding.update({ where: { id }, data: { providerId: r.orderId, paymentUrl: r.paymentUrl, status: 'PENDING' } });
+                b = await this.prisma.cardBinding.update({ where: { id }, data: { providerId: r.orderId, paymentUrl: r.paymentUrl, status: 'CHECKING' } });
             }
             const status = await this.gateway.status(b.providerId!);
             const state = vtbTripBankState(status, id, 100);
@@ -245,6 +245,7 @@ export class VtbTripPaymentsService implements OnModuleInit, OnModuleDestroy {
                 const hasCard = !!await this.prisma.savedPaymentCard.findFirst({ where: { userId: b.userId, provider: PROVIDER, active: true } });
                 await this.prisma.cardBinding.update({ where: { id }, data: { status: hasCard ? 'SYNCED' : 'NOT_SAVED', lastError: hasCard ? null : '1 ₸ возвращён; сохранение карты не подтверждено банком' } });
             } else if (['FAILED','REVERSED'].includes(state)) await this.prisma.cardBinding.update({ where: { id }, data: { status: 'CANCELLED', lastError: 'Привязка карты отменена' } });
+            else if (state === 'PENDING') await this.prisma.cardBinding.update({where:{id},data:{status:'PENDING',lastError:null}});
             else if (state === 'UNVERIFIED') throw new Error('Unverified bank response');
         } catch {
             await this.prisma.cardBinding.updateMany({ where: { id, status: { notIn: ['SYNCED','NOT_SAVED','CANCELLED'] } }, data: { lastError: 'Проверяем привязку и возврат 1 ₸. Повторно платить не нужно.' } });
@@ -277,7 +278,7 @@ export class VtbTripPaymentsService implements OnModuleInit, OnModuleDestroy {
                 const r = await this.gateway.register({ orderNumber: p.bankOrderNumber!, amountMinor: p.bankAmountMinor!, clientId: p.passengerId,
                     bindingId: card ? this.decrypt(card.tokenEncrypted) : undefined, acceptDuplicate: true,
                     returnUrl: this.api('return?kind=' + p.kind + '&tripId=' + p.tripId), callbackUrl: this.api('callback') });
-                p = await this.prisma.tripCardPayment.update({ where: { id }, data: { bankOrderId: r.orderId, paymentUrl: r.paymentUrl, status: 'ACTION_REQUIRED' } });
+                p = await this.prisma.tripCardPayment.update({ where: { id }, data: { bankOrderId: r.orderId, paymentUrl: r.paymentUrl, status: 'CHECKING' } });
                 }
             }
             if (p.status === 'PAID' && trip.status !== 'CANCELLED') return;
