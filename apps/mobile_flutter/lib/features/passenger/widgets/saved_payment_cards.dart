@@ -76,7 +76,7 @@ class _SavedPaymentCardsState extends State<SavedPaymentCards> {
         if (uri.host != 'vtbkz.rbsuat.com' || !uri.path.startsWith('/payment/')) {
           throw Exception('Некорректная ссылка ВТБ');
         }
-        if (!mounted) return;
+        if (!mounted) { return; }
         await showPaymentModal(context, uri.toString(),
           title: 'Привязка карты ВТБ · 1 ₸ с возвратом · тест',
           isCompleted: () async {
@@ -84,13 +84,15 @@ class _SavedPaymentCardsState extends State<SavedPaymentCards> {
             final binding = result.data['binding'];
             return binding is Map && ['SYNCED', 'NOT_SAVED', 'CANCELLED'].contains(binding['status']);
           });
-        if (mounted) await _load();
+        if (mounted) { await _load(); }
       } else {
         if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
           throw Exception('Не удалось открыть Kassa24');
         }
-        if (mounted) setState(() => _message =
+        if (mounted) {
+          setState(() => _message =
             'Завершите привязку в Kassa24, затем нажмите «Обновить карты».');
+        }
       }
     } catch (e) {
       if (mounted) {

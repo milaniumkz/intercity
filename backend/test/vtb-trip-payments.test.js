@@ -77,6 +77,7 @@ test('VTB trip payments: real database atomic net earnings, 20 repeats, cancella
  payAutomatically=true;const auto=await make(card.id);await Promise.all(Array.from({length:20},()=>vtb.processPayment('CITY:'+auto.id)));p=await db.tripCardPayment.findUniqueOrThrow({where:{id:'CITY:'+auto.id}});assert.equal(p.status,'PAID');assert.equal(charges.filter(c=>c.id===p.bankOrderId).length,1);
  payAutomatically=false;const cvc=await make(card.id);await vtb.processPayment('CITY:'+cvc.id);p=await db.tripCardPayment.findUniqueOrThrow({where:{id:'CITY:'+cvc.id}});for(let i=0;i<20;i++)await vtb.processPayment(p.id);assert.equal(charges.filter(c=>c.id===p.bankOrderId).length,1);assert.equal((await db.tripCardPayment.findUnique({where:{id:p.id}})).status,'ACTION_REQUIRED');assert.equal((await vtb.checkout(passenger.id,'CITY',cvc.id)).paymentUrl,p.paymentUrl);
  await assert.rejects(vtb.remove(passenger.id,card.id),/завершения оплаты/);
+ await db.order.updateMany({where:{passengerId:passenger.id,status:{notIn:['COMPLETED','CANCELLED']}},data:{status:'CANCELLED'}});
  const request=await db.intercityRequest.create({data:{passengerId:passenger.id,fromCity:'QA A',toCity:'QA B',date:new Date(),price:50,currency:'RUB',status:'DRIVER_ARRIVED',selectedDriverId:driver.id,paymentMethod:'CARD'}});requestIds.push(request.id);
  const offer=await db.intercityOffer.create({data:{requestId:request.id,driverId:driver.id,price:100,seats:1,status:'ACCEPTED'}});
  await db.intercityRequest.update({where:{id:request.id},data:{selectedOfferId:offer.id}});

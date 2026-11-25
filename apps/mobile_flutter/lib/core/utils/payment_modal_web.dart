@@ -75,7 +75,7 @@ Future<bool> showPaymentModal(BuildContext context, String url, {String title = 
                     child: Text(
                       title,
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontWeight: FontWeight.w900,
                         fontSize: 17,
                       ),
