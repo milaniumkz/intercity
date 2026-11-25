@@ -566,6 +566,7 @@ export class IntercityService {
           acceptedAt: new Date(),
         },
       });
+      if (this.cardPayments?.prepareAtOrderCreation) await this.cardPayments.prepareAtOrderCreation(tx, 'INTERCITY', { ...freshOffer.request, price: freshOffer.price }, freshOffer.driverId);
       await tx.intercityOffer.updateMany({
         where: { requestId: freshOffer.requestId, id: { not: offerId } },
         data: { status: "REJECTED" },
@@ -669,6 +670,8 @@ export class IntercityService {
         await lockIncomeAccounting(tx);
         const changed = await tx.intercityRequest.updateMany({ where: { id: requestId, status: request.status }, data: { status: target, completedAt } });
         if (changed.count !== 1) return tx.intercityRequest.findUniqueOrThrow({ where: { id: requestId } });
+        const paymentOffer = request.selectedOfferId ? await tx.intercityOffer.findUnique({where:{id:request.selectedOfferId}}) : null;
+        if (this.cardPayments?.settleInTransaction) await this.cardPayments.settleInTransaction(tx, 'INTERCITY', {...request, price: paymentOffer?.price ?? request.price, completedAt}, driverUserId);
         await this.chargeDriverForCompletedIntercityRequest(
           tx,
           request,

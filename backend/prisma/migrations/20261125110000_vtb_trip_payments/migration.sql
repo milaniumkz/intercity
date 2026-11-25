@@ -1,0 +1,6 @@
+ALTER TABLE "SavedPaymentCard" ADD COLUMN "provider" TEXT NOT NULL DEFAULT 'KASSA24';
+ALTER TABLE "CardBinding" ADD COLUMN "provider" TEXT NOT NULL DEFAULT 'KASSA24', ADD COLUMN "paymentUrl" TEXT, ADD COLUMN "lastError" TEXT, ADD COLUMN "leaseUntil" TIMESTAMP(3);
+ALTER TABLE "TripCardPayment" ADD COLUMN "provider" TEXT NOT NULL DEFAULT 'KASSA24', ADD COLUMN "bankOrderNumber" TEXT, ADD COLUMN "bankOrderId" TEXT, ADD COLUMN "bankAmountMinor" INTEGER, ADD COLUMN "conversionRate" INTEGER, ADD COLUMN "paymentUrl" TEXT, ADD COLUMN "chargeAttemptedAt" TIMESTAMP(3);
+ALTER TABLE "TripCardPayment" ALTER COLUMN "driverUserId" DROP NOT NULL, ALTER COLUMN "cardId" DROP NOT NULL;
+CREATE UNIQUE INDEX "TripCardPayment_bankOrderNumber_key" ON "TripCardPayment"("bankOrderNumber");
+CREATE UNIQUE INDEX "TripCardPayment_bankOrderId_key" ON "TripCardPayment"("bankOrderId");

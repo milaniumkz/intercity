@@ -197,6 +197,7 @@ export class OrdersService {
         if (!isCityAuction && (!Number.isFinite(preview.price) || preview.price <= 0)) {
             throw new BadRequestException('Unable to calculate order price');
         }
+        if (paymentMethod === 'CARD' && preview.currency === 'RUB' && useBonus) throw new BadRequestException('Для оплаты ВТБ отключите оплату бонусами');
         const paymentCardId = paymentMethod === 'CARD' ? await this.cardPayments.cardForOrder(userId, preview.currency) : null;
         const settings = await this.prisma.appSettings.findMany({
             where: { key: { in: ['orderCommissionPercent'] } },
@@ -287,6 +288,7 @@ export class OrdersService {
                     },
                 }).catch(() => null);
             }
+            if (!isCityAuction && createdOrder.price > 0 && this.cardPayments?.prepareAtOrderCreation) await this.cardPayments.prepareAtOrderCreation(tx, 'CITY', createdOrder);
             return createdOrder;
         });
 
@@ -706,6 +708,7 @@ export class OrdersService {
             });
             await tx.orderAuctionInvitation.updateMany({where: {orderId: offer.orderId, status: 'PENDING'}, data: {status: 'CANCELLED'}});
             await applyDriverActivity(tx, offer.driverId, `accept:city:${offer.orderId}:${offer.driverId}`, DRIVER_ACTIVITY_RULES.acceptReward);
+            if (this.cardPayments?.prepareAtOrderCreation) await this.cardPayments.prepareAtOrderCreation(tx, 'CITY', { ...offer.order, price: offer.price }, offer.driver.userId);
             return tx.order.update({
                 where: { id: offer.orderId },
                 data: {
@@ -817,7 +820,7 @@ export class OrdersService {
 
         if (!order) throw new NotFoundException('Order not found');
         if (order.passengerId !== userId) throw new BadRequestException('Not your order');
-        if (order.status === 'IN_PROGRESS') throw new BadRequestException('Начатую поездку нельзя отменить');
+        if (order.status === 'IN_PROGRESS' || order.status === 'COMPLETED') throw new BadRequestException('Начатую или завершённую поездку нельзя отменить');
         if (['COMPLETED', 'CANCELLED'].includes(order.status)) {
             throw new BadRequestException('Order already completed or cancelled');
         }
@@ -886,6 +889,7 @@ export class OrdersService {
         if (!this.isKnownOrderStatus(targetStatus)) {
             throw new BadRequestException(`Unsupported status: ${targetStatus}`);
         }
+        if (order.paymentMethod === 'CARD' && order.currency === 'RUB' && ['CANCELLED','COMPLETED'].includes(order.status) && targetStatus !== order.status) throw new BadRequestException('Завершённую или отменённую оплаченную поездку нельзя возобновить');
         if (order.status === 'IN_PROGRESS' && targetStatus === 'CANCELLED') throw new BadRequestException('Начатую поездку нельзя отменить');
         const actorRole = (actor?.role || '').toUpperCase();
         const isAdmin = actorRole === 'ADMIN';
@@ -928,6 +932,7 @@ export class OrdersService {
             }
             if (targetStatus === 'COMPLETED') {
                 if (order.driver?.userId) {
+                    if (this.cardPayments?.settleInTransaction) await this.cardPayments.settleInTransaction(tx, 'CITY', order, order.driver.userId);
                     await settleBonusRidePayment(tx, 'CITY', order, order.driver.userId, order.price);
                     await this.applyDriverOrderCommissionDebit(order, tx);
                 }
