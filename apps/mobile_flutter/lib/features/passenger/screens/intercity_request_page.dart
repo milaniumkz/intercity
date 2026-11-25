@@ -420,9 +420,6 @@ class _IntercityRequestPageState extends State<IntercityRequestPage> {
       if (!mounted) return;
       await _loadRequest();
       if (!mounted) return;
-      if (mounted && _request?['currency'] == 'RUB' && _request?['paymentMethod'] == 'CARD') {
-        await VtbTripCheckout.open(context, _api, kind: 'INTERCITY', tripId: widget.requestId);
-      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _actionError = errorMessageRu(e));

@@ -300,11 +300,14 @@ export class CardPaymentsService implements OnModuleInit, OnModuleDestroy {
         }
     }
 
-    async prepareAtOrderCreation(tx:any,kind:string,trip:any,driverUserId?:string) {
+    async prepareAcceptedTrip(tx:any,kind:string,trip:any,driverUserId?:string) {
         if (trip.currency==='RUB' && trip.paymentMethod==='CARD') {
             if (!this.vtb) throw new BadRequestException('Оплата ВТБ пока недоступна');
             await this.vtb.prepare(tx,kind,trip,driverUserId);
         }
+    }
+    startAcceptedPayment(kind:string,tripId:string) {
+        if (this.vtb) void this.vtb.processPayment(kind+':'+tripId).catch(()=>this.logger.warn('VTB accepted-trip payment will retry'));
     }
     async settleInTransaction(tx:any,kind:string,trip:any,driverUserId:string) {
         if (trip.currency==='RUB' && trip.paymentMethod==='CARD') {

@@ -1,3 +1,4 @@
+import { CardPaymentsService } from '../payments/card-payments.service';
 import {requireNoDuplicateDeparture} from '../common/intercity-departure-duplicate';
 import { DriverDocumentService } from '../identity/driver-document.service';
 import { driverTaxChecksEnabled } from '../tax/driver-tax-mode';
@@ -36,6 +37,7 @@ export class DriverService {
         private taxService: TaxService,
         @Optional() private technicalService?: TechnicalService,
         @Optional() private identityDocuments?: DriverDocumentService,
+        @Optional() private cardPayments?: CardPaymentsService,
     ) { }
 
     async createProfile(userId: string, dto: CreateDriverProfileDto) {
@@ -769,11 +771,13 @@ export class DriverService {
                 dispatchDriverId: null, dispatchExpiresAt: null, dispatchRetryAt: null },
         });
         if (accepted.count !== 1) throw new BadRequestException('Время ответа истекло или заказ предложен другому водителю');
+        if (this.cardPayments?.prepareAcceptedTrip) await this.cardPayments.prepareAcceptedTrip(tx, 'CITY', order, driverUserId);
         const activity = await applyDriverActivity(tx, profile.id, `accept:city:${orderId}:${profile.id}`, DRIVER_ACTIVITY_RULES.acceptReward);
         return { order: await tx.order.findUnique({ where: { id: orderId } }), activity };
 
         });
         const updated = result.order;
+        if (order.currency === 'RUB' && order.paymentMethod === 'CARD') this.cardPayments?.startAcceptedPayment?.('CITY', order.id);
         this.realtimeService.publish({ type: 'driver.activity.updated', entity: 'driver', entityId: profile.id, at: new Date().toISOString(), payload: { activityScore: result.activity.activityScore } });
         await this.recordRideEventSafe({
             orderId: order.id,

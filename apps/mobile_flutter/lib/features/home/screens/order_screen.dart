@@ -1,4 +1,3 @@
-import '../../../core/services/vtb_trip_checkout.dart';
 import '../../../core/services/vtb_sandbox_checkout.dart';
 import '../../../core/utils/location_permission_events.dart';
 import '../../../core/widgets/passenger_map_tiles.dart';
@@ -754,9 +753,6 @@ class _OrderScreenState extends State<OrderScreen> {
       }
     } catch (_) {/* Kazakhstan card payments keep their existing provider. */}
   }
-
-  bool get _vtbTripSelected =>
-      _rideCurrency == 'RUB' && _paymentMethod == paymentMethodCard;
 
   Future<void> _selectVtbTripCard() async {
     if (!_vtbTripAvailable) return;
@@ -14060,14 +14056,6 @@ class _OrderScreenState extends State<OrderScreen> {
         );
         final orderId = (response.data['id'] ?? '').toString();
         if (!mounted) return;
-        if (_vtbTripSelected && _requestType() != requestTypeCityAuction) {
-          try {
-            await VtbTripCheckout.open(context, _api, kind: 'CITY', tripId: orderId, opener: widget.vtbPaymentOpener);
-          } catch (e) {
-            if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMessageRu(e))));
-          }
-          if (!mounted) return;
-        }
         _clearRoute();
         context.go('/order/searching/$orderId');
       }

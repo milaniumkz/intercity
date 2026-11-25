@@ -194,7 +194,7 @@ export class VtbTripPaymentsService implements OnModuleInit, OnModuleDestroy {
         const trip: any = kind === 'CITY' ? await this.prisma.order.findUnique({ where: { id: tripId } }) : await this.prisma.intercityRequest.findUnique({ where: { id: tripId } });
         if (!trip || trip.passengerId !== userId) throw new NotFoundException('Поездка не найдена');
         const p = await this.prisma.tripCardPayment.findUnique({ where: { id: kind + ':' + tripId } });
-        if (!p || p.provider !== PROVIDER) throw new BadRequestException('Оплата будет доступна после выбора предложения и согласования цены');
+        if (!p || p.provider !== PROVIDER) throw new BadRequestException(kind === 'CITY' && trip.requestType !== 'CITY_AUCTION' ? 'Оплата начнётся после принятия заказа водителем' : 'Оплата будет доступна после выбора предложения и согласования цены');
         await this.processPayment(p.id);
         const latest = await this.prisma.tripCardPayment.findUniqueOrThrow({ where: { id: p.id } });
         return this.publicPayment(latest);

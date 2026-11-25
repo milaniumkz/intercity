@@ -157,7 +157,7 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('Russian card selection keeps CARD and publishes a linked order before opening VTB', (tester) async {
+  testWidgets('Russian card selection publishes CARD order without opening bank before driver acceptance', (tester) async {
     await prepare(tester);
     final api = _VtbApi();
     var opened = 0;
@@ -194,8 +194,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.orderPaymentMethod, 'CARD');
     expect(api.realOrders, contains('/orders'));
-    expect(api.tripCheckouts, contains('/payments/vtb/trips/CITY/must-not-be-created/checkout'));
-    expect(opened, 1);
+    expect(api.tripCheckouts, isEmpty);
+    expect(opened, 0);
     expect(find.text('linked-order'), findsOneWidget);
 
   });

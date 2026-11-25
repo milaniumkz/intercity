@@ -14,7 +14,7 @@ class VtbTripCheckout {
   }) async {
     var payment = await check(api, kind, tripId);
     for (var i = 0; i < 5 && payment['paymentUrl'] == null &&
-        !['PAID', 'SETTLED', 'FAILED', 'REFUNDED', 'CANCELLED'].contains(payment['status']); i++) {
+        !['PAID', 'SETTLED', 'FAILED', 'REFUNDED', 'CANCELLED', 'WAITING_DRIVER'].contains(payment['status']); i++) {
       await Future<void>.delayed(const Duration(seconds: 1));
       payment = await check(api, kind, tripId);
     }
@@ -50,6 +50,22 @@ class VtbTripPaymentPanel extends StatefulWidget {
 }
 class _VtbTripPaymentPanelState extends State<VtbTripPaymentPanel> {
   bool _busy = false;
+  bool _autoOpened = false;
+  @override
+  void initState() { super.initState(); _maybeOpenAfterAcceptance(); }
+  @override
+  void didUpdateWidget(covariant VtbTripPaymentPanel oldWidget) {
+    super.didUpdateWidget(oldWidget); _maybeOpenAfterAcceptance();
+  }
+  void _maybeOpenAfterAcceptance() {
+    final trip = widget.trip;
+    final p = trip?['cardPayment'];
+    if (_autoOpened || p is! Map || p['provider'] != 'VTB_SANDBOX' ||
+        !['PENDING','PROCESSING','CHECKING','ACTION_REQUIRED'].contains(p['status']) ||
+        !['DRIVER_ASSIGNED','DRIVER_EN_ROUTE','DRIVER_ARRIVED','ACCEPTED'].contains(trip?['status'])) { return; }
+    _autoOpened = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) { _pay(); } });
+  }
   String? _error;
   Future<void> _pay() async {
     if (_busy) return;
@@ -68,15 +84,18 @@ class _VtbTripPaymentPanelState extends State<VtbTripPaymentPanel> {
     final payment = raw is Map ? raw : const <String, dynamic>{};
     final status = payment['status']?.toString();
     final settled = status == 'PAID' || status == 'SETTLED';
-    final terminal = ['FAILED', 'CANCELLED', 'REFUNDED', 'REFUND_PENDING'].contains(status);
+    final terminal = ['FAILED', 'CANCELLED', 'REFUNDED', 'REFUND_PENDING', 'WAITING_DRIVER'].contains(status);
     final amount = payment['amount'];
     final bankMinor = payment['bankAmountMinor'];
     final bankAmount = bankMinor is num ? bankMinor / 100 : null;
     final message = settled ? 'Оплачено через ВТБ'
+        : status == 'WAITING_DRIVER' ? 'ВТБ: списание после принятия заказа водителем'
         : status == 'REFUND_PENDING' ? 'ВТБ: возврат оплаты подтверждается банком'
         : status == 'REFUNDED' ? 'ВТБ: оплата возвращена'
         : status == 'FAILED' ? 'ВТБ отклонил оплату. Отмените заказ и повторите его.'
         : status == 'CANCELLED' ? 'Оплата ВТБ отменена'
+        : raw == null && widget.kind == 'CITY' && trip['requestType'] != 'CITY_AUCTION'
+            ? 'ВТБ: списание после принятия заказа водителем'
         : raw == null ? 'ВТБ: оплата после выбора предложения водителя'
         : 'ВТБ: подтвердите оплату до начала поездки';
     return Material(

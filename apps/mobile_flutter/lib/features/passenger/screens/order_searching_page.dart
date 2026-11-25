@@ -503,9 +503,6 @@ class _OrderSearchingPageState extends State<OrderSearchingPage> {
     try {
       await _api.post('/orders/offers/$id/accept');
       await _loadOrder();
-      if (mounted && _order?['currency'] == 'RUB' && _order?['paymentMethod'] == 'CARD') {
-        await VtbTripCheckout.open(context, _api, kind: 'CITY', tripId: widget.orderId);
-      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(

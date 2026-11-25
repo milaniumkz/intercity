@@ -288,7 +288,6 @@ export class OrdersService {
                     },
                 }).catch(() => null);
             }
-            if (!isCityAuction && createdOrder.price > 0 && this.cardPayments?.prepareAtOrderCreation) await this.cardPayments.prepareAtOrderCreation(tx, 'CITY', createdOrder);
             return createdOrder;
         });
 
@@ -708,7 +707,7 @@ export class OrdersService {
             });
             await tx.orderAuctionInvitation.updateMany({where: {orderId: offer.orderId, status: 'PENDING'}, data: {status: 'CANCELLED'}});
             await applyDriverActivity(tx, offer.driverId, `accept:city:${offer.orderId}:${offer.driverId}`, DRIVER_ACTIVITY_RULES.acceptReward);
-            if (this.cardPayments?.prepareAtOrderCreation) await this.cardPayments.prepareAtOrderCreation(tx, 'CITY', { ...offer.order, price: offer.price }, offer.driver.userId);
+            if (this.cardPayments?.prepareAcceptedTrip) await this.cardPayments.prepareAcceptedTrip(tx, 'CITY', { ...offer.order, price: offer.price }, offer.driver.userId);
             return tx.order.update({
                 where: { id: offer.orderId },
                 data: {
@@ -744,6 +743,7 @@ export class OrdersService {
             });
         });
 
+        if (updated.currency === 'RUB' && updated.paymentMethod === 'CARD') this.cardPayments?.startAcceptedPayment?.('CITY', updated.id);
         await this.recordRideEventSafe({
             orderId: offer.orderId,
             fromStatus: offer.order.status,
