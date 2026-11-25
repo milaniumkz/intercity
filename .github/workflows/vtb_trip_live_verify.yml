@@ -1,0 +1,640 @@
+name: Verify VTB passenger trips
+on:
+  workflow_run:
+    workflows: [Deploy VPS]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.head_sha == '60882cae8f84e82f64d8e9a4b026422799af9f1a' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 25
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+      - name: Create an isolated accepted RUB trip
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID" > "$RUNNER_TEMP/trip-probe.json" <<'REMOTE'
+          set -euo pipefail
+          [[ "$(basename "$(readlink -f /opt/intercity/current)")" == "60882cae8f84e82f64d8e9a4b026422799af9f1a" ]] || { echo 'Expected VTB trip release is not active' >&2; exit 1; }
+          docker exec -i -e VTB_TRIP_PROBE_RUN="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+          const {PrismaClient}=require('@prisma/client');
+          const {VtbTripPaymentsService,vtbTripBankState}=require('./dist/src/payments/vtb-trip-payments.service');
+          const {CardPaymentsService}=require('./dist/src/payments/card-payments.service');
+          const {OrdersService}=require('./dist/src/orders/orders.service');
+          const {DriverService}=require('./dist/src/driver/driver.service');
+          const db=new PrismaClient(),run=process.env.VTB_TRIP_PROBE_RUN;
+          assert.match(run,/^[0-9]+$/);
+          const file=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','vtb-trip-live-'+run+'.json');
+          const realtime={publish(){}},push={sendToUser:async()=>{},sendOrderStatusToPassenger:async()=>{}};
+          const vtb=new VtbTripPaymentsService(db,realtime),cards=new CardPaymentsService(db,realtime,push,vtb),orders=new OrdersService(db,{}, {},realtime,push,cards);
+          const drivers=new DriverService(db,{},realtime,push,{},null,undefined,undefined,cards);
+          const delay=ms=>new Promise(r=>setTimeout(r,ms));
+          async function prepareRide(m){
+           const value=await db.$transaction(async tx=>{
+           const order=await tx.order.create({data:{passengerId:m.passengerId,driverId:null,dispatchDriverId:m.profileId,dispatchExpiresAt:new Date(Date.now()+120000),cityId:m.cityId,status:'SEARCHING_DRIVER',mode:'CITY',requestType:'CITY_FIXED',currency:'RUB',price:100,commissionAmount:m.commissionRub,fromLat:56.8,fromLng:60.6,toLat:56.81,toLng:60.61,fromAddress:'VTB sandbox QA A',toAddress:'VTB sandbox QA B',paymentMethod:'CARD'}});
+           m.orderIds.push(order.id);fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});return order;});
+           for(let i=0;i<20;i++)await vtb.processPayment('CITY:'+value.id);
+           assert.equal(await db.tripCardPayment.count({where:{id:'CITY:'+value.id}}),0);
+           await drivers.acceptOrder(m.driverId,value.id);
+           let payment;
+           for(let i=0;i<15;i++){payment=await vtb.checkout(m.passengerId,'CITY',value.id);if(payment.paymentUrl)break;await delay(1000);}
+           assert(payment.paymentUrl);assert.equal(payment.bankAmount,700);return{orderId:value.id,paymentUrl:payment.paymentUrl,bankAmount:700};
+          }
+          (async()=>{
+           assert.equal(process.env.VTB_SANDBOX_ENABLED,'true');assert.equal(fs.existsSync(file),false);
+           const minimum=await db.appSettings.findUnique({where:{key:'driverMinOnlineBalanceRub'}});const baselineRub=Math.max(100,Number(minimum?.value)||100);
+           const rate=await db.appSettings.findUnique({where:{key:'orderCommissionPercent'}});const percent=Number(rate?.value||10);assert(percent>=0&&percent<=100);
+           const m=await db.$transaction(async tx=>{
+           const city=await tx.city.create({data:{name:'VTB trip live QA '+run,countryCode:'RU',lat:56.8,lng:60.6,isActive:false}});
+           const make=role=>tx.user.create({data:{phone:'vtb-trip-live:'+randomUUID(),name:'VTB trip live QA '+run,password:'unused-no-login-'+randomUUID(),role,cityId:city.id,refCode:randomUUID(),refLink:'',wallet:{create:{}}}});
+           const passenger=await make('PASSENGER'),driver=await make('DRIVER');const profile=await tx.driverProfile.create({data:{userId:driver.id,status:'APPROVED',acceptCityFixed:true}});
+           await tx.wallet.update({where:{userId:driver.id},data:{moneyRub:baselineRub}});
+           const value={baselineRub,cityId:city.id,passengerId:passenger.id,driverId:driver.id,profileId:profile.id,commissionRub:Math.round(percent*100)/100,orderIds:[]};
+           fs.writeFileSync(file,JSON.stringify(value),{mode:0o600,flag:'wx'});return value;});
+           const meta=await prepareRide(m);console.log(JSON.stringify(meta));
+          })().catch(e=>{console.error('VTB live trip creation: '+e.message);process.exitCode=1;}).finally(()=>db.$disconnect());
+          JS
+          REMOTE
+      - name: Pay real sandbox trip in bank form
+        run: |
+          npm install --prefix "$RUNNER_TEMP/vtb-trip-browser" --ignore-scripts --no-package-lock --no-audit --no-fund playwright@1.56.1
+          export BANK_BROWSER_MODULE="$RUNNER_TEMP/vtb-trip-browser/node_modules/playwright"
+          export BANK_BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable)"
+          node <<'JS'
+          const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require(process.env.BANK_BROWSER_MODULE);
+          (async()=>{const meta=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/trip-probe.json','utf8'));assert.equal(new URL(meta.paymentUrl).hostname,'vtbkz.rbsuat.com');
+          const b=await chromium.launch({headless:true,executablePath:process.env.BANK_BROWSER_BIN,args:['--no-sandbox']});
+          try{const p=await b.newPage({locale:'ru-RU',viewport:{width:1280,height:900}});await p.route('**/flutter_bootstrap.js',r=>r.abort());
+          await p.goto('https://intercity.89-207-255-27.sslip.io/',{waitUntil:'domcontentloaded'});await p.setContent('<iframe id="bank-frame" style="width:100%;height:850px;border:0"></iframe>');
+          await p.locator('#bank-frame').evaluate((e,url)=>{e.src=url;},meta.paymentUrl);
+          let frame=await(await p.locator('#bank-frame').elementHandle()).contentFrame(),embedded=true;
+          try{await frame.locator('#new-card-pan').waitFor({state:'visible',timeout:20000});}
+          catch{embedded=false;await p.goto(meta.paymentUrl,{waitUntil:'domcontentloaded'});frame=p.mainFrame();await frame.locator('#new-card-pan').waitFor({state:'visible',timeout:30000});}
+          const text=await frame.locator('body').innerText();assert.match(text,/700(?:[.,]00)?/);assert.match(text,/KZT|₸|тенге/i);
+          await frame.locator('#new-card-pan').fill('2201382000000062');await frame.locator('#newCardExpiry').fill('12/34');await frame.locator('#newCardCvc').fill('123');
+          await frame.getByRole('button',{name:'Оплатить',exact:true}).first().click();await frame.waitForURL(u=>u.hostname==='intercity.89-207-255-27.sslip.io'||u.hostname==='api.intercity.89-207-255-27.sslip.io',{timeout:60000});
+          console.log(JSON.stringify({realSandboxTripCardFormPaid:true,amountKzt:700,bankFormEmbedded:embedded}));
+          }finally{await b.close();}})().catch(e=>{console.error(e.message);process.exitCode=1;});
+          JS
+      - name: Verify acceptance timing and atomic net driver settlement
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID"  <<'REMOTE'
+          set -euo pipefail
+          [[ "$(basename "$(readlink -f /opt/intercity/current)")" == "60882cae8f84e82f64d8e9a4b026422799af9f1a" ]] || { echo 'Expected VTB trip release is not active' >&2; exit 1; }
+          docker exec -i -e VTB_TRIP_PROBE_RUN="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+          const {PrismaClient}=require('@prisma/client');
+          const {VtbTripPaymentsService,vtbTripBankState}=require('./dist/src/payments/vtb-trip-payments.service');
+          const {CardPaymentsService}=require('./dist/src/payments/card-payments.service');
+          const {OrdersService}=require('./dist/src/orders/orders.service');
+          const {DriverService}=require('./dist/src/driver/driver.service');
+          const db=new PrismaClient(),run=process.env.VTB_TRIP_PROBE_RUN;
+          assert.match(run,/^[0-9]+$/);
+          const file=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','vtb-trip-live-'+run+'.json');
+          const realtime={publish(){}},push={sendToUser:async()=>{},sendOrderStatusToPassenger:async()=>{}};
+          const vtb=new VtbTripPaymentsService(db,realtime),cards=new CardPaymentsService(db,realtime,push,vtb),orders=new OrdersService(db,{}, {},realtime,push,cards);
+          const drivers=new DriverService(db,{},realtime,push,{},null,undefined,undefined,cards);
+          const delay=ms=>new Promise(r=>setTimeout(r,ms));
+          async function prepareRide(m){
+           const value=await db.$transaction(async tx=>{
+           const order=await tx.order.create({data:{passengerId:m.passengerId,driverId:null,dispatchDriverId:m.profileId,dispatchExpiresAt:new Date(Date.now()+120000),cityId:m.cityId,status:'SEARCHING_DRIVER',mode:'CITY',requestType:'CITY_FIXED',currency:'RUB',price:100,commissionAmount:m.commissionRub,fromLat:56.8,fromLng:60.6,toLat:56.81,toLng:60.61,fromAddress:'VTB sandbox QA A',toAddress:'VTB sandbox QA B',paymentMethod:'CARD'}});
+           m.orderIds.push(order.id);fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});return order;});
+           for(let i=0;i<20;i++)await vtb.processPayment('CITY:'+value.id);
+           assert.equal(await db.tripCardPayment.count({where:{id:'CITY:'+value.id}}),0);
+           await drivers.acceptOrder(m.driverId,value.id);
+           let payment;
+           for(let i=0;i<15;i++){payment=await vtb.checkout(m.passengerId,'CITY',value.id);if(payment.paymentUrl)break;await delay(1000);}
+           assert(payment.paymentUrl);assert.equal(payment.bankAmount,700);return{orderId:value.id,paymentUrl:payment.paymentUrl,bankAmount:700};
+          }
+          (async()=>{
+           const m=JSON.parse(fs.readFileSync(file,'utf8')),orderId=m.orderIds[0],id='CITY:'+orderId;
+           for(let i=0;i<90;i++){const p=await db.tripCardPayment.findUnique({where:{id}});if(p?.status==='PAID')break;await delay(1000);}
+           const p=await db.tripCardPayment.findUniqueOrThrow({where:{id}});assert.equal(p.status,'PAID');assert.equal(p.earningsCredited,false);
+           const status=await vtb.gateway.status(p.bankOrderId);assert.equal(vtbTripBankState(status,p.bankOrderNumber,p.bankAmountMinor),'PAID');
+           assert.equal((await db.wallet.findUnique({where:{userId:m.driverId}})).moneyRub,m.baselineRub);
+           await orders.updateOrderStatus(orderId,'DRIVER_ARRIVED',{userId:m.driverId,role:'DRIVER'});
+           await orders.updateOrderStatus(orderId,'IN_PROGRESS',{userId:m.driverId,role:'DRIVER'});
+           assert.equal((await db.wallet.findUnique({where:{userId:m.driverId}})).moneyRub,m.baselineRub);
+           await orders.updateOrderStatus(orderId,'COMPLETED',{userId:m.driverId,role:'DRIVER'});
+           for(let i=0;i<20;i++)await orders.updateOrderStatus(orderId,'COMPLETED',{userId:m.driverId,role:'DRIVER'});
+           const callback='http://127.0.0.1:'+(process.env.PORT||3000)+'/api/payments/vtb/trips/callback';
+           const replies=await Promise.all(Array.from({length:20},()=>fetch(callback,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({orderId:p.bankOrderId,status:'PAID',amount:1})})));
+           assert(replies.every(r=>r.status===200));
+           const wallet=await db.wallet.findUniqueOrThrow({where:{userId:m.driverId}});assert.equal(wallet.moneyRub,m.baselineRub+100-m.commissionRub);assert.equal(wallet.money,0);assert.equal(wallet.bonusRub,0);
+           assert.equal(await db.walletTransaction.count({where:{orderId,type:'CARD_RIDE_EARNINGS'}}),1);
+           assert.equal((await db.tripCardPayment.findUnique({where:{id}})).status,'SETTLED');
+           console.log(JSON.stringify({realVtbPassengerTripVerified:true,fareRub:100,bankPaidKzt:700,commissionRub:m.commissionRub,driverNetRub:wallet.moneyRub-m.baselineRub,balanceBeforeRub:m.baselineRub,balanceAfterRub:wallet.moneyRub,paymentStartedOnlyAfterDriverAcceptance:true,creditedOnlyAfterCompletion:true,backgroundPaymentVerification:true,repeatedCompletions:20,repeatedPublicCallbacks:20,earningsLedgerEntries:1,productionBankEnabled:false}));
+          })().catch(e=>{console.error('VTB live settlement: '+e.message);process.exitCode=1;}).finally(()=>db.$disconnect());
+          JS
+          REMOTE
+      - name: Prepare an accepted cancellation trip
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID" > "$RUNNER_TEMP/trip-probe.json" <<'REMOTE'
+          set -euo pipefail
+          [[ "$(basename "$(readlink -f /opt/intercity/current)")" == "60882cae8f84e82f64d8e9a4b026422799af9f1a" ]] || { echo 'Expected VTB trip release is not active' >&2; exit 1; }
+          docker exec -i -e VTB_TRIP_PROBE_RUN="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+          const {PrismaClient}=require('@prisma/client');
+          const {VtbTripPaymentsService,vtbTripBankState}=require('./dist/src/payments/vtb-trip-payments.service');
+          const {CardPaymentsService}=require('./dist/src/payments/card-payments.service');
+          const {OrdersService}=require('./dist/src/orders/orders.service');
+          const {DriverService}=require('./dist/src/driver/driver.service');
+          const db=new PrismaClient(),run=process.env.VTB_TRIP_PROBE_RUN;
+          assert.match(run,/^[0-9]+$/);
+          const file=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','vtb-trip-live-'+run+'.json');
+          const realtime={publish(){}},push={sendToUser:async()=>{},sendOrderStatusToPassenger:async()=>{}};
+          const vtb=new VtbTripPaymentsService(db,realtime),cards=new CardPaymentsService(db,realtime,push,vtb),orders=new OrdersService(db,{}, {},realtime,push,cards);
+          const drivers=new DriverService(db,{},realtime,push,{},null,undefined,undefined,cards);
+          const delay=ms=>new Promise(r=>setTimeout(r,ms));
+          async function prepareRide(m){
+           const value=await db.$transaction(async tx=>{
+           const order=await tx.order.create({data:{passengerId:m.passengerId,driverId:null,dispatchDriverId:m.profileId,dispatchExpiresAt:new Date(Date.now()+120000),cityId:m.cityId,status:'SEARCHING_DRIVER',mode:'CITY',requestType:'CITY_FIXED',currency:'RUB',price:100,commissionAmount:m.commissionRub,fromLat:56.8,fromLng:60.6,toLat:56.81,toLng:60.61,fromAddress:'VTB sandbox QA A',toAddress:'VTB sandbox QA B',paymentMethod:'CARD'}});
+           m.orderIds.push(order.id);fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});return order;});
+           for(let i=0;i<20;i++)await vtb.processPayment('CITY:'+value.id);
+           assert.equal(await db.tripCardPayment.count({where:{id:'CITY:'+value.id}}),0);
+           await drivers.acceptOrder(m.driverId,value.id);
+           let payment;
+           for(let i=0;i<15;i++){payment=await vtb.checkout(m.passengerId,'CITY',value.id);if(payment.paymentUrl)break;await delay(1000);}
+           assert(payment.paymentUrl);assert.equal(payment.bankAmount,700);return{orderId:value.id,paymentUrl:payment.paymentUrl,bankAmount:700};
+          }
+          (async()=>{const m=JSON.parse(fs.readFileSync(file,'utf8'));console.log(JSON.stringify(await prepareRide(m)));})().catch(e=>{console.error('VTB cancellation fixture: '+e.message);process.exitCode=1;}).finally(()=>db.$disconnect());
+          JS
+          REMOTE
+      - name: Pay the cancellation trip through the sandbox bank
+        run: |
+          export BANK_BROWSER_MODULE="$RUNNER_TEMP/vtb-trip-browser/node_modules/playwright"
+          export BANK_BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable)"
+          node <<'JS'
+          const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require(process.env.BANK_BROWSER_MODULE);
+          (async()=>{const meta=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/trip-probe.json','utf8'));assert.equal(new URL(meta.paymentUrl).hostname,'vtbkz.rbsuat.com');
+          const b=await chromium.launch({headless:true,executablePath:process.env.BANK_BROWSER_BIN,args:['--no-sandbox']});
+          try{const p=await b.newPage({locale:'ru-RU',viewport:{width:1280,height:900}});await p.route('**/flutter_bootstrap.js',r=>r.abort());
+          await p.goto('https://intercity.89-207-255-27.sslip.io/',{waitUntil:'domcontentloaded'});await p.setContent('<iframe id="bank-frame" style="width:100%;height:850px;border:0"></iframe>');
+          await p.locator('#bank-frame').evaluate((e,url)=>{e.src=url;},meta.paymentUrl);
+          let frame=await(await p.locator('#bank-frame').elementHandle()).contentFrame(),embedded=true;
+          try{await frame.locator('#new-card-pan').waitFor({state:'visible',timeout:20000});}
+          catch{embedded=false;await p.goto(meta.paymentUrl,{waitUntil:'domcontentloaded'});frame=p.mainFrame();await frame.locator('#new-card-pan').waitFor({state:'visible',timeout:30000});}
+          const text=await frame.locator('body').innerText();assert.match(text,/700(?:[.,]00)?/);assert.match(text,/KZT|₸|тенге/i);
+          await frame.locator('#new-card-pan').fill('2201382000000062');await frame.locator('#newCardExpiry').fill('12/34');await frame.locator('#newCardCvc').fill('123');
+          await frame.getByRole('button',{name:'Оплатить',exact:true}).first().click();await frame.waitForURL(u=>u.hostname==='intercity.89-207-255-27.sslip.io'||u.hostname==='api.intercity.89-207-255-27.sslip.io',{timeout:60000});
+          console.log(JSON.stringify({realSandboxTripCardFormPaid:true,amountKzt:700,bankFormEmbedded:embedded}));
+          }finally{await b.close();}})().catch(e=>{console.error(e.message);process.exitCode=1;});
+          JS
+      - name: Verify automatic full cancellation refund
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID"  <<'REMOTE'
+          set -euo pipefail
+          [[ "$(basename "$(readlink -f /opt/intercity/current)")" == "60882cae8f84e82f64d8e9a4b026422799af9f1a" ]] || { echo 'Expected VTB trip release is not active' >&2; exit 1; }
+          docker exec -i -e VTB_TRIP_PROBE_RUN="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+          const {PrismaClient}=require('@prisma/client');
+          const {VtbTripPaymentsService,vtbTripBankState}=require('./dist/src/payments/vtb-trip-payments.service');
+          const {CardPaymentsService}=require('./dist/src/payments/card-payments.service');
+          const {OrdersService}=require('./dist/src/orders/orders.service');
+          const {DriverService}=require('./dist/src/driver/driver.service');
+          const db=new PrismaClient(),run=process.env.VTB_TRIP_PROBE_RUN;
+          assert.match(run,/^[0-9]+$/);
+          const file=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','vtb-trip-live-'+run+'.json');
+          const realtime={publish(){}},push={sendToUser:async()=>{},sendOrderStatusToPassenger:async()=>{}};
+          const vtb=new VtbTripPaymentsService(db,realtime),cards=new CardPaymentsService(db,realtime,push,vtb),orders=new OrdersService(db,{}, {},realtime,push,cards);
+          const drivers=new DriverService(db,{},realtime,push,{},null,undefined,undefined,cards);
+          const delay=ms=>new Promise(r=>setTimeout(r,ms));
+          async function prepareRide(m){
+           const value=await db.$transaction(async tx=>{
+           const order=await tx.order.create({data:{passengerId:m.passengerId,driverId:null,dispatchDriverId:m.profileId,dispatchExpiresAt:new Date(Date.now()+120000),cityId:m.cityId,status:'SEARCHING_DRIVER',mode:'CITY',requestType:'CITY_FIXED',currency:'RUB',price:100,commissionAmount:m.commissionRub,fromLat:56.8,fromLng:60.6,toLat:56.81,toLng:60.61,fromAddress:'VTB sandbox QA A',toAddress:'VTB sandbox QA B',paymentMethod:'CARD'}});
+           m.orderIds.push(order.id);fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});return order;});
+           for(let i=0;i<20;i++)await vtb.processPayment('CITY:'+value.id);
+           assert.equal(await db.tripCardPayment.count({where:{id:'CITY:'+value.id}}),0);
+           await drivers.acceptOrder(m.driverId,value.id);
+           let payment;
+           for(let i=0;i<15;i++){payment=await vtb.checkout(m.passengerId,'CITY',value.id);if(payment.paymentUrl)break;await delay(1000);}
+           assert(payment.paymentUrl);assert.equal(payment.bankAmount,700);return{orderId:value.id,paymentUrl:payment.paymentUrl,bankAmount:700};
+          }
+          (async()=>{
+           const m=JSON.parse(fs.readFileSync(file,'utf8')),orderId=m.orderIds[1],id='CITY:'+orderId;assert(orderId);
+           for(let i=0;i<90;i++){const p=await db.tripCardPayment.findUnique({where:{id}});if(p?.status==='PAID')break;await delay(1000);}
+           assert.equal((await db.tripCardPayment.findUnique({where:{id}})).status,'PAID');
+           const before=(await db.wallet.findUnique({where:{userId:m.driverId}})).moneyRub;
+           await orders.cancelOrder(orderId,m.passengerId);
+           for(let i=0;i<90;i++){const p=await db.tripCardPayment.findUnique({where:{id}});if(p?.status==='REFUNDED')break;await delay(1000);}
+           const p=await db.tripCardPayment.findUniqueOrThrow({where:{id}});assert.equal(p.status,'REFUNDED');
+           await Promise.all(Array.from({length:20},()=>vtb.processPayment(id)));
+           const bank=await vtb.gateway.status(p.bankOrderId);assert.equal(vtbTripBankState(bank,p.bankOrderNumber,p.bankAmountMinor),'REFUNDED');
+           assert.equal((await db.wallet.findUnique({where:{userId:m.driverId}})).moneyRub,before);
+           assert.equal(await db.walletTransaction.count({where:{orderId,type:'CARD_RIDE_EARNINGS'}}),0);
+           const config=await vtb.cards(m.passengerId);
+           console.log(JSON.stringify({realCancellationRefundVerified:true,refundedKzt:700,bankStatus:bank.orderStatus,driverBalanceUnchanged:true,repeatedRefundChecks:20,savedCardBindingAvailable:config.cardBindingAvailable}));
+          })().catch(e=>{console.error('VTB live refund: '+e.message);process.exitCode=1;}).finally(()=>db.$disconnect());
+          JS
+          REMOTE
+      - name: Prepare the three-decline cash fallback trip
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID" > "$RUNNER_TEMP/trip-probe.json" <<'REMOTE'
+          set -euo pipefail
+          [[ "$(basename "$(readlink -f /opt/intercity/current)")" == "60882cae8f84e82f64d8e9a4b026422799af9f1a" ]] || { echo 'Expected VTB trip release is not active' >&2; exit 1; }
+          docker exec -i -e VTB_TRIP_PROBE_RUN="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+          const {PrismaClient}=require('@prisma/client');
+          const {VtbTripPaymentsService,vtbTripBankState}=require('./dist/src/payments/vtb-trip-payments.service');
+          const {CardPaymentsService}=require('./dist/src/payments/card-payments.service');
+          const {OrdersService}=require('./dist/src/orders/orders.service');
+          const {DriverService}=require('./dist/src/driver/driver.service');
+          const db=new PrismaClient(),run=process.env.VTB_TRIP_PROBE_RUN;
+          assert.match(run,/^[0-9]+$/);
+          const file=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','vtb-trip-live-'+run+'.json');
+          const realtime={publish(){}},push={sendToUser:async()=>{},sendOrderStatusToPassenger:async()=>{}};
+          const vtb=new VtbTripPaymentsService(db,realtime),cards=new CardPaymentsService(db,realtime,push,vtb),orders=new OrdersService(db,{}, {},realtime,push,cards);
+          const drivers=new DriverService(db,{},realtime,push,{},null,undefined,undefined,cards);
+          const delay=ms=>new Promise(r=>setTimeout(r,ms));
+          async function prepareRide(m){
+           const value=await db.$transaction(async tx=>{
+           const order=await tx.order.create({data:{passengerId:m.passengerId,driverId:null,dispatchDriverId:m.profileId,dispatchExpiresAt:new Date(Date.now()+120000),cityId:m.cityId,status:'SEARCHING_DRIVER',mode:'CITY',requestType:'CITY_FIXED',currency:'RUB',price:100,commissionAmount:m.commissionRub,fromLat:56.8,fromLng:60.6,toLat:56.81,toLng:60.61,fromAddress:'VTB sandbox QA A',toAddress:'VTB sandbox QA B',paymentMethod:'CARD'}});
+           m.orderIds.push(order.id);fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});return order;});
+           for(let i=0;i<20;i++)await vtb.processPayment('CITY:'+value.id);
+           assert.equal(await db.tripCardPayment.count({where:{id:'CITY:'+value.id}}),0);
+           await drivers.acceptOrder(m.driverId,value.id);
+           let payment;
+           for(let i=0;i<15;i++){payment=await vtb.checkout(m.passengerId,'CITY',value.id);if(payment.paymentUrl)break;await delay(1000);}
+           assert(payment.paymentUrl);assert.equal(payment.bankAmount,700);return{orderId:value.id,paymentUrl:payment.paymentUrl,bankAmount:700};
+          }
+          (async()=>{const m=JSON.parse(fs.readFileSync(file,'utf8'));const meta=await prepareRide(m);m.cashTripId=meta.orderId;
+          m.cashBalanceBefore=(await db.wallet.findUnique({where:{userId:m.driverId}})).moneyRub;fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});console.log(JSON.stringify(meta));
+          })().catch(e=>{console.error('VTB cash fixture: '+e.message);process.exitCode=1;}).finally(()=>db.$disconnect());
+          JS
+          REMOTE
+      - name: Submit declined card attempt one
+        run: |
+          export BANK_BROWSER_MODULE="$RUNNER_TEMP/vtb-trip-browser/node_modules/playwright"
+          export BANK_BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable)"
+          node <<'JS'
+          const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require(process.env.BANK_BROWSER_MODULE);
+          (async()=>{const meta=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/trip-probe.json','utf8'));assert.equal(new URL(meta.paymentUrl).hostname,'vtbkz.rbsuat.com');
+          const b=await chromium.launch({headless:true,executablePath:process.env.BANK_BROWSER_BIN,args:['--no-sandbox']});
+          try{const p=await b.newPage({locale:'ru-RU',viewport:{width:1280,height:900}});await p.route('**/flutter_bootstrap.js',r=>r.abort());
+          await p.goto('https://intercity.89-207-255-27.sslip.io/',{waitUntil:'domcontentloaded'});await p.setContent('<iframe id="bank-frame" style="width:100%;height:850px;border:0"></iframe>');
+          await p.locator('#bank-frame').evaluate((e,url)=>{e.src=url;},meta.paymentUrl);
+          let frame=await(await p.locator('#bank-frame').elementHandle()).contentFrame(),embedded=true;
+          try{await frame.locator('#new-card-pan').waitFor({state:'visible',timeout:20000});}
+          catch{embedded=false;await p.goto(meta.paymentUrl,{waitUntil:'domcontentloaded'});frame=p.mainFrame();await frame.locator('#new-card-pan').waitFor({state:'visible',timeout:30000});}
+          const text=await frame.locator('body').innerText();assert.match(text,/700(?:[.,]00)?/);assert.match(text,/KZT|₸|тенге/i);
+          await frame.locator('#new-card-pan').fill('2201382000000062');await frame.locator('#newCardExpiry').fill('12/34');await frame.locator('#newCardCvc').fill('000');
+          await frame.getByRole('button',{name:'Оплатить',exact:true}).first().click();await p.waitForTimeout(8000);
+          console.log(JSON.stringify({officialInvalidCvcTripAttemptSubmitted:true,bankFormEmbedded:embedded}));
+          }finally{await b.close();}})().catch(e=>{console.error(e.message);process.exitCode=1;});
+          JS
+      - name: Verify first bank decline and prepare second attempt
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID" > "$RUNNER_TEMP/trip-probe.json" <<'REMOTE'
+          set -euo pipefail
+          [[ "$(basename "$(readlink -f /opt/intercity/current)")" == "60882cae8f84e82f64d8e9a4b026422799af9f1a" ]] || { echo 'Expected VTB trip release is not active' >&2; exit 1; }
+          docker exec -i -e VTB_TRIP_PROBE_RUN="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+          const {PrismaClient}=require('@prisma/client');
+          const {VtbTripPaymentsService,vtbTripBankState}=require('./dist/src/payments/vtb-trip-payments.service');
+          const {CardPaymentsService}=require('./dist/src/payments/card-payments.service');
+          const {OrdersService}=require('./dist/src/orders/orders.service');
+          const {DriverService}=require('./dist/src/driver/driver.service');
+          const db=new PrismaClient(),run=process.env.VTB_TRIP_PROBE_RUN;
+          assert.match(run,/^[0-9]+$/);
+          const file=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','vtb-trip-live-'+run+'.json');
+          const realtime={publish(){}},push={sendToUser:async()=>{},sendOrderStatusToPassenger:async()=>{}};
+          const vtb=new VtbTripPaymentsService(db,realtime),cards=new CardPaymentsService(db,realtime,push,vtb),orders=new OrdersService(db,{}, {},realtime,push,cards);
+          const drivers=new DriverService(db,{},realtime,push,{},null,undefined,undefined,cards);
+          const delay=ms=>new Promise(r=>setTimeout(r,ms));
+          async function prepareRide(m){
+           const value=await db.$transaction(async tx=>{
+           const order=await tx.order.create({data:{passengerId:m.passengerId,driverId:null,dispatchDriverId:m.profileId,dispatchExpiresAt:new Date(Date.now()+120000),cityId:m.cityId,status:'SEARCHING_DRIVER',mode:'CITY',requestType:'CITY_FIXED',currency:'RUB',price:100,commissionAmount:m.commissionRub,fromLat:56.8,fromLng:60.6,toLat:56.81,toLng:60.61,fromAddress:'VTB sandbox QA A',toAddress:'VTB sandbox QA B',paymentMethod:'CARD'}});
+           m.orderIds.push(order.id);fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});return order;});
+           for(let i=0;i<20;i++)await vtb.processPayment('CITY:'+value.id);
+           assert.equal(await db.tripCardPayment.count({where:{id:'CITY:'+value.id}}),0);
+           await drivers.acceptOrder(m.driverId,value.id);
+           let payment;
+           for(let i=0;i<15;i++){payment=await vtb.checkout(m.passengerId,'CITY',value.id);if(payment.paymentUrl)break;await delay(1000);}
+           assert(payment.paymentUrl);assert.equal(payment.bankAmount,700);return{orderId:value.id,paymentUrl:payment.paymentUrl,bankAmount:700};
+          }
+          (async()=>{const m=JSON.parse(fs.readFileSync(file,'utf8')),id='CITY:'+m.cashTripId,expected=2;
+          let payment;
+          for(let i=0;i<90;i++){payment=await db.tripCardPayment.findUnique({where:{id}});if(payment?.attempts===expected)break;await delay(1000);}
+          assert.equal(payment.attempts,expected);
+          const previous=await db.cardPaymentAttempt.findFirstOrThrow({where:{paymentId:id,number:expected-1}});
+          assert.equal(previous.status,'FAILED');
+          const bank=await vtb.gateway.status(previous.providerId);assert(['DECLINED','FAILED'].includes(vtbTripBankState(bank,previous.merchantOrderNumber,previous.bankAmountMinor)));
+          let checkout;
+          for(let i=0;i<30;i++){checkout=await vtb.checkout(m.passengerId,'CITY',m.cashTripId);if(checkout.paymentUrl)break;await delay(1000);}
+          assert(checkout.paymentUrl);assert.equal(checkout.bankAmount,700);console.error(JSON.stringify({confirmedBankDeclines:expected-1,nextAttempt:expected}));
+          console.log(JSON.stringify({paymentUrl:checkout.paymentUrl,bankAmount:700,orderId:m.cashTripId}));
+          })().catch(e=>{console.error('VTB next cash attempt: '+e.message);process.exitCode=1;}).finally(()=>db.$disconnect());
+          JS
+          REMOTE
+      - name: Submit declined card attempt two
+        run: |
+          export BANK_BROWSER_MODULE="$RUNNER_TEMP/vtb-trip-browser/node_modules/playwright"
+          export BANK_BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable)"
+          node <<'JS'
+          const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require(process.env.BANK_BROWSER_MODULE);
+          (async()=>{const meta=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/trip-probe.json','utf8'));assert.equal(new URL(meta.paymentUrl).hostname,'vtbkz.rbsuat.com');
+          const b=await chromium.launch({headless:true,executablePath:process.env.BANK_BROWSER_BIN,args:['--no-sandbox']});
+          try{const p=await b.newPage({locale:'ru-RU',viewport:{width:1280,height:900}});await p.route('**/flutter_bootstrap.js',r=>r.abort());
+          await p.goto('https://intercity.89-207-255-27.sslip.io/',{waitUntil:'domcontentloaded'});await p.setContent('<iframe id="bank-frame" style="width:100%;height:850px;border:0"></iframe>');
+          await p.locator('#bank-frame').evaluate((e,url)=>{e.src=url;},meta.paymentUrl);
+          let frame=await(await p.locator('#bank-frame').elementHandle()).contentFrame(),embedded=true;
+          try{await frame.locator('#new-card-pan').waitFor({state:'visible',timeout:20000});}
+          catch{embedded=false;await p.goto(meta.paymentUrl,{waitUntil:'domcontentloaded'});frame=p.mainFrame();await frame.locator('#new-card-pan').waitFor({state:'visible',timeout:30000});}
+          const text=await frame.locator('body').innerText();assert.match(text,/700(?:[.,]00)?/);assert.match(text,/KZT|₸|тенге/i);
+          await frame.locator('#new-card-pan').fill('2201382000000062');await frame.locator('#newCardExpiry').fill('12/34');await frame.locator('#newCardCvc').fill('000');
+          await frame.getByRole('button',{name:'Оплатить',exact:true}).first().click();await p.waitForTimeout(8000);
+          console.log(JSON.stringify({officialInvalidCvcTripAttemptSubmitted:true,bankFormEmbedded:embedded}));
+          }finally{await b.close();}})().catch(e=>{console.error(e.message);process.exitCode=1;});
+          JS
+      - name: Verify second bank decline and prepare third attempt
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID" > "$RUNNER_TEMP/trip-probe.json" <<'REMOTE'
+          set -euo pipefail
+          [[ "$(basename "$(readlink -f /opt/intercity/current)")" == "60882cae8f84e82f64d8e9a4b026422799af9f1a" ]] || { echo 'Expected VTB trip release is not active' >&2; exit 1; }
+          docker exec -i -e VTB_TRIP_PROBE_RUN="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+          const {PrismaClient}=require('@prisma/client');
+          const {VtbTripPaymentsService,vtbTripBankState}=require('./dist/src/payments/vtb-trip-payments.service');
+          const {CardPaymentsService}=require('./dist/src/payments/card-payments.service');
+          const {OrdersService}=require('./dist/src/orders/orders.service');
+          const {DriverService}=require('./dist/src/driver/driver.service');
+          const db=new PrismaClient(),run=process.env.VTB_TRIP_PROBE_RUN;
+          assert.match(run,/^[0-9]+$/);
+          const file=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','vtb-trip-live-'+run+'.json');
+          const realtime={publish(){}},push={sendToUser:async()=>{},sendOrderStatusToPassenger:async()=>{}};
+          const vtb=new VtbTripPaymentsService(db,realtime),cards=new CardPaymentsService(db,realtime,push,vtb),orders=new OrdersService(db,{}, {},realtime,push,cards);
+          const drivers=new DriverService(db,{},realtime,push,{},null,undefined,undefined,cards);
+          const delay=ms=>new Promise(r=>setTimeout(r,ms));
+          async function prepareRide(m){
+           const value=await db.$transaction(async tx=>{
+           const order=await tx.order.create({data:{passengerId:m.passengerId,driverId:null,dispatchDriverId:m.profileId,dispatchExpiresAt:new Date(Date.now()+120000),cityId:m.cityId,status:'SEARCHING_DRIVER',mode:'CITY',requestType:'CITY_FIXED',currency:'RUB',price:100,commissionAmount:m.commissionRub,fromLat:56.8,fromLng:60.6,toLat:56.81,toLng:60.61,fromAddress:'VTB sandbox QA A',toAddress:'VTB sandbox QA B',paymentMethod:'CARD'}});
+           m.orderIds.push(order.id);fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});return order;});
+           for(let i=0;i<20;i++)await vtb.processPayment('CITY:'+value.id);
+           assert.equal(await db.tripCardPayment.count({where:{id:'CITY:'+value.id}}),0);
+           await drivers.acceptOrder(m.driverId,value.id);
+           let payment;
+           for(let i=0;i<15;i++){payment=await vtb.checkout(m.passengerId,'CITY',value.id);if(payment.paymentUrl)break;await delay(1000);}
+           assert(payment.paymentUrl);assert.equal(payment.bankAmount,700);return{orderId:value.id,paymentUrl:payment.paymentUrl,bankAmount:700};
+          }
+          (async()=>{const m=JSON.parse(fs.readFileSync(file,'utf8')),id='CITY:'+m.cashTripId,expected=3;
+          let payment;
+          for(let i=0;i<90;i++){payment=await db.tripCardPayment.findUnique({where:{id}});if(payment?.attempts===expected)break;await delay(1000);}
+          assert.equal(payment.attempts,expected);
+          const previous=await db.cardPaymentAttempt.findFirstOrThrow({where:{paymentId:id,number:expected-1}});
+          assert.equal(previous.status,'FAILED');
+          const bank=await vtb.gateway.status(previous.providerId);assert(['DECLINED','FAILED'].includes(vtbTripBankState(bank,previous.merchantOrderNumber,previous.bankAmountMinor)));
+          let checkout;
+          for(let i=0;i<30;i++){checkout=await vtb.checkout(m.passengerId,'CITY',m.cashTripId);if(checkout.paymentUrl)break;await delay(1000);}
+          assert(checkout.paymentUrl);assert.equal(checkout.bankAmount,700);console.error(JSON.stringify({confirmedBankDeclines:expected-1,nextAttempt:expected}));
+          console.log(JSON.stringify({paymentUrl:checkout.paymentUrl,bankAmount:700,orderId:m.cashTripId}));
+          })().catch(e=>{console.error('VTB next cash attempt: '+e.message);process.exitCode=1;}).finally(()=>db.$disconnect());
+          JS
+          REMOTE
+      - name: Submit declined card attempt three
+        run: |
+          export BANK_BROWSER_MODULE="$RUNNER_TEMP/vtb-trip-browser/node_modules/playwright"
+          export BANK_BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable)"
+          node <<'JS'
+          const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require(process.env.BANK_BROWSER_MODULE);
+          (async()=>{const meta=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/trip-probe.json','utf8'));assert.equal(new URL(meta.paymentUrl).hostname,'vtbkz.rbsuat.com');
+          const b=await chromium.launch({headless:true,executablePath:process.env.BANK_BROWSER_BIN,args:['--no-sandbox']});
+          try{const p=await b.newPage({locale:'ru-RU',viewport:{width:1280,height:900}});await p.route('**/flutter_bootstrap.js',r=>r.abort());
+          await p.goto('https://intercity.89-207-255-27.sslip.io/',{waitUntil:'domcontentloaded'});await p.setContent('<iframe id="bank-frame" style="width:100%;height:850px;border:0"></iframe>');
+          await p.locator('#bank-frame').evaluate((e,url)=>{e.src=url;},meta.paymentUrl);
+          let frame=await(await p.locator('#bank-frame').elementHandle()).contentFrame(),embedded=true;
+          try{await frame.locator('#new-card-pan').waitFor({state:'visible',timeout:20000});}
+          catch{embedded=false;await p.goto(meta.paymentUrl,{waitUntil:'domcontentloaded'});frame=p.mainFrame();await frame.locator('#new-card-pan').waitFor({state:'visible',timeout:30000});}
+          const text=await frame.locator('body').innerText();assert.match(text,/700(?:[.,]00)?/);assert.match(text,/KZT|₸|тенге/i);
+          await frame.locator('#new-card-pan').fill('2201382000000062');await frame.locator('#newCardExpiry').fill('12/34');await frame.locator('#newCardCvc').fill('000');
+          await frame.getByRole('button',{name:'Оплатить',exact:true}).first().click();await p.waitForTimeout(8000);
+          console.log(JSON.stringify({officialInvalidCvcTripAttemptSubmitted:true,bankFormEmbedded:embedded}));
+          }finally{await b.close();}})().catch(e=>{console.error(e.message);process.exitCode=1;});
+          JS
+      - name: Verify cash fallback and complete the cash trip
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID" > "$RUNNER_TEMP/trip-probe.json" <<'REMOTE'
+          set -euo pipefail
+          [[ "$(basename "$(readlink -f /opt/intercity/current)")" == "60882cae8f84e82f64d8e9a4b026422799af9f1a" ]] || { echo 'Expected VTB trip release is not active' >&2; exit 1; }
+          docker exec -i -e VTB_TRIP_PROBE_RUN="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+          const {PrismaClient}=require('@prisma/client');
+          const {VtbTripPaymentsService,vtbTripBankState}=require('./dist/src/payments/vtb-trip-payments.service');
+          const {CardPaymentsService}=require('./dist/src/payments/card-payments.service');
+          const {OrdersService}=require('./dist/src/orders/orders.service');
+          const {DriverService}=require('./dist/src/driver/driver.service');
+          const db=new PrismaClient(),run=process.env.VTB_TRIP_PROBE_RUN;
+          assert.match(run,/^[0-9]+$/);
+          const file=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','vtb-trip-live-'+run+'.json');
+          const realtime={publish(){}},push={sendToUser:async()=>{},sendOrderStatusToPassenger:async()=>{}};
+          const vtb=new VtbTripPaymentsService(db,realtime),cards=new CardPaymentsService(db,realtime,push,vtb),orders=new OrdersService(db,{}, {},realtime,push,cards);
+          const drivers=new DriverService(db,{},realtime,push,{},null,undefined,undefined,cards);
+          const delay=ms=>new Promise(r=>setTimeout(r,ms));
+          async function prepareRide(m){
+           const value=await db.$transaction(async tx=>{
+           const order=await tx.order.create({data:{passengerId:m.passengerId,driverId:null,dispatchDriverId:m.profileId,dispatchExpiresAt:new Date(Date.now()+120000),cityId:m.cityId,status:'SEARCHING_DRIVER',mode:'CITY',requestType:'CITY_FIXED',currency:'RUB',price:100,commissionAmount:m.commissionRub,fromLat:56.8,fromLng:60.6,toLat:56.81,toLng:60.61,fromAddress:'VTB sandbox QA A',toAddress:'VTB sandbox QA B',paymentMethod:'CARD'}});
+           m.orderIds.push(order.id);fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});return order;});
+           for(let i=0;i<20;i++)await vtb.processPayment('CITY:'+value.id);
+           assert.equal(await db.tripCardPayment.count({where:{id:'CITY:'+value.id}}),0);
+           await drivers.acceptOrder(m.driverId,value.id);
+           let payment;
+           for(let i=0;i<15;i++){payment=await vtb.checkout(m.passengerId,'CITY',value.id);if(payment.paymentUrl)break;await delay(1000);}
+           assert(payment.paymentUrl);assert.equal(payment.bankAmount,700);return{orderId:value.id,paymentUrl:payment.paymentUrl,bankAmount:700};
+          }
+          (async()=>{const m=JSON.parse(fs.readFileSync(file,'utf8')),id='CITY:'+m.cashTripId;
+          for(let i=0;i<90;i++){const p=await db.tripCardPayment.findUnique({where:{id}});if(p?.status==='CASH')break;await delay(1000);}
+          const p=await db.tripCardPayment.findUniqueOrThrow({where:{id}});assert.equal(p.status,'CASH');assert.equal(p.attempts,3);
+          assert.equal((await db.order.findUnique({where:{id:m.cashTripId}})).paymentMethod,'CASH');
+          assert.equal(await db.cardPaymentAttempt.count({where:{paymentId:id,status:'FAILED'}}),3);
+          const active=await drivers.getActiveOrder(m.driverId);assert.equal(active.id,m.cashTripId);assert.equal(active.cardPayment.status,'CASH');
+          await Promise.all(Array.from({length:20},()=>vtb.processPayment(id)));
+          assert.equal((await db.wallet.findUnique({where:{userId:m.driverId}})).moneyRub,m.cashBalanceBefore);
+          await orders.updateOrderStatus(m.cashTripId,'DRIVER_ARRIVED',{userId:m.driverId,role:'DRIVER'});
+          await orders.updateOrderStatus(m.cashTripId,'IN_PROGRESS',{userId:m.driverId,role:'DRIVER'});
+          await orders.updateOrderStatus(m.cashTripId,'COMPLETED',{userId:m.driverId,role:'DRIVER'});
+          assert.equal(await db.walletTransaction.count({where:{orderId:m.cashTripId,type:'CARD_RIDE_EARNINGS'}}),0);
+          m.balanceBeforeLatePay=(await db.wallet.findUnique({where:{userId:m.driverId}})).moneyRub;
+          const old=await db.cardPaymentAttempt.findFirstOrThrow({where:{paymentId:id,number:1}});assert(old.paymentUrl);assert.equal(old.watchBank,true);
+          m.lateAttemptId=old.id;fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});
+          console.error(JSON.stringify({realCardDeclines:3,cashFallbackVerified:true,cashStatusPersistsForDriver:true,repeatedCashChecks:20,cashTripCompleted:true,noCardEarningsCredited:true}));
+          console.log(JSON.stringify({paymentUrl:old.paymentUrl,bankAmount:700,orderId:m.cashTripId}));
+          })().catch(e=>{console.error('VTB cash verification: '+e.message);process.exitCode=1;}).finally(()=>db.$disconnect());
+          JS
+          REMOTE
+      - name: Test a late successful payment on an old rejected form
+        run: |
+          export BANK_BROWSER_MODULE="$RUNNER_TEMP/vtb-trip-browser/node_modules/playwright"
+          export BANK_BROWSER_BIN="$(command -v google-chrome || command -v google-chrome-stable)"
+          node <<'JS'
+          const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require(process.env.BANK_BROWSER_MODULE);
+          (async()=>{const meta=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/trip-probe.json','utf8'));assert.equal(new URL(meta.paymentUrl).hostname,'vtbkz.rbsuat.com');
+          const b=await chromium.launch({headless:true,executablePath:process.env.BANK_BROWSER_BIN,args:['--no-sandbox']});
+          try{const p=await b.newPage({locale:'ru-RU',viewport:{width:1280,height:900}});await p.route('**/flutter_bootstrap.js',r=>r.abort());
+          await p.goto('https://intercity.89-207-255-27.sslip.io/',{waitUntil:'domcontentloaded'});await p.setContent('<iframe id="bank-frame" style="width:100%;height:850px;border:0"></iframe>');
+          await p.locator('#bank-frame').evaluate((e,url)=>{e.src=url;},meta.paymentUrl);
+          let frame=await(await p.locator('#bank-frame').elementHandle()).contentFrame(),embedded=true;
+          try{await frame.locator('#new-card-pan').waitFor({state:'visible',timeout:20000});}
+          catch{embedded=false;await p.goto(meta.paymentUrl,{waitUntil:'domcontentloaded'});frame=p.mainFrame();await frame.locator('#new-card-pan').waitFor({state:'visible',timeout:30000});}
+          const text=await frame.locator('body').innerText();assert.match(text,/700(?:[.,]00)?/);assert.match(text,/KZT|₸|тенге/i);
+          await frame.locator('#new-card-pan').fill('2201382000000062');await frame.locator('#newCardExpiry').fill('12/34');await frame.locator('#newCardCvc').fill('123');
+          await frame.getByRole('button',{name:'Оплатить',exact:true}).first().click();await frame.waitForURL(u=>u.hostname==='intercity.89-207-255-27.sslip.io'||u.hostname==='api.intercity.89-207-255-27.sslip.io',{timeout:60000});
+          console.log(JSON.stringify({realSandboxTripCardFormPaid:true,amountKzt:700,bankFormEmbedded:embedded}));
+          }finally{await b.close();}})().catch(e=>{console.error(e.message);process.exitCode=1;});
+          JS
+      - name: Verify late payment is refunded after completed cash trip
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID"  <<'REMOTE'
+          set -euo pipefail
+          [[ "$(basename "$(readlink -f /opt/intercity/current)")" == "60882cae8f84e82f64d8e9a4b026422799af9f1a" ]] || { echo 'Expected VTB trip release is not active' >&2; exit 1; }
+          docker exec -i -e VTB_TRIP_PROBE_RUN="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+          const {PrismaClient}=require('@prisma/client');
+          const {VtbTripPaymentsService,vtbTripBankState}=require('./dist/src/payments/vtb-trip-payments.service');
+          const {CardPaymentsService}=require('./dist/src/payments/card-payments.service');
+          const {OrdersService}=require('./dist/src/orders/orders.service');
+          const {DriverService}=require('./dist/src/driver/driver.service');
+          const db=new PrismaClient(),run=process.env.VTB_TRIP_PROBE_RUN;
+          assert.match(run,/^[0-9]+$/);
+          const file=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','vtb-trip-live-'+run+'.json');
+          const realtime={publish(){}},push={sendToUser:async()=>{},sendOrderStatusToPassenger:async()=>{}};
+          const vtb=new VtbTripPaymentsService(db,realtime),cards=new CardPaymentsService(db,realtime,push,vtb),orders=new OrdersService(db,{}, {},realtime,push,cards);
+          const drivers=new DriverService(db,{},realtime,push,{},null,undefined,undefined,cards);
+          const delay=ms=>new Promise(r=>setTimeout(r,ms));
+          async function prepareRide(m){
+           const value=await db.$transaction(async tx=>{
+           const order=await tx.order.create({data:{passengerId:m.passengerId,driverId:null,dispatchDriverId:m.profileId,dispatchExpiresAt:new Date(Date.now()+120000),cityId:m.cityId,status:'SEARCHING_DRIVER',mode:'CITY',requestType:'CITY_FIXED',currency:'RUB',price:100,commissionAmount:m.commissionRub,fromLat:56.8,fromLng:60.6,toLat:56.81,toLng:60.61,fromAddress:'VTB sandbox QA A',toAddress:'VTB sandbox QA B',paymentMethod:'CARD'}});
+           m.orderIds.push(order.id);fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});return order;});
+           for(let i=0;i<20;i++)await vtb.processPayment('CITY:'+value.id);
+           assert.equal(await db.tripCardPayment.count({where:{id:'CITY:'+value.id}}),0);
+           await drivers.acceptOrder(m.driverId,value.id);
+           let payment;
+           for(let i=0;i<15;i++){payment=await vtb.checkout(m.passengerId,'CITY',value.id);if(payment.paymentUrl)break;await delay(1000);}
+           assert(payment.paymentUrl);assert.equal(payment.bankAmount,700);return{orderId:value.id,paymentUrl:payment.paymentUrl,bankAmount:700};
+          }
+          (async()=>{const m=JSON.parse(fs.readFileSync(file,'utf8'));
+          for(let i=0;i<90;i++){const a=await db.cardPaymentAttempt.findUnique({where:{id:m.lateAttemptId}});if(a?.status==='REFUNDED'&&!a.watchBank)break;await delay(1000);}
+          const attempt=await db.cardPaymentAttempt.findUniqueOrThrow({where:{id:m.lateAttemptId}});assert.equal(attempt.status,'REFUNDED');assert.equal(attempt.watchBank,false);
+          const bank=await vtb.gateway.status(attempt.providerId);assert.equal(vtbTripBankState(bank,attempt.merchantOrderNumber,attempt.bankAmountMinor),'REFUNDED');
+          assert.equal((await db.tripCardPayment.findUnique({where:{id:'CITY:'+m.cashTripId}})).status,'CASH');
+          assert.equal((await db.wallet.findUnique({where:{userId:m.driverId}})).moneyRub,m.balanceBeforeLatePay);
+          await Promise.all(Array.from({length:20},()=>vtb.processAttemptWatch(attempt.id)));
+          console.log(JSON.stringify({realLatePaymentAfterCashRefunded:true,refundedKzt:700,tripCompleted:true,tripRemainsCash:true,driverBalanceUnchanged:true,repeatedLateRefundChecks:20}));
+          })().catch(e=>{console.error('VTB late cash refund: '+e.message);process.exitCode=1;}).finally(()=>db.$disconnect());
+          JS
+          REMOTE
+      - name: Refund sandbox charges and remove temporary accounts
+        if: always()
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID"  <<'REMOTE'
+          set -euo pipefail
+          docker exec -i -e VTB_TRIP_PROBE_RUN="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+          const {PrismaClient}=require('@prisma/client');
+          const {VtbTripPaymentsService,vtbTripBankState}=require('./dist/src/payments/vtb-trip-payments.service');
+          const {CardPaymentsService}=require('./dist/src/payments/card-payments.service');
+          const {OrdersService}=require('./dist/src/orders/orders.service');
+          const {DriverService}=require('./dist/src/driver/driver.service');
+          const db=new PrismaClient(),run=process.env.VTB_TRIP_PROBE_RUN;
+          assert.match(run,/^[0-9]+$/);
+          const file=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','vtb-trip-live-'+run+'.json');
+          const realtime={publish(){}},push={sendToUser:async()=>{},sendOrderStatusToPassenger:async()=>{}};
+          const vtb=new VtbTripPaymentsService(db,realtime),cards=new CardPaymentsService(db,realtime,push,vtb),orders=new OrdersService(db,{}, {},realtime,push,cards);
+          const drivers=new DriverService(db,{},realtime,push,{},null,undefined,undefined,cards);
+          const delay=ms=>new Promise(r=>setTimeout(r,ms));
+          async function prepareRide(m){
+           const value=await db.$transaction(async tx=>{
+           const order=await tx.order.create({data:{passengerId:m.passengerId,driverId:null,dispatchDriverId:m.profileId,dispatchExpiresAt:new Date(Date.now()+120000),cityId:m.cityId,status:'SEARCHING_DRIVER',mode:'CITY',requestType:'CITY_FIXED',currency:'RUB',price:100,commissionAmount:m.commissionRub,fromLat:56.8,fromLng:60.6,toLat:56.81,toLng:60.61,fromAddress:'VTB sandbox QA A',toAddress:'VTB sandbox QA B',paymentMethod:'CARD'}});
+           m.orderIds.push(order.id);fs.writeFileSync(file,JSON.stringify(m),{mode:0o600});return order;});
+           for(let i=0;i<20;i++)await vtb.processPayment('CITY:'+value.id);
+           assert.equal(await db.tripCardPayment.count({where:{id:'CITY:'+value.id}}),0);
+           await drivers.acceptOrder(m.driverId,value.id);
+           let payment;
+           for(let i=0;i<15;i++){payment=await vtb.checkout(m.passengerId,'CITY',value.id);if(payment.paymentUrl)break;await delay(1000);}
+           assert(payment.paymentUrl);assert.equal(payment.bankAmount,700);return{orderId:value.id,paymentUrl:payment.paymentUrl,bankAmount:700};
+          }
+          (async()=>{
+           if(!fs.existsSync(file)){console.log(JSON.stringify({tripFixtureCleanup:true,fixtureNotCreated:true}));return;}
+           const m=JSON.parse(fs.readFileSync(file,'utf8')),userIds=[m.passengerId,m.driverId];
+           const users=await db.user.findMany({where:{id:{in:userIds}},select:{phone:true}});assert(users.every(u=>u.phone.startsWith('vtb-trip-live:')));
+           const payments=await db.tripCardPayment.findMany({where:{passengerId:m.passengerId}});
+           for(const p of payments){
+            if(!p.bankOrderId)continue;
+            let bank=await vtb.gateway.status(p.bankOrderId),state=vtbTripBankState(bank,p.bankOrderNumber,p.bankAmountMinor);
+            if(state==='PAID'){await vtb.gateway.refund(p.bankOrderId,p.bankAmountMinor,p.bankOrderNumber);bank=await vtb.gateway.status(p.bankOrderId);state=vtbTripBankState(bank,p.bankOrderNumber,p.bankAmountMinor);assert.equal(state,'REFUNDED');}
+            if(['PENDING','DECLINED'].includes(state)){
+             await db.cardPaymentAttempt.upsert({where:{id:p.id+':'+p.attempts},update:{watchBank:true,bankAmountMinor:p.bankAmountMinor,paymentUrl:null,nextCheckAt:new Date()},create:{id:p.id+':'+p.attempts,paymentId:p.id,number:p.attempts,providerId:p.bankOrderId,merchantOrderNumber:p.bankOrderNumber,bankAmountMinor:p.bankAmountMinor,status:'CANCELLED_OPEN',watchBank:true}});
+            }else if(['REFUNDED','REVERSED','FAILED'].includes(state)){
+             await db.cardPaymentAttempt.updateMany({where:{paymentId:p.id,providerId:p.bankOrderId},data:{watchBank:false}});
+            }else throw Error('Unverified sandbox cleanup payment');
+           }
+           const retained=await db.$transaction(async tx=>{
+           const ids=payments.map(p=>p.id);
+           await tx.cardPaymentAttempt.deleteMany({where:{paymentId:{in:ids},watchBank:false}});
+           const watched=await tx.cardPaymentAttempt.updateMany({where:{paymentId:{in:ids},watchBank:true},data:{paymentUrl:null}});
+           await tx.tripCardPayment.deleteMany({where:{passengerId:m.passengerId}});
+           await tx.walletTransaction.deleteMany({where:{wallet:{userId:{in:userIds}}}});
+           await tx.taxIncomeEntry.deleteMany({where:{sourceId:{in:m.orderIds}}});
+           await tx.tripVerification.deleteMany({where:{passengerId:m.passengerId}});
+           await tx.rideEvent.deleteMany({where:{orderId:{in:m.orderIds}}});
+           await tx.order.deleteMany({where:{id:{in:m.orderIds}}});
+           await tx.savedPaymentCard.deleteMany({where:{userId:m.passengerId}});await tx.cardBinding.deleteMany({where:{userId:m.passengerId}});
+           await tx.driverDailyParticipation.deleteMany({where:{driverId:m.profileId}});
+           await tx.driverActivityEvent.deleteMany({where:{driverId:m.profileId}});
+           await tx.driverServiceStats.deleteMany({where:{driverId:m.profileId}});
+           await tx.driverProfile.deleteMany({where:{id:m.profileId}});
+           await tx.wallet.deleteMany({where:{userId:{in:userIds}}});
+           await tx.user.deleteMany({where:{id:{in:userIds}}});await tx.city.deleteMany({where:{id:m.cityId}});
+           return watched.count;
+           });
+           fs.unlinkSync(file);
+           console.log(JSON.stringify({tripFixtureCleanup:true,temporaryAccountsOrdersAndWalletsRemoved:true,capturedSandboxChargesRefunded:true,anonymousOldFormWatchesRetained:retained}));
+          })().catch(e=>{console.error('VTB fixture cleanup: '+e.message);process.exitCode=1;}).finally(()=>db.$disconnect());
+          JS
+          REMOTE
