@@ -41,6 +41,8 @@ jobs:
           const vault=new IdentityVault();await fs.access(vault.root+'/key.bin');await vault.init();const engine=new IdentityEngine();
           for(const u of selected){const attempts=await db.biometricChallenge.findMany({where:{userId:u.id,purpose:{in:['ENROLL','RECOVERY']}},orderBy:{createdAt:'desc'},take:12,select:{purpose:true,status:true,actions:true,reason:true,videoPath:true,createdAt:true,claimedAt:true,consentVersion:true}});
           console.log(JSON.stringify({account:'***'+u.phone.slice(-4),role:u.role,blocked:!!u.blockedAt,profile:u.biometricProfile,driverStatus:u.driverProfile?.status,attempts:attempts.map(({videoPath,...a})=>({...a,videoAvailable:!!videoPath}))}));
+          const events=await db.techEvent.findMany({where:{userId:u.id,at:{gte:new Date(Date.now()-3*86400000)}},orderBy:{at:'desc'},take:60,select:{at:true,action:true,stage:true,result:true,status:true,durationMs:true,message:true,client:true}});
+          console.log(JSON.stringify({account:'***'+u.phone.slice(-4),events:events.map(({client,...e})=>({...e,client:{platform:client?.platform,version:client?.version,appVersion:client?.appVersion}}))}));
           const c=attempts.find(a=>a.videoPath&&['FAILED','REJECTED','REVIEW'].includes(a.status));
           if(c){try{const video=await vault.read(u.id,c.videoPath);const t=Date.now(),r=await engine.verify(video,c.actions);console.log(JSON.stringify({account:'***'+u.phone.slice(-4),reprocessedAttempt:c.createdAt,bytes:video.length,elapsedSeconds:Math.round((Date.now()-t)/1000),verdict:r.verdict,reason:r.reason,checks:r.checks}));}catch(e){console.log(JSON.stringify({account:'***'+u.phone.slice(-4),reprocessingUnavailable:true,error:e.message?.slice(0,200)}));}}
           }
