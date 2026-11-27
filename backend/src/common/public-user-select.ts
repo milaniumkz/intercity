@@ -12,6 +12,7 @@ export const clientUserSelect = {
 } as const;
 
 export const adminUserSelect = {
+    publicNumber: true,
     id: true,
     phone: true,
     name: true,
