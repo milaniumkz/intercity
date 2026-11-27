@@ -348,6 +348,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       try { await failedCamera?.dispose(); } catch (_) {}
       _captureEvent(_pendingVideo == null ? 'CAPTURE_ERROR' : 'UPLOAD_ERROR',
           statusCode: error is DioException ? error.response?.statusCode : null);
+      _discardRejectedUpload(error);
       if (mounted) {
         setState(() => _message = _pendingVideo == null
             ? errorMessageRu(error)
@@ -387,13 +388,23 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
     if (mounted) _result(result);
   }
 
+  void _discardRejectedUpload(Object error) {
+    if (error is! DioException) return;
+    final status = error.response?.statusCode ?? 0;
+    if (status >= 400 && status < 500 && status != 429) {
+      _pendingVideo = null;
+      _state = 'FAILED';
+    }
+  }
+
   Future<void> _retryUpload() async {
     if (_busy || _pendingVideo == null) return;
     setState(() => _busy = true);
     try { await _sendPendingVideo(); }
-    catch (_) {
+    catch (error) {
       _captureEvent('UPLOAD_ERROR');
-      if (mounted) setState(() => _message = 'Не удалось отправить запись. Проверьте интернет и повторите отправку.');
+      _discardRejectedUpload(error);
+      if (mounted) setState(() => _message = _pendingVideo == null ? errorMessageRu(error) : 'Не удалось отправить запись. Проверьте интернет и повторите отправку.');
     } finally { if (mounted) setState(() => _busy = false); }
   }
 
