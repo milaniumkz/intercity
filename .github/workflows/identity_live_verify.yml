@@ -5,12 +5,15 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/identity_live_verify.yml']
 permissions:
   contents: read
 jobs:
   verify:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'workflow_dispatch' || github.event_name == 'push' ||
       (github.event.workflow_run.head_sha == '7bb60ae093b1727278cad8227ff1e06ad37bd6cf' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     environment: production
@@ -50,8 +53,9 @@ jobs:
           for _ in range(140):writer.write(np.zeros((480,640,3),dtype=np.uint8))
           writer.release()
           PY
-          docker cp "intercity-identity:$probe" "$probe"
-          docker cp "$probe" "intercity-backend:$probe"
+          umask 077
+          docker exec intercity-identity cat "$probe" > "$probe"
+          docker exec -i intercity-backend sh -c 'umask 077; cat > "$1"' sh "$probe" < "$probe"
           docker exec -i -e IDENTITY_QA_RUN="$1" -e IDENTITY_EXPECTED_RELEASE="$2" intercity-backend node <<'JS'
           const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),{randomInt,randomUUID}=require('node:crypto'),bcrypt=require('bcrypt');
           const {PrismaClient}=require('@prisma/client'),{IdentityService,IDENTITY_CONSENT}=require('./dist/src/identity/identity.service'),{IdentityEngine}=require('./dist/src/identity/identity-engine');
