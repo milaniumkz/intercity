@@ -1865,7 +1865,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                             children: [
                               OutlinedButton(
                                 onPressed: () => _showTimeline(id),
-                                child: const Text('Таймлайн'),
+                                child: const Text('История заказа'),
                               ),
                               PopupMenuButton<String>(
                                 enabled: _busyAction == null,
