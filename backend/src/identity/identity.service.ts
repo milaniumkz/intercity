@@ -212,7 +212,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
    if(!c.resetExpiresAt||c.resetExpiresAt<new Date())throw new UnauthorizedException('Разрешение на смену пароля истекло. Повторите видео.');
    return {status:'VERIFIED',resetToken:proof,message:'Личность подтверждена. Придумайте новый пароль.'};
   }
-  return {status:c.status,message:c.status==='FAILED'?'Обработка прервана. Запишите новое видео.':c.status==='EXPIRED'?'Срок проверки истёк. Запишите новое видео.':c.status==='REVIEW'?(c.reason||'Не удалось уверенно завершить автоматическую проверку.')+' Можно записать новое видео или дождаться решения администратора.':c.status==='VERIFIED'?'Видеопроверка пройдена.':c.status==='REJECTED'?(c.purpose==='ENROLL'?c.reason||'Видеопроверка не пройдена':identityFailure):undefined};
+  return {status:c.status,message:c.status==='PROCESSING'?'Видео получено. Проверяем запись; при нагрузке это может занять несколько минут. Новая запись не нужна.':c.status==='FAILED'?'Обработка прервана. Запишите новое видео.':c.status==='EXPIRED'?'Срок проверки истёк. Запишите новое видео.':c.status==='REVIEW'?(c.reason||'Не удалось уверенно завершить автоматическую проверку.')+' Можно записать новое видео или дождаться решения администратора.':c.status==='VERIFIED'?'Видеопроверка пройдена.':c.status==='REJECTED'?(c.purpose==='ENROLL'?c.reason||'Видеопроверка не пройдена':identityFailure):undefined};
  }
  async resetPassword(proof:string,password:string){
   if(!proof||proof.length!==64||!password||password.length<6||Buffer.byteLength(password)>72)throw new BadRequestException('Укажите разрешение проверки и новый пароль от 6 символов, не более 72 байт');

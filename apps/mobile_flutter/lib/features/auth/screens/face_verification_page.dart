@@ -448,6 +448,9 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       if (mounted) {
         setState(() => _message = errorMessageRu(error));
         _announceError(_message);
+        if (_state == 'PROCESSING' || _state == 'REVIEW') {
+          _poll = Timer(const Duration(seconds: 8), _check);
+        }
       }
     }
   }
@@ -623,8 +626,9 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                 _state == 'PROCESSING') ...[
                               const Icon(Icons.pending_actions, size: 56),
                               const SizedBox(height: 16),
-                              const Text(
-                                  'Автоматической проверке не хватило уверенности. Можно сразу записать новое видео или дождаться решения администратора. Материалы доступны для ручной проверки до 24 часов.'),
+                              Text(_state == 'PROCESSING'
+                                  ? 'Видео получено. Проверяем запись; при нагрузке обработка может занять несколько минут. Новое видео снимать не нужно.'
+                                  : 'Автоматической проверке не хватило уверенности. Можно сразу записать новое видео или дождаться решения администратора. Материалы доступны для ручной проверки до 24 часов.'),
                               TextButton(
                                   onPressed: _busy ? null : _check,
                                   child: const Text('Проверить результат')),
