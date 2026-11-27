@@ -216,7 +216,7 @@ void main() {
 
     await tester.tap(find.text('Заказы').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Таймлайн').first);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'История заказа').first);
     await tester.pumpAndSettle();
     expect(find.textContaining('История заказа'), findsOneWidget);
     await tester.tap(find.text('Закрыть'));
