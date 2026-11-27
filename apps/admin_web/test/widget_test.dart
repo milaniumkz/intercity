@@ -218,7 +218,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(OutlinedButton, 'Таймлайн').first);
     await tester.pumpAndSettle();
-    expect(find.textContaining('Таймлайн заказа'), findsOneWidget);
+    expect(find.textContaining('История заказа'), findsOneWidget);
     await tester.tap(find.text('Закрыть'));
     await tester.pumpAndSettle();
     await tester.tap(find
