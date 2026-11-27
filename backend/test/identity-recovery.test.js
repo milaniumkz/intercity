@@ -74,6 +74,13 @@ test('private video enrollment, matching, rejection, manual review and one-use r
    await assert.rejects(service.review(c.challengeId,admin.id,true,'Do not bypass a rejected mismatch'),/недоступна/);
    result={...result,embedding:a,verdict:'REJECT',reason:'photo rejected'};c=await recover(alice);assert.equal((await service.submit(c.challengeId,c.challengeToken,video())).status,'REJECTED');result.verdict='PASS';
   });
+  await t.test('maintenance preserves bounded queue wait but expires abandoned processing',async()=>{
+   const c=await enroll(bob);
+   await db.biometricChallenge.update({where:{id:c.challengeId},data:{status:'PROCESSING',claimedAt:new Date(Date.now()-4*60000)}});
+   await service.maintenance();assert.equal((await db.biometricChallenge.findUnique({where:{id:c.challengeId}})).status,'PROCESSING');
+   await db.biometricChallenge.update({where:{id:c.challengeId},data:{claimedAt:new Date(Date.now()-7*60000)}});
+   await service.maintenance();assert.equal((await db.biometricChallenge.findUnique({where:{id:c.challengeId}})).status,'FAILED');
+  });
   await t.test('twenty concurrent resends of a processing clip never rerun the engine or grant identity',async()=>{
    const c=await enroll(bob),recording=video(),verify=engine.verify;
    let release,entered;const gate=new Promise(r=>{release=r}),started=new Promise(r=>{entered=r});

@@ -185,6 +185,9 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   videoPath=verdict==='REVIEW'||c.purpose==='ENROLL'?await this.vault.write(user.id,video):null;
   await this.prisma.$transaction(async tx=>{
    await tx.$executeRaw`SELECT id FROM "User" WHERE id=${user.id} FOR UPDATE`;
+   await tx.$executeRaw`SELECT id FROM "BiometricChallenge" WHERE id=${id} FOR UPDATE`;
+   const processing=await tx.biometricChallenge.findUnique({where:{id}});
+   if(processing?.status!=='PROCESSING'||processing.videoDigest!==digest)throw new ConflictException('Обработка этой записи уже завершена. Начните новую проверку.');
    const current=await tx.user.findUnique({where:{id:user.id}});
    if(!current||current.blockedAt||current.authVersion!==c.authVersion)throw new UnauthorizedException(identityFailure);
    if(c.purpose==='ENROLL'&&verdict==='PASS' && await tx.biometricProfile.findUnique({where:{userId:user.id}}))throw new ConflictException('Эталон уже создан. Повторная привязка не разрешена');
@@ -253,7 +256,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   return {success:true};
  }
  async maintenance(){
-  await this.prisma.biometricChallenge.updateMany({where:{status:'PROCESSING',claimedAt:{lt:new Date(Date.now()-3*60000)}},data:{status:'FAILED',reason:'Обработка прервана. Нужна новая запись'}});
+  await this.prisma.biometricChallenge.updateMany({where:{status:'PROCESSING',claimedAt:{lt:new Date(Date.now()-6*60000)}},data:{status:'FAILED',reason:'Обработка прервана. Нужна новая запись'}});
   await this.prisma.biometricChallenge.updateMany({where:{status:'REVIEW',createdAt:{lt:new Date(Date.now()-86400000)}},data:{status:'EXPIRED'}});
   const old=await this.prisma.biometricChallenge.findMany({where:{createdAt:{lt:new Date(Date.now()-7*86400000)}},take:100});
   for(const c of old){if(c.userId){for(const file of [c.videoPath,c.referencePath,c.secondaryPath])if(file)await this.vault.remove(c.userId,file);}await this.prisma.biometricChallenge.delete({where:{id:c.id}});}
