@@ -1,4 +1,5 @@
 import unittest,tempfile
+from contextlib import nullcontext
 from unittest.mock import patch
 from types import SimpleNamespace
 from pathlib import Path
@@ -63,15 +64,15 @@ class IdentityEngineTests(unittest.TestCase):
    samples.append({'yaw':0,'pitch':.4,'eye':.1 if n in (130,131) else .25,'mouth':.30 if 35<=n<=65 else .03})
   face=np.array([120,120,180,180]+[0]*11,dtype=np.float32)
   result=SimpleNamespace(multi_face_landmarks=[SimpleNamespace(landmark=[])])
-  mesh=unittest.mock.MagicMock();mesh.__enter__.return_value.process.return_value=result
+  mesh=nullcontext(SimpleNamespace(process=lambda _:result));poses=iter(samples);pad_calls=[]
   with tempfile.TemporaryDirectory() as root:
    path=Path(root)/'15fps.mp4';writer=cv2.VideoWriter(str(path),cv2.VideoWriter_fourcc(*'mp4v'),15,(640,480))
    for _ in range(210):writer.write(frame)
    writer.release()
-   with patch.object(engine,'detect',return_value=face),patch.object(engine,'pose',side_effect=samples),patch.object(engine,'vector',return_value=np.ones(128)/np.sqrt(128)),patch.object(engine,'pad',return_value=[1.,1.]) as pad,patch.object(engine.mp.solutions.face_mesh,'FaceMesh',return_value=mesh):
+   with patch.object(engine,'detect',new=lambda *_:face),patch.object(engine,'pose',new=lambda _:next(poses)),patch.object(engine,'vector',new=lambda *_:np.ones(128)/np.sqrt(128)),patch.object(engine,'pad',new=lambda *_:(pad_calls.append(1) or [1.,1.])),patch.object(engine.mp.solutions.face_mesh,'FaceMesh',new=lambda **_:mesh):
     checked=engine.verify(path,['OPEN_MOUTH','BLINK'])
    self.assertEqual(checked['verdict'],'PASS',checked.get('reason'))
-   self.assertGreaterEqual(pad.call_count,10)
+   self.assertGreaterEqual(len(pad_calls),10)
 
  def verify_fixture(self,fps=15,outlier=None,dark_start=False):
   baseline={'yaw':0,'pitch':.4,'eye':.25,'mouth':.03}
@@ -84,12 +85,12 @@ class IdentityEngineTests(unittest.TestCase):
    t=(state['tick']-1)/fps
    if outlier and outlier(t):v=np.zeros(128);v[0]=1;return v
    return np.ones(128)/np.sqrt(128)
-  mesh=unittest.mock.MagicMock();mesh.__enter__.return_value.process.return_value=SimpleNamespace(multi_face_landmarks=[SimpleNamespace(landmark=[])])
+  mesh=nullcontext(SimpleNamespace(process=lambda _:SimpleNamespace(multi_face_landmarks=[SimpleNamespace(landmark=[])])))
   with tempfile.TemporaryDirectory() as root:
    path=Path(root)/'phone.mp4';writer=cv2.VideoWriter(str(path),cv2.VideoWriter_fourcc(*'mp4v'),fps,(640,480))
    for n in range(14*fps):writer.write(np.zeros_like(sharp) if dark_start and n<fps//2 else sharp)
    writer.release()
-   with patch.object(engine,'detect',return_value=face),patch.object(engine,'pose',side_effect=pose),patch.object(engine,'vector',side_effect=vector),patch.object(engine,'pad',return_value=[1.,1.]),patch.object(engine.mp.solutions.face_mesh,'FaceMesh',return_value=mesh):
+   with patch.object(engine,'detect',new=lambda *_:face),patch.object(engine,'pose',new=pose),patch.object(engine,'vector',new=vector),patch.object(engine,'pad',new=lambda *_:[1.,1.]),patch.object(engine.mp.solutions.face_mesh,'FaceMesh',new=lambda **_:mesh):
     return engine.verify(path,['TURN_LEFT','BLINK'])
 
  def test_low_frame_rate_phone_still_recognizes_turn_and_blink(self):
