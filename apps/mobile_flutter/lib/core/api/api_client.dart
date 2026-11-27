@@ -272,6 +272,11 @@ class ApiClient {
     RequestOptions requestOptions,
     String token,
   ) {
+    // Dio finalizes multipart bodies on the first send. A refreshed-token
+    // retry must build a fresh stream, including identity video and documents.
+    if (requestOptions.data is FormData) {
+      requestOptions.data = (requestOptions.data as FormData).clone();
+    }
     requestOptions
       ..headers['Authorization'] = 'Bearer $token'
       ..extra[_retriedRequestKey] = true

@@ -31,10 +31,24 @@ test('private video enrollment, matching, rejection, manual review and one-use r
    await assert.rejects(service.submit(c.challengeId,c.challengeToken,video(),bob.id),/Условия хранения/);
    assert.equal(await db.biometricProfile.count({where:{userId:bob.id}}),0);
   });
+  await t.test('client capture telemetry cannot verify an account or accept arbitrary payloads',async()=>{
+   const c=await enroll(bob);
+   await service.clientEvent(c.challengeId,c.challengeToken,'CAPTURE_ERROR',12000,0);
+   assert.equal(await db.biometricProfile.count({where:{userId:bob.id}}),0);
+   assert.equal((await db.biometricChallenge.findUnique({where:{id:c.challengeId}})).status,'READY');
+   await assert.rejects(service.clientEvent(c.challengeId,'x'.repeat(43),'CAPTURED'));
+   await assert.rejects(service.clientEvent(c.challengeId,c.challengeToken,'RAW_MESSAGE'));
+   const e=await db.techEvent.findFirst({where:{objectId:c.challengeId}});
+   assert.equal(e.stage,'CAPTURE_ERROR');assert.deepEqual(e.details,{source:'client',bytes:12000,statusCode:0});
+  });
   await t.test('successful initial enrollment encrypts and binds reference; no overwrite',async()=>{
-   const c=await enroll(alice);assert.equal(new Set(c.actions).size,2);assert.equal(c.recordingSeconds,14);
+   const c=await enroll(alice);assert.equal(new Set(c.actions).size,2);assert(c.actions.every(a=>['TURN_LEFT','TURN_RIGHT','BLINK'].includes(a)));assert.equal(c.recordingSeconds,14);
    await assert.rejects(service.submit(c.challengeId,c.challengeToken,video(),bob.id));
    const recording=video();const r=await service.submit(c.challengeId,c.challengeToken,recording,alice.id);assert.equal(r.status,'VERIFIED');assert.equal(await service.needsVerification(alice.id,alice.role),false);
+   const beforeRetry=calls;
+   const retries=await Promise.all(Array.from({length:20},()=>service.submit(c.challengeId,c.challengeToken,recording,alice.id)));
+   assert(retries.every(x=>x.status==='VERIFIED'));assert.equal(calls,beforeRetry);
+   await assert.rejects(service.submit(c.challengeId,c.challengeToken,video(),alice.id),/другой записью/);
    const p=await db.biometricProfile.findUnique({where:{userId:alice.id}});assert(!p.template.includes(JSON.stringify(a)));
    assert.deepEqual(JSON.parse(service.vault.open(Buffer.from(p.template,'base64'),alice.id).toString()),a);
    assert.throws(()=>service.vault.open(Buffer.from(p.template,'base64'),bob.id));
@@ -60,19 +74,31 @@ test('private video enrollment, matching, rejection, manual review and one-use r
    await assert.rejects(service.review(c.challengeId,admin.id,true,'Do not bypass a rejected mismatch'),/недоступна/);
    result={...result,embedding:a,verdict:'REJECT',reason:'photo rejected'};c=await recover(alice);assert.equal((await service.submit(c.challengeId,c.challengeToken,video())).status,'REJECTED');result.verdict='PASS';
   });
+  await t.test('twenty concurrent resends of a processing clip never rerun the engine or grant identity',async()=>{
+   const c=await enroll(bob),recording=video(),verify=engine.verify;
+   let release,entered;const gate=new Promise(r=>{release=r}),started=new Promise(r=>{entered=r});
+   engine.verify=async()=>{calls++;entered();await gate;return{...structuredClone(result),verdict:'REJECT',reason:'Fixture rejected'};};
+   try{
+    const pending=service.submit(c.challengeId,c.challengeToken,recording,bob.id);await started;
+    const before=calls,duplicates=await Promise.all(Array.from({length:20},()=>service.submit(c.challengeId,c.challengeToken,recording,bob.id)));
+    assert(duplicates.every(r=>r.status==='PROCESSING'));assert.equal(calls,before);
+    release();assert.equal((await pending).status,'REJECTED');
+    assert.equal(await db.biometricProfile.count({where:{userId:bob.id}}),0);
+   }finally{release();engine.verify=verify;}
+  });
   await t.test('uncertain enrollment is retryable, retains encrypted failure video and never permits manual approval',async()=>{
    result.verdict='REVIEW';result.reason='uncertain PAD';const before=notifications,c=await enroll(bob),recording=video();
    assert.equal((await service.submit(c.challengeId,c.challengeToken,recording,bob.id)).status,'REJECTED');assert.equal(await service.needsVerification(bob.id,bob.role),true);assert.equal(notifications,before);
    const stored=await db.biometricChallenge.findUnique({where:{id:c.challengeId}});assert.equal(stored.candidate,null);assert.equal(stored.referencePath,null);assert(stored.videoPath);assert.deepEqual(await service.vault.read(bob.id,stored.videoPath),recording);assert.deepEqual(await service.reviewMedia(c.challengeId,'video'),recording);
    const history=await service.history({userId:bob.id,status:'FAILURES'});assert(history.items.some(x=>x.id===c.challengeId&&x.hasVideo));assert(!JSON.stringify(history).includes(stored.videoPath));
    await assert.rejects(service.review(c.challengeId,admin.id,true,'No manual initial enrollment approval'),/автоматически/);
-   for(let i=0;i<20;i++)await enroll(bob);
+   for(let i=0;i<20;i++){const challenge=await enroll(bob);assert(challenge.actions.every(a=>['TURN_LEFT','TURN_RIGHT','BLINK'].includes(a)));}
    result.verdict='PASS';const next=await enroll(bob);assert.equal((await service.submit(next.challengeId,next.challengeToken,video(),bob.id)).status,'VERIFIED');
    assert.equal(await service.needsVerification(bob.id,bob.role),false);
   });
   await t.test('uncertain recovery still requires a manual decision and keeps its rate limits',async()=>{
    await db.biometricChallenge.updateMany({where:{userId:alice.id},data:{createdAt:new Date(Date.now()-2*3600000)}});
-   result.verdict='REVIEW';const c=await recover(alice,'127.0.0.9');assert.equal(c.actions.length,3);assert.equal(c.recordingSeconds,20);assert.equal((await service.submit(c.challengeId,c.challengeToken,video())).status,'REVIEW');
+   result.verdict='REVIEW';const c=await recover(alice,'127.0.0.9');assert.equal(c.actions.length,3);assert.deepEqual([...c.actions].sort(),['BLINK','TURN_LEFT','TURN_RIGHT']);assert.equal(c.recordingSeconds,20);assert.equal((await service.submit(c.challengeId,c.challengeToken,video())).status,'REVIEW');
    await service.review(c.challengeId,admin.id,true,'Reviewed live video and compared with reference');assert.equal((await service.challengeStatus(c.challengeId,c.challengeToken)).status,'VERIFIED');result.verdict='PASS';
   });
   await t.test('strongly matching live recovery accepts two clear tasks when one gesture is missed',async()=>{
@@ -101,7 +127,7 @@ test('private video enrollment, matching, rejection, manual review and one-use r
    assert.equal(await service.needsVerification(admin.id,admin.role),false);const c=await recover(admin);assert.equal((await service.submit(c.challengeId,c.challengeToken,video())).status,'REJECTED');
   });
  }finally{
-  service.onModuleDestroy();const ids=users.map(u=>u.id);await db.adminAuditLog.deleteMany({where:{adminId:{in:ids}}});await db.refreshToken.deleteMany({where:{userId:{in:ids}}});await db.user.deleteMany({where:{id:{in:ids}}});
+  service.onModuleDestroy();const ids=users.map(u=>u.id);await db.adminAuditLog.deleteMany({where:{adminId:{in:ids}}});await db.refreshToken.deleteMany({where:{userId:{in:ids}}});await db.techEvent.deleteMany({where:{userId:{in:ids}}});await db.user.deleteMany({where:{id:{in:ids}}});
   if(original)await db.appSettings.update({where:{key:original.key},data:{value:original.value}});else await db.appSettings.deleteMany({where:{key:'identityVerificationEnabled'}});
   await db.$disconnect();await fs.rm(root,{recursive:true,force:true});if(previousRoot===undefined)delete process.env.TECH_STORAGE_DIR;else process.env.TECH_STORAGE_DIR=previousRoot;
  }

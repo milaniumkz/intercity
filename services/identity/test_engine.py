@@ -73,4 +73,50 @@ class IdentityEngineTests(unittest.TestCase):
    self.assertEqual(checked['verdict'],'PASS',checked.get('reason'))
    self.assertGreaterEqual(pad.call_count,10)
 
+ def verify_fixture(self,fps=15,outlier=None,dark_start=False):
+  baseline={'yaw':0,'pitch':.4,'eye':.25,'mouth':.03}
+  rng=np.random.default_rng(24);sharp=rng.integers(0,256,(480,640,3),dtype=np.uint8)
+  face=np.array([120,120,180,180]+[0]*11,dtype=np.float32);state={'tick':0}
+  def pose(_):
+   t=state['tick']/fps;state['tick']+=1
+   return {**baseline,'yaw':.12 if 2.5<t<5 else 0,'eye':.1 if 8.6<t<9 else .25}
+  def vector(*_):
+   t=(state['tick']-1)/fps
+   if outlier and outlier(t):v=np.zeros(128);v[0]=1;return v
+   return np.ones(128)/np.sqrt(128)
+  mesh=unittest.mock.MagicMock();mesh.__enter__.return_value.process.return_value=SimpleNamespace(multi_face_landmarks=[SimpleNamespace(landmark=[])])
+  with tempfile.TemporaryDirectory() as root:
+   path=Path(root)/'phone.mp4';writer=cv2.VideoWriter(str(path),cv2.VideoWriter_fourcc(*'mp4v'),fps,(640,480))
+   for n in range(14*fps):writer.write(np.zeros_like(sharp) if dark_start and n<fps//2 else sharp)
+   writer.release()
+   with patch.object(engine,'detect',return_value=face),patch.object(engine,'pose',side_effect=pose),patch.object(engine,'vector',side_effect=vector),patch.object(engine,'pad',return_value=[1.,1.]),patch.object(engine.mp.solutions.face_mesh,'FaceMesh',return_value=mesh):
+    return engine.verify(path,['TURN_LEFT','BLINK'])
+
+ def test_low_frame_rate_phone_still_recognizes_turn_and_blink(self):
+  for fps in [5,15,30]:
+   checked=self.verify_fixture(fps=fps)
+   self.assertEqual(checked['verdict'],'PASS',checked.get('reason'))
+   self.assertEqual(checked['checks']['passedActions'],2)
+
+ def test_one_poor_profile_sample_does_not_imply_a_different_person(self):
+  checked=self.verify_fixture(outlier=lambda t:3<t<3.35)
+  self.assertEqual(checked['verdict'],'PASS',checked.get('reason'))
+
+ def test_sustained_face_swap_still_fails_during_a_turn(self):
+  checked=self.verify_fixture(outlier=lambda t:3<t<5)
+  self.assertEqual(checked['verdict'],'REJECT')
+  self.assertIn('Лицо изменилось',checked['reason'])
+
+ def test_reference_uses_a_clear_frame_after_camera_auto_exposure_settles(self):
+  checked=self.verify_fixture(dark_start=True)
+  self.assertEqual(checked['verdict'],'PASS',checked.get('reason'))
+  import base64
+  reference=cv2.imdecode(np.frombuffer(base64.b64decode(checked['reference']),np.uint8),cv2.IMREAD_GRAYSCALE)
+  self.assertGreater(float(cv2.Laplacian(reference,cv2.CV_64F).var()),100)
+
+ def test_multiple_detector_faces_are_explicitly_rejected(self):
+  detector=SimpleNamespace(setInputSize=lambda _:None,detect=lambda _:(None,np.zeros((2,15),dtype=np.float32)))
+  with patch.object(engine,'DETECTOR',detector):
+   with self.assertRaises(engine.MultipleFacesError):engine.detect(np.zeros((480,640,3),dtype=np.uint8))
+
 if __name__=='__main__':unittest.main()
