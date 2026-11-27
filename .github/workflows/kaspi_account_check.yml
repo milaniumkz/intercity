@@ -1,0 +1,40 @@
+name: Check Kaspi certification account
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/kaspi_account_check.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+      - name: Read only account readiness
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          docker exec -i intercity-backend node <<'JS'
+          const {PrismaClient}=require('@prisma/client'),{createHash}=require('crypto');const db=new PrismaClient();
+          (async()=>{const users=await db.user.findMany({where:{phone:{not:{startsWith:'erased:'}}},select:{phone:true,name:true,role:true,blockedAt:true,wallet:{select:{id:true}},driverProfile:{select:{status:true}}}});
+          const u=users.find(u=>createHash('sha256').update('kaspi-certification-20261127:'+u.phone.replace(/\D/g,'')).digest('hex')==='010976e515b5e8a13664e1d96b561c6e22c6b1037a6ad654a423b581cc4e7a7f');
+          console.log(JSON.stringify({kaspiRequestedTestAccountFound:!!u,driver:!!u?.driverProfile,driverStatus:u?.driverProfile?.status,hasWallet:!!u?.wallet,blocked:!!u?.blockedAt,namePartCount:u?u.name.trim().split(/\s+/).length:0,fullNameReady:!!u&&u.name.trim().split(/\s+/).length>=3,release:process.env.RELEASE_SHA}));})().catch(e=>{console.error(e.message);process.exitCode=1;}).finally(()=>db.$disconnect());
+          JS
+          REMOTE
