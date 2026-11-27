@@ -218,7 +218,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(OutlinedButton, 'История заказа').first);
     await tester.pumpAndSettle();
-    expect(find.textContaining('История заказа'), findsOneWidget);
+    expect(find.descendant(of: find.byType(AlertDialog), matching: find.textContaining('История заказа')), findsOneWidget);
     await tester.tap(find.text('Закрыть'));
     await tester.pumpAndSettle();
     await tester.tap(find
