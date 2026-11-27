@@ -66,6 +66,7 @@ enum ComplaintStatus {
 }
 
 model User {
+  publicNumber Int @unique @default(dbgenerated("nextval('crm_public_number_seq'::regclass)"))
   id                 String         @id @default(uuid())
   publicId           String?        @unique
   phone              String         @unique
@@ -102,6 +103,7 @@ model User {
 }
 
 model City {
+  publicNumber Int @unique @default(dbgenerated("nextval('crm_public_number_seq'::regclass)"))
   id        String         @id @default(uuid())
   name      String
   aliases   String[]       @default([])
@@ -262,6 +264,7 @@ model Wallet {
 }
 
 model TopupRequest {
+  publicNumber Int @unique @default(dbgenerated("nextval('crm_public_number_seq'::regclass)"))
   id              String      @id @default(uuid())
   walletId        String
   wallet          Wallet      @relation(fields: [walletId], references: [id])
@@ -276,6 +279,7 @@ model TopupRequest {
 }
 
 model PayoutRequest {
+  publicNumber Int @unique @default(dbgenerated("nextval('crm_public_number_seq'::regclass)"))
   id        String       @id @default(uuid())
   walletId  String
   wallet    Wallet       @relation(fields: [walletId], references: [id])
@@ -291,6 +295,7 @@ model PayoutRequest {
 }
 
 model DriverProfile {
+  publicNumber Int @unique @default(dbgenerated("nextval('crm_public_number_seq'::regclass)"))
   id                   String                  @id @default(uuid())
   userId               String                  @unique
   user                 User                    @relation(fields: [userId], references: [id])
@@ -413,6 +418,7 @@ model DriverPartnerFuelBonus {
 }
 
 model Order {
+  publicNumber Int @unique @default(dbgenerated("nextval('crm_public_number_seq'::regclass)"))
   id                 String         @id @default(uuid())
   passengerLeavingAt DateTime?
   passengerId        String
@@ -667,6 +673,7 @@ model NotificationDispatchJob {
 }
 
 model TariffCity {
+  publicNumber Int @unique @default(dbgenerated("nextval('crm_public_number_seq'::regclass)"))
   vehicleClass String @default("ECONOMY")
   id          String   @id @default(uuid())
   cityId      String
@@ -682,6 +689,7 @@ model TariffCity {
 }
 
 model TariffCargo {
+  publicNumber Int @unique @default(dbgenerated("nextval('crm_public_number_seq'::regclass)"))
   countryCode String @default("KZ")
   id         String   @id @default(uuid())
   name       String
@@ -695,6 +703,7 @@ model TariffCargo {
 }
 
 model TariffDelivery {
+  publicNumber Int @unique @default(dbgenerated("nextval('crm_public_number_seq'::regclass)"))
   countryCode String @default("KZ")
   id            String   @id @default(uuid())
   name          String
@@ -709,6 +718,7 @@ model TariffDelivery {
 }
 
 model IntercityRequest {
+  publicNumber Int @unique @default(dbgenerated("nextval('crm_public_number_seq'::regclass)"))
   departureOffsetMinutes Int?
   driverRating Int?
   driverRatingStatus String @default("COUNTED")

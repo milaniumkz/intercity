@@ -805,6 +805,7 @@ export class AdminService {
             orderBy: { createdAt: 'desc' },
             select: {
                 id: true,
+                publicNumber: true,
                 walletId: true,
                 amount: true,
                 currency: true,

@@ -37,12 +37,9 @@ const recordModes = {
   'DELIVERY_INTERCITY': 'Междугородняя доставка',
   'DELIVERY_RF': 'Доставка по РФ'
 };
-String recordNumber(dynamic value) {
-  final raw = value?.toString() ?? '';
-  if (raw.isEmpty) return 'Номер не указан';
-  final compact = raw.replaceAll('-', '');
-  return '№${compact.substring(0, compact.length > 10 ? 10 : compact.length).toUpperCase()}';
-}
+String recordNumber(dynamic number) => number is int && number > 0
+    ? '№$number'
+    : 'Номер пока недоступен';
 
 String recordRole(Map user) => user['role'] == 'ADMIN'
     ? 'Администратор'
@@ -992,7 +989,7 @@ class _AdminTripListState extends State<AdminTripList> {
                           ExpansionTile(
                               title:
                                   const Text('Номер обращения для поддержки'),
-                              children: [SelectableText(recordNumber(row['id']))])
+                              children: [SelectableText(recordNumber(row['publicNumber']))])
                         ]))),
                 actions: [
                   TextButton(

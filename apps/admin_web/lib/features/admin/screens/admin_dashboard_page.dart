@@ -298,7 +298,7 @@ class _AdminDriversPageState extends State<AdminDriversPage> {
                           title: Text(
                               '${driver['user']?['phone'] ?? 'Телефон не указан'}'),
                           subtitle:
-                              Text('${recordNumber(id)}\nСтатус ${recordStatuses[driver['status']] ?? 'Статус уточняется'}'),
+                              Text('${recordNumber(driver['publicNumber'])}\nСтатус ${recordStatuses[driver['status']] ?? 'Статус уточняется'}'),
                           isThreeLine: true,
                           trailing: Wrap(
                             spacing: 8,
@@ -603,7 +603,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                           tileColor: const Color(0xFFF7FAFC),
                           title: Text(user['phone']?.toString() ?? '-'),
                           subtitle: Text(
-                            '${recordNumber(user['id'])}\n'
+                            '${recordNumber(user['publicNumber'])}\n'
                             '${user['name'] ?? 'Без имени'} • роль ${user['role'] ?? '-'} • город ${city?['name'] ?? user['cityId'] ?? '-'}',
                           ),
                           isThreeLine: true,
@@ -872,7 +872,7 @@ class _AdminCitiesPageState extends State<AdminCitiesPage> {
                             title: Text(
                                 '${city['name']} • ${rideCurrencySymbol(city)}'),
                             subtitle: Text(
-                                '${recordNumber(city['id'])} • ${city['region'] ?? '-'}\n${city['lat']}, ${city['lng']}'),
+                                '${recordNumber(city['publicNumber'])} • ${city['region'] ?? '-'}\n${city['lat']}, ${city['lng']}'),
                             isThreeLine: true,
                             trailing: OutlinedButton(
                               onPressed: _busyAction == null
@@ -1570,7 +1570,7 @@ class _AdminTopupsPageState extends State<AdminTopupsPage> {
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('${recordNumber(m['id'])} • ${recordStatuses[m['status']] ?? 'Статус уточняется'}'),
+                              Text('${recordNumber(m['publicNumber'])} • ${recordStatuses[m['status']] ?? 'Статус уточняется'}'),
                               const SizedBox(height: 8),
                               Wrap(
                                 spacing: 8,
@@ -1699,7 +1699,7 @@ class _AdminPayoutsPageState extends State<AdminPayoutsPage> {
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('${recordNumber(m['id'])} • ${recordStatuses[m['status']] ?? 'Статус уточняется'}'),
+                              Text('${recordNumber(m['publicNumber'])} • ${recordStatuses[m['status']] ?? 'Статус уточняется'}'),
                               const SizedBox(height: 8),
                               Wrap(
                                 spacing: 8,
@@ -1778,7 +1778,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         'status': status,
         'reason': 'Ручное изменение статуса через admin_web',
       });
-      setState(() => _message = 'Заказ ${recordNumber(id)} обновлён');
+      setState(() => _message = 'Статус заказа обновлён');
       await _load();
     } catch (e) {
       if (!mounted) return;
@@ -1790,7 +1790,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
     }
   }
 
-  Future<void> _showTimeline(String id) async {
+  Future<void> _showTimeline(String id, dynamic number) async {
     try {
       final res = await AdminApiClient.instance
           .get('/admin/orders/$id/events', query: {'take': 100});
@@ -1799,7 +1799,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
       showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text('История заказа ${recordNumber(id)}'),
+          title: Text('История заказа ${recordNumber(number)}'),
           content: SizedBox(
             width: 680,
             child: events.isEmpty
@@ -1859,12 +1859,12 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                           tileColor: const Color(0xFFF7FAFC),
                           title: Text('${recordModes[m['mode']] ?? 'Режим уточняется'} • ${recordStatuses[m['status']] ?? 'Статус уточняется'}'),
                           subtitle: Text(
-                              '${recordNumber(id)} • цена ${m['price']} ${rideCurrencySymbol(m)}'),
+                              '${recordNumber(m['publicNumber'])} • цена ${m['price']} ${rideCurrencySymbol(m)}'),
                           trailing: Wrap(
                             spacing: 8,
                             children: [
                               OutlinedButton(
-                                onPressed: () => _showTimeline(id),
+                                onPressed: () => _showTimeline(id, m['publicNumber']),
                                 child: const Text('История заказа'),
                               ),
                               PopupMenuButton<String>(
@@ -2585,8 +2585,8 @@ class _TariffList extends StatelessWidget {
             title: Text('${m['name']}'),
             subtitle: Text(
               cityAware
-                  ? '${recordNumber(m['id'])} • ${m['isActive'] == true ? 'Действует' : 'Отключён'} • класс ${const {'ECONOMY': 'Эконом', 'COMFORT': 'Комфорт', 'BUSINESS': 'Бизнес'}[m['vehicleClass'] ?? 'ECONOMY'] ?? 'Не указан'} • город ${((m['city'] as Map?)?['name'] ?? 'Не указан')}\nБаза: ${m['basePrice']} ${rideCurrencySymbol(m)} • км: ${m['pricePerKm']} ${rideCurrencySymbol(m)} • мин: ${m['pricePerMin']} ${rideCurrencySymbol(m)} • минимум: ${m['minPrice']} ${rideCurrencySymbol(m)}'
-                  : '${recordNumber(m['id'])} • ${m['isActive'] == true ? 'Действует' : 'Отключён'} • ${const {'KZ': 'Казахстан', 'RU': 'Россия'}[m['countryCode'] ?? 'KZ'] ?? 'Страна не указана'}\nБаза: ${m['basePrice']} • км: ${m['pricePerKm']} • кг: ${m['pricePerKg']} • минимум: ${m['minPrice']}',
+                  ? '${recordNumber(m['publicNumber'])} • ${m['isActive'] == true ? 'Действует' : 'Отключён'} • класс ${const {'ECONOMY': 'Эконом', 'COMFORT': 'Комфорт', 'BUSINESS': 'Бизнес'}[m['vehicleClass'] ?? 'ECONOMY'] ?? 'Не указан'} • город ${((m['city'] as Map?)?['name'] ?? 'Не указан')}\nБаза: ${m['basePrice']} ${rideCurrencySymbol(m)} • км: ${m['pricePerKm']} ${rideCurrencySymbol(m)} • мин: ${m['pricePerMin']} ${rideCurrencySymbol(m)} • минимум: ${m['minPrice']} ${rideCurrencySymbol(m)}'
+                  : '${recordNumber(m['publicNumber'])} • ${m['isActive'] == true ? 'Действует' : 'Отключён'} • ${const {'KZ': 'Казахстан', 'RU': 'Россия'}[m['countryCode'] ?? 'KZ'] ?? 'Страна не указана'}\nБаза: ${m['basePrice']} • км: ${m['pricePerKm']} • кг: ${m['pricePerKg']} • минимум: ${m['minPrice']}',
             ),
             trailing: OutlinedButton(
               onPressed: () => onDelete(m['id'] as String),
