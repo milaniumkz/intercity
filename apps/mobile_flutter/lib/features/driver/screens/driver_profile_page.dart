@@ -1,3 +1,4 @@
+import '../../shared/widgets/legal_documents.dart';
 import '../../../core/services/pwa_support.dart';
 import '../../referral/widgets/driver_tax_information_page.dart';
 import '../widgets/route_departure_field.dart';
@@ -426,7 +427,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
     if (!_hasResolvedProfileLoad) {
       return Scaffold(
         backgroundColor: theme.scaffoldBackgroundColor,
-        bottomNavigationBar: const DriverBottomNav(currentIndex: 4),
+        bottomNavigationBar: const Column(mainAxisSize: MainAxisSize.min, children: [LegalDocuments(), DriverBottomNav(currentIndex: 4)]),
         body: ICPremiumBackground(
           padding: EdgeInsets.zero,
           child: ListView(
@@ -465,7 +466,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
-      bottomNavigationBar: const DriverBottomNav(currentIndex: 4),
+      bottomNavigationBar: const Column(mainAxisSize: MainAxisSize.min, children: [LegalDocuments(), DriverBottomNav(currentIndex: 4)]),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ICPremiumBackground(
@@ -659,7 +660,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
     final surface = isDark ? const Color(0xFF11101D) : Colors.white;
     return Scaffold(
       backgroundColor: bg,
-      bottomNavigationBar: const DriverBottomNav(currentIndex: 4),
+      bottomNavigationBar: const Column(mainAxisSize: MainAxisSize.min, children: [LegalDocuments(), DriverBottomNav(currentIndex: 4)]),
       body: RefreshIndicator(
         onRefresh: _load,
         child: SafeArea(

@@ -1,3 +1,4 @@
+import '../../shared/widgets/legal_documents.dart';
 import 'package:dio/dio.dart';
 import '../../../core/services/pwa_support.dart';
 import '../../../core/widgets/account_deletion_dialog.dart';
@@ -881,7 +882,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
   Widget _boardSupportScreen() {
     final theme = _boardTheme();
     return Scaffold(
-      bottomNavigationBar: const PassengerBottomNav(currentIndex: 3),
+      bottomNavigationBar: const Column(mainAxisSize: MainAxisSize.min, children: [LegalDocuments(), PassengerBottomNav(currentIndex: 3)]),
       backgroundColor: theme.scaffoldBackgroundColor,
       body: ICPremiumBackground(
         padding: EdgeInsets.zero,
@@ -1077,7 +1078,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
     final isDark = theme.brightness == Brightness.dark;
     final themeMode = ref.watch(themeControllerProvider);
     return Scaffold(
-      bottomNavigationBar: const PassengerBottomNav(currentIndex: 3),
+      bottomNavigationBar: const Column(mainAxisSize: MainAxisSize.min, children: [LegalDocuments(), PassengerBottomNav(currentIndex: 3)]),
       backgroundColor: theme.scaffoldBackgroundColor,
       body: ICPremiumBackground(
         padding: EdgeInsets.zero,
@@ -1447,7 +1448,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
 
         return Scaffold(
           backgroundColor: theme.scaffoldBackgroundColor,
-          bottomNavigationBar: const PassengerBottomNav(currentIndex: 3),
+          bottomNavigationBar: const Column(mainAxisSize: MainAxisSize.min, children: [LegalDocuments(), PassengerBottomNav(currentIndex: 3)]),
           body: RefreshIndicator(
             onRefresh: _loadMe,
             color: colorScheme.primary,
@@ -2182,7 +2183,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
     final displayName = name.isEmpty ? 'Пассажир' : name;
     final displayPhone = phone.isEmpty ? 'Телефон не указан' : phone;
     return Scaffold(
-      bottomNavigationBar: const PassengerBottomNav(currentIndex: 3),
+      bottomNavigationBar: const Column(mainAxisSize: MainAxisSize.min, children: [LegalDocuments(), PassengerBottomNav(currentIndex: 3)]),
       backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
       body: SafeArea(
         child: Padding(
