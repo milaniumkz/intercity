@@ -23,10 +23,13 @@ PAD=[(cv2.dnn.readNetFromONNX(str(ROOT/name)),scale) for name,scale in [('2.7_80
 CROPPER=CropImage()
 ACTIONS={'TURN_LEFT','TURN_RIGHT','LOOK_UP','OPEN_MOUTH','BLINK'}
 
+class MultipleFacesError(ValueError):pass
+
 def detect(frame,max_side=640):
  h,w=frame.shape[:2];scale=min(1,max_side/max(w,h));small=cv2.resize(frame,(round(w*scale),round(h*scale)))
  DETECTOR.setInputSize((small.shape[1],small.shape[0]));_,faces=DETECTOR.detect(small)
- if faces is None or len(faces)!=1:return None
+ if faces is None or len(faces)==0:return None
+ if len(faces)!=1:raise MultipleFacesError('В кадре должно быть только одно лицо')
  face=faces[0].copy();face[:14]/=scale
  return face
 
@@ -85,7 +88,7 @@ def verify(path,actions):
  # Validate decoded timestamps, never trust a missing container duration.
  valid_fps=5<=fps<=65
  first_stamp=None;last_frame_time=0;last_delta=.033;fingerprints=[];last_fingerprint=-1
- poses=[[] for _ in actions];neutral=[];vectors=[];neutral_vectors=[];scores=[];sharpness=[];reference=None;seen=0;missing=0;last=-1;last_vector=-1;last_pad=-1;started=time.monotonic()
+ poses=[[] for _ in actions];neutral=[];vectors=[];neutral_vectors=[];scores=[];sharpness=[];reference=None;reference_sharpness=-1;different_samples=0;seen=0;missing=0;last=-1;last_vector=-1;last_pad=-1;started=time.monotonic()
  try:
   with mp.solutions.face_mesh.FaceMesh(static_image_mode=False,max_num_faces=2,refine_landmarks=False,min_detection_confidence=.7,min_tracking_confidence=.7) as mesh:
    index=0
@@ -110,7 +113,8 @@ def verify(path,actions):
     sample_tick=int(t*30+1e-6)
     if sample_tick<=last:continue
     last=sample_tick;seen+=1
-    face=detect(frame,512)
+    try:face=detect(frame,512)
+    except MultipleFacesError:return reject('В кадре должно быть только одно лицо')
     if face is None or min(face[2:4])<90:missing+=1;continue
     # Landmark coordinates are normalized: keep their input bounded while
     # retaining full-resolution pixels for identity, PAD and stored reference.
@@ -129,7 +133,13 @@ def verify(path,actions):
      last_vector=t
      v=vector(frame,face);vectors.append(v)
      if neutral_phase and abs(p['yaw'])<.18:neutral_vectors.append(v)
-     if len(vectors)>1 and float(v@vectors[0])<.45:return reject('Лицо изменилось во время записи. Повторите проверку')
+     # A single profile/blurred frame is not a different person. Require
+     # sustained mismatch against the initial frontal reference, not frame zero.
+     anchor_samples=neutral_vectors[:5]
+     if len(anchor_samples)>=3:
+      anchor=np.mean(anchor_samples,axis=0);anchor/=np.linalg.norm(anchor)
+      different_samples=different_samples+1 if float(v@anchor)<.45 else 0
+      if different_samples>=3:return reject('Лицо изменилось во время записи. Повторите проверку')
     # PAD models are trained on frontal faces; head-turn frames must not
     # be mistaken for a photo attack. All active tasks are still mandatory.
     neutral_phase=t<2 or (t>=2 and (t-2)%6>=4)
@@ -138,8 +148,13 @@ def verify(path,actions):
      scores.append(pad(frame,face))
      x,y,w,h=map(int,face[:4]);crop=frame[max(0,y):max(0,y)+h,max(0,x):max(0,x)+w]
      if crop.size:sharpness.append(float(cv2.Laplacian(cv2.cvtColor(crop,cv2.COLOR_BGR2GRAY),cv2.CV_64F).var()))
-    if reference is None and t<2:
-     # Retain only an aligned reference, not a full frame of the surroundings.
+    if t<2 and abs(p['yaw'])<.18:
+     # Pick the sharpest frontal frame, rather than the camera's first frame.
+     x,y,w,h=map(int,face[:4]);quality_crop=frame[max(0,y):max(0,y)+h,max(0,x):max(0,x)+w]
+     quality=float(cv2.Laplacian(cv2.cvtColor(quality_crop,cv2.COLOR_BGR2GRAY),cv2.CV_64F).var()) if quality_crop.size else 0
+     if quality<=reference_sharpness:continue
+     reference_sharpness=quality
+     # Retain only the face portrait, not a full frame of the surroundings.
      x,y,w,h=face[:4];left=max(0,int(x-w*.1));top=max(0,int(y-h*.1));right=min(frame.shape[1],int(x+w*1.1));bottom=min(frame.shape[0],int(y+h*1.1));portrait=frame[top:bottom,left:right]
      scale=min(1,512/max(portrait.shape[:2]));portrait=cv2.resize(portrait,(round(portrait.shape[1]*scale),round(portrait.shape[0]*scale)))
      reference=cv2.imencode('.jpg',portrait,[cv2.IMWRITE_JPEG_QUALITY,92])[1].tobytes()
@@ -158,7 +173,11 @@ def verify(path,actions):
  values=np.array(scores);medians=np.median(values,axis=0);lower=np.quantile(values,.20,axis=0)
  if min(medians)<.50 or min(lower)<.15:return reject('Проверка подлинности видео не пройдена. Снимите себя вживую без экранов и фотографий')
  averaged=np.mean(neutral_vectors if len(neutral_vectors)>=6 else vectors,axis=0);averaged/=np.linalg.norm(averaged)
- continuity=min(float(v@averaged) for v in vectors)
+ # Frontal samples are comparable to the reference; normal profile turns are
+ # checked for sustained identity mismatch above. One noisy frame cannot fail
+ # the whole clip, while a sustained face swap still fails immediately.
+ comparable=neutral_vectors if len(neutral_vectors)>=6 else vectors
+ continuity=float(np.quantile([float(v@averaged) for v in comparable],.10))
  problems=[];issues=[]
  names={'TURN_LEFT':'поворот головы налево','TURN_RIGHT':'поворот головы направо','LOOK_UP':'поднять подбородок','OPEN_MOUTH':'открыть рот','BLINK':'моргание'}
  if not all(actions_ok):issues.append('ACTIONS');problems.append('Не распознаны задания: '+', '.join(names[a] for a,ok in zip(actions,actions_ok) if not ok))
