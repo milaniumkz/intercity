@@ -10,8 +10,8 @@ const bcrypt=require('bcrypt');
   await p.$transaction(async tx=>{
    await tx.$executeRaw`SELECT pg_advisory_xact_lock(741302099)`;
    const existing=await tx.user.findUnique({where:{phone},include:{wallet:true,driverProfile:true}});
-   if(existing){if(existing.publicId!==marker||!existing.wallet||!existing.driverProfile)throw Error('Reserved account collision; refusing to modify existing user');return;}
-   await tx.user.create({data:{phone,name:'Kaspi — технический тестовый водитель',publicId:marker,password,role:'DRIVER',refCode:'KASPI_QA_70000000001',refLink:'',wallet:{create:{}},driverProfile:{create:{status:'PENDING',acceptCityFixed:false,acceptCityAuction:false,acceptIntercity:false,acceptDelivery:false,acceptCargo:false}}}});
+   if(existing){if(existing.publicId!==marker||!existing.wallet||!existing.driverProfile)throw Error('Reserved account collision; refusing to modify existing user');if(existing.name==='Kaspi — технический тестовый водитель')await tx.user.update({where:{id:existing.id},data:{name:'Тестов Тест Тестович'}});return;}
+   await tx.user.create({data:{phone,name:'Тестов Тест Тестович',publicId:marker,password,role:'DRIVER',refCode:'KASPI_QA_70000000001',refLink:'',wallet:{create:{}},driverProfile:{create:{status:'PENDING',acceptCityFixed:false,acceptCityAuction:false,acceptIntercity:false,acceptDelivery:false,acceptCargo:false}}}});
   });
   const {KaspiService}=require('../dist/src/wallet/kaspi.service');
   const check=await new KaspiService(p).process({command:'check',txn_id:'1',account:'70000000001',sum:'ignored'});

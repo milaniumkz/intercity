@@ -2,15 +2,15 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const {randomUUID}=require('crypto');
 const {PrismaClient}=require('@prisma/client');
-const {KaspiService,kaspiAmount,kaspiDate,KASPI_IPS}=require('../dist/src/wallet/kaspi.service');
+const {KaspiService,kaspiAmount,kaspiDate,kaspiDriverFio,KASPI_IPS}=require('../dist/src/wallet/kaspi.service');
 const {KaspiController}=require('../dist/src/wallet/kaspi.controller');
 test('Kaspi validates money and dates without losing 18-digit transaction IDs',async()=>{
  for(const raw of ['0.00','-1.00','1','1.001','1,00','NaN','1e3','10000000.01'])assert.equal(kaspiAmount(raw),null);
  assert.equal(kaspiAmount('0.01'),1);assert.equal(kaspiAmount('10000000.00'),1000000000);
  assert(kaspiDate('20261112123456'));assert(!kaspiDate('20260230120000'));assert(!kaspiDate('20261112240000'));
- const svc=new KaspiService({user:{findUnique:async()=>({driverProfile:{},wallet:{}})}});
+ const svc=new KaspiService({user:{findUnique:async()=>({name:'Иванов Иван Иванович',driverProfile:{},wallet:{}})}});
  const r=await svc.process({command:'check',txn_id:'999999999999999999',account:'70000000001',sum:'fictional'});
- assert.equal(r.result,0);assert.equal(r.txn_id,'999999999999999999');
+ assert.equal(r.result,0);assert.deepEqual(r.fields.field3,{'@name':'fio','#text':'Иванов Иван Иванович'});assert.equal(r.txn_id,'999999999999999999');
  assert.equal((await svc.process({command:['check'],txn_id:'1',account:'70000000001'})).result,5);
 });
 test('Kaspi rejects untrusted IP and ignores forged forwarded headers',async()=>{
@@ -26,13 +26,36 @@ test('wallet history shows a human Kaspi label instead of bank metadata',async()
  const p={wallet:{findUnique:async()=>wallet},topupRequest:{findMany:async()=>[]},payoutRequest:{findMany:async()=>[]},walletTransaction:{findMany:async()=>[{type:'TOPUP_KASPI',note:'{"txn_date":"20261112150000"}'}]}};
  const result=await new WalletService(p,{}).getWallet('user');assert.equal(result.transactions[0].note,'Пополнение через Kaspi');
 });
+
+test('Kaspi requires complete FIO, preserves Kazakh letters and never substitutes partial names',async()=>{
+ assert.equal(kaspiDriverFio('  Әбдіқалықов  Ғалым  Нұрланұлы  '),'Әбдіқалықов Ғалым Нұрланұлы');
+ assert.equal(kaspiDriverFio("О'Нил Анна-Мария Ивановна"),"О'Нил Анна-Мария Ивановна");
+ for(const name of [null,undefined,'','Олег','Иванов Иван','Иванов Иван 123','<script> Иван Иванович','Иванов Иван Иванович\0','A'.repeat(101)+' B C'])assert.equal(kaspiDriverFio(name),null);
+ for(const name of ['','Олег','Иванов Иван']){
+  const service=new KaspiService({user:{findUnique:async()=>({name,driverProfile:{},wallet:{}})}});
+  const r=await service.process({command:'check',txn_id:'123',account:'70000000001'});
+  assert.equal(r.result,1);assert.match(r.comment,/ФИО/);assert.equal(r.fields,undefined);
+ }
+ const service=new KaspiService({user:{findUnique:async()=>({name:'Тестов Тест Тестович',driverProfile:{},wallet:{}})}});
+ for(let i=0;i<20;i++){const r=await service.process({command:'check',txn_id:String(i+1),account:'70000000001'});assert.equal(r.fields.field3['@name'],'fio');assert.equal(r.fields.field3['#text'],'Тестов Тест Тестович');}
+});
+
 const database=process.env.DISPATCH_TEST_DATABASE_URL||process.env.TARIFF_TEST_DATABASE_URL;
 test('Kaspi credits once under concurrent retries, preserves bank date and rolls back failed ledger writes',{skip:!database},async()=>{
  const url=new URL(database);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.pathname,'/dispatch_test');
  const p=new PrismaClient({datasources:{db:{url:database}}});const key=randomUUID();let user;
  try {
-  user=await p.user.create({data:{phone:'+700'+String(Date.now()).slice(-8),name:'Kaspi isolated test',password:'not-a-login-hash',refCode:key,refLink:'',role:'DRIVER',wallet:{create:{money:10,moneyRub:55}},driverProfile:{create:{status:'PENDING'}}},include:{wallet:true}});
-  const service=new KaspiService(p),q={command:'pay',txn_id:String(Date.now())+'111',account:user.phone.slice(1),sum:'123.45',txn_date:'20261112120001'};
+  user=await p.user.create({data:{phone:'+700'+String(Date.now()).slice(-8),name:'Тестов Тест Тестович',password:'not-a-login-hash',refCode:key,refLink:'',role:'DRIVER',wallet:{create:{money:10,moneyRub:55}},driverProfile:{create:{status:'PENDING'}}},include:{wallet:true}});
+  const service=new KaspiService(p);
+  const before=(await p.wallet.findUnique({where:{id:user.wallet.id}})).money;
+  for(let i=0;i<20;i++){const check=await service.process({command:'check',txn_id:String(800+i),account:user.phone.slice(1)});assert.equal(check.result,0);assert.equal(check.fields.field3['#text'],'Тестов Тест Тестович');}
+  assert.equal((await p.wallet.findUnique({where:{id:user.wallet.id}})).money,before);
+  assert.equal(await p.topupRequest.count({where:{walletId:user.wallet.id}}),0);
+  await p.user.update({where:{id:user.id},data:{name:'Тест'}});
+  const incomplete=await service.process({command:'pay',txn_id:'700'+String(Date.now()),account:user.phone.slice(1),sum:'1.00',txn_date:'20261112120001'});
+  assert.equal(incomplete.result,1);assert.equal((await p.wallet.findUnique({where:{id:user.wallet.id}})).money,before);
+  await p.user.update({where:{id:user.id},data:{name:'Тестов Тест Тестович'}});
+  const q={command:'pay',txn_id:String(Date.now())+'111',account:user.phone.slice(1),sum:'123.45',txn_date:'20261112120001'};
   const results=await Promise.all(Array.from({length:12},()=>service.process(q)));
   for(const r of results){assert.equal(r.result,0);assert.equal(r.prv_txn_id,results[0].prv_txn_id);assert.match(r.prv_txn_id,/^\d{1,20}$/);assert.equal(r.sum,'123.45');}
   let wallet=await p.wallet.findUnique({where:{id:user.wallet.id}});assert.equal(wallet.money,133.45);assert.equal(wallet.moneyRub,55);
@@ -47,7 +70,7 @@ test('Kaspi credits once under concurrent retries, preserves bank date and rolls
   assert.equal(await p.topupRequest.count({where:{externalOrderId:'kaspi:'+q.txn_id+'3'}}),0);
   assert.equal((await service.process({...q,txn_id:q.txn_id+'3'})).result,0);
   assert.equal(Math.round((await p.wallet.findUnique({where:{id:wallet.id}})).money*100),25690);
-  await p.user.update({where:{id:user.id},data:{blockedAt:new Date()}});
+  await p.user.update({where:{id:user.id},data:{blockedAt:new Date(),name:'Тест'}});
   assert.equal((await service.process({...q,command:'check'})).result,1);
   assert.equal((await service.process(q)).result,0); // settled replay survives subsequent account blocking
  }finally{
