@@ -149,7 +149,14 @@ export class WalletService {
                 callbackUrl: this.backendCallbackUrl('/wallet/topup/callback'),
                 backUrl: `${(process.env.PUBLIC_WEB_URL || process.env.FRONTEND_URL || 'https://intercity.89-207-255-27.sslip.io').replace(/\/+$/, '')}/#/driver/wallet`,
             });
-            if (data?.requestRejected || data?.notFound) throw new Error('Онлайн-оплата отклонена платёжным сервисом');
+            if (data?.requestRejected || data?.notFound) {
+                throw new ServiceUnavailableException({
+                    statusCode: 503,
+                    code: 'KASSA24_UNAVAILABLE',
+                    message: 'Kassa24 временно не принимает онлайн-оплату. Пополнение не выполнено, баланс не изменён. Попробуйте позже.',
+                    topupRequestId: localTopup.id,
+                });
+            }
             paymentUrl = data?.url || data?.payment_url || data?.paymentUrl || data?.link || null;
             externalOrderId = (
                 data?.id ||
@@ -191,11 +198,12 @@ export class WalletService {
                 where: { id: localTopup.id },
                 data: { provider: 'MANUAL' },
             });
+            if (e instanceof ServiceUnavailableException) throw e;
             const onlineError = this.normalizeOnlinePaymentError(
                 e?.message || 'Не удалось создать ссылку на онлайн-оплату',
                 'payment',
             );
-            message = `Заявка на пополнение создана. ${onlineError} Администратор сможет обработать заявку вручную.`;
+            message = `Пополнение не выполнено. ${onlineError} Баланс не изменён. Попробуйте позже или обратитесь в поддержку, если деньги уже списались.`;
         }
 
         return {
