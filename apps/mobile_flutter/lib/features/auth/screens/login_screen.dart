@@ -1,3 +1,4 @@
+import '../../shared/widgets/legal_documents.dart';
 import '../../../core/services/pwa_support.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -299,16 +300,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                 onPressed: _isLoading ? null : _login,
                               ),
                               const SizedBox(height: 18),
-                              Text(
-                                'Продолжая, вы соглашаетесь с Условиями использования и Политикой конфиденциальности.',
-                                textAlign: TextAlign.center,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                  height: 1.3,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
+                              const Text('Продолжая, вы соглашаетесь с условиями документов InterCity.', textAlign: TextAlign.center),
+                              const LegalDocuments(),
                               const Spacer(flex: 3),
                               if (PwaSupport.isWeb)
                                 TextButton.icon(
