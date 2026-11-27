@@ -882,7 +882,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
   Widget _boardSupportScreen() {
     final theme = _boardTheme();
     return Scaffold(
-      bottomNavigationBar: const Column(mainAxisSize: MainAxisSize.min, children: [LegalDocuments(), PassengerBottomNav(currentIndex: 3)]),
+      bottomNavigationBar: const PassengerBottomNav(currentIndex: 3),
       backgroundColor: theme.scaffoldBackgroundColor,
       body: ICPremiumBackground(
         padding: EdgeInsets.zero,
@@ -1078,7 +1078,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
     final isDark = theme.brightness == Brightness.dark;
     final themeMode = ref.watch(themeControllerProvider);
     return Scaffold(
-      bottomNavigationBar: const Column(mainAxisSize: MainAxisSize.min, children: [LegalDocuments(), PassengerBottomNav(currentIndex: 3)]),
+      bottomNavigationBar: const PassengerBottomNav(currentIndex: 3),
       backgroundColor: theme.scaffoldBackgroundColor,
       body: ICPremiumBackground(
         padding: EdgeInsets.zero,
