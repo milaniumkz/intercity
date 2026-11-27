@@ -24,32 +24,46 @@ jobs:
           eval "$(ssh-agent -s)"
           ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
           echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
-      - name: Inspect gateway and create only a demo payout without wallet changes
+      - name: Compare private credential bindings and test authorization without creating transactions
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID" <<'REMOTE'
           set -euo pipefail
-          docker exec -i -e PAYOUT_PROBE_RUN="$1" intercity-backend node <<'JS'
-          const fs=require('node:fs'),path=require('node:path'),{randomUUID}=require('node:crypto');
+          umask 077
+          host_file="/tmp/intercity-kassa-auth-$1.json"
+          cleanup() { rm -f "$host_file"; docker exec -u 0 intercity-backend rm -f /tmp/intercity-kassa-auth-host.json || true; }
+          trap cleanup EXIT
+          python3 - /opt/intercity/shared/.env > "$host_file" <<'PY'
+          import sys,json
+          values={};counts={}
+          for line in open(sys.argv[1]):
+              if '=' not in line or line.lstrip().startswith('#'):continue
+              key,value=line.rstrip('\n').split('=',1);key=key.strip()
+              if key not in ['KASSA24_LOGIN','KASSA24_MERCHANT_ID','KASSA24_PASSWORD']:continue
+              counts[key]=counts.get(key,0)+1;value=value.strip()
+              if len(value)>=2 and value[0]==value[-1] and value[0] in ['"',"'"]:value=value[1:-1]
+              values[key]=value
+          values['_duplicates']=[key for key,count in counts.items() if count>1]
+          print(json.dumps(values))
+          PY
+          docker exec -i intercity-backend sh -c 'umask 077; cat > /tmp/intercity-kassa-auth-host.json' < "$host_file"
+          docker exec -i intercity-backend node <<'JS'
+          const fs=require('node:fs'),{randomUUID}=require('node:crypto');
           (async()=>{
-           const base=process.env.KASSA24_API_URL||'https://ecommerce.pult24.kz',login=process.env.KASSA24_LOGIN||process.env.KASSA24_MERCHANT_ID||'',password=process.env.KASSA24_PASSWORD||'';
-           const parsed=new URL(base);console.log(JSON.stringify({kassa24PayoutConfiguration:true,host:parsed.hostname,loginConfigured:!!login,passwordConfigured:!!password,applicationDemoFlag:process.env.KASSA24_DEMO==='true',release:process.env.RELEASE_SHA}));
-           if(!login||!password)return;
-           if(parsed.protocol!=='https:'||!['ecommerce.pult24.kz'].includes(parsed.hostname))throw Error('Unrecognized payout gateway host; no bank request sent');
-           const orderId='intercity-payout-probe-'+randomUUID(),auth='Basic '+Buffer.from(login+':'+password).toString('base64');
-           const r=await fetch(new URL('/payment/create',base),{method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({merchantId:login,orderId,type:1,amount:100,currency:'KZT',demo:true,description:'InterCity isolated DEMO payout verification',customerData:{phone:'70000000001'}}),signal:AbortSignal.timeout(15000)});
-           const data=await r.json().catch(()=>({})),message=String(data.errMessage||data.message||data.error?.message||data.error||'');
-           const code=data.errCode??data.code??data.errorCode??null;
-           console.log(JSON.stringify({demoPayoutCreateHttpStatus:r.status,providerErrorCode:typeof code==='number'||typeof code==='string'?code:null,merchantBlocked:/merchant.{0,40}block|заблокирован/i.test(message),insufficientFunds:/insufficient|недостаточно/i.test(message),permissionDenied:/permission|not allowed|доступ.*запре|разрешен/i.test(message),responseKeys:Object.keys(data).filter(k=>!/(card|token|password|phone|email)/i.test(k)),hasPaymentId:!!data.id,hasHostedUrl:!!data.url,noRealPayoutRequested:true}));
-           if(r.ok&&data.id&&data.url){
-            const statusResponse=await fetch(new URL('/payment/status?orderid='+encodeURIComponent(orderId),base),{headers:{Authorization:auth},signal:AbortSignal.timeout(15000)});
-            const status=await statusResponse.json().catch(()=>({}));
-            console.log(JSON.stringify({demoPayoutStatusHttp:statusResponse.status,statusKeys:Object.keys(status).filter(k=>!/(card|token|password|phone|email)/i.test(k)),status:status.status,errCode:status.errCode,demo:status.demo,isDemo:status.isDemo,amount:status.amount,type:status.type,paymentType:status.paymentType,orderMatches:String(status.orderId||status.orderID)===orderId,merchantMatches:status.merchantId==null?null:String(status.merchantId)===login}));
-            const root=process.env.TECH_STORAGE_DIR||'/app/technical-data';const manifest={orderId,id:String(data.id),url:String(data.url),createdAt:new Date().toISOString(),demo:true};
-            fs.writeFileSync(path.join(root,'kassa24-payout-probe-'+process.env.PAYOUT_PROBE_RUN+'.json'),JSON.stringify(manifest),{mode:0o600,flag:'wx'});
+           const host=JSON.parse(fs.readFileSync('/tmp/intercity-kassa-auth-host.json','utf8')),base=process.env.KASSA24_API_URL||'https://ecommerce.pult24.kz';
+           const url=new URL('/payment/status?orderid=auth-check-'+randomUUID(),base);
+           if(url.protocol!=='https:'||url.hostname!=='ecommerce.pult24.kz')throw Error('Unexpected gateway');
+           const mainLogin=process.env.KASSA24_LOGIN||process.env.KASSA24_MERCHANT_ID||'',mainPass=process.env.KASSA24_PASSWORD||'';
+           console.log(JSON.stringify({kassaAuthBindingDiagnostics:true,hostPasswordMatchesContainer:host.KASSA24_PASSWORD===mainPass,hostLoginMatchesContainer:host.KASSA24_LOGIN===(process.env.KASSA24_LOGIN||''),loginMatchesMerchantId:process.env.KASSA24_LOGIN===process.env.KASSA24_MERCHANT_ID,loginHasWhitespace:/\s/.test(mainLogin),passwordHasOuterWhitespace:mainPass.trim()!==mainPass,passwordLooksPlaceholder:/^(change.?me|your.?password|password|replace.?me|secret)$/i.test(mainPass),sharedEnvDuplicateKeys:host._duplicates}));
+           const options=[['container-login',mainLogin,mainPass],['container-merchant-id',process.env.KASSA24_MERCHANT_ID||'',mainPass],['shared-literal-login',host.KASSA24_LOGIN||host.KASSA24_MERCHANT_ID||'',host.KASSA24_PASSWORD||''],['shared-literal-merchant-id',host.KASSA24_MERCHANT_ID||'',host.KASSA24_PASSWORD||'']];
+           const seen=new Set();
+           for(const [binding,login,password]of options){if(!login||!password)continue;const key=JSON.stringify([login,password]);if(seen.has(key))continue;seen.add(key);
+            const r=await fetch(url,{headers:{Authorization:'Basic '+Buffer.from(login+':'+password).toString('base64')},signal:AbortSignal.timeout(10000)}),d=await r.json().catch(()=>({})),e=d.error;
+            const msg=String(typeof e==='string'?e:e?.message||d.message||d.errMessage||'');
+            console.log(JSON.stringify({binding,httpStatus:r.status,errorType:typeof e,errorKeys:e&&typeof e==='object'?Object.keys(e):[],authorizationRejected:/unauthoriz|invalid.*(login|password|credential)|авторизац|логин|парол/i.test(msg),merchantBlocked:/merchant.*block|заблокиров|мерчант.*откл/i.test(msg),ipRestricted:/ip.*(denied|allow|restrict)|ip.*огранич/i.test(msg),responseKeys:Object.keys(d).filter(k=>!/(card|token|password|phone|email)/i.test(k))}));
            }
-          })().catch(e=>{console.error('Kassa24 demo payout probe failed: '+e.message);process.exitCode=1;});
+          })().catch(e=>{console.error('Kassa24 authorization diagnostics failed: '+e.message);process.exitCode=1;});
           JS
           REMOTE
