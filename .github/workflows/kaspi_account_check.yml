@@ -24,7 +24,7 @@ jobs:
           eval "$(ssh-agent -s)"
           ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
           echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
-      - name: Read only account readiness
+      - name: Prepare encrypted certification setup
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
@@ -37,4 +37,10 @@ jobs:
           const u=users.find(u=>createHash('sha256').update('kaspi-certification-20261127:'+u.phone.replace(/\D/g,'')).digest('hex')==='010976e515b5e8a13664e1d96b561c6e22c6b1037a6ad654a423b581cc4e7a7f');
           console.log(JSON.stringify({kaspiRequestedTestAccountFound:!!u,driver:!!u?.driverProfile,driverStatus:u?.driverProfile?.status,hasWallet:!!u?.wallet,blocked:!!u?.blockedAt,namePartCount:u?u.name.trim().split(/\s+/).length:0,fullNameReady:!!u&&u.name.trim().split(/\s+/).length>=3,release:process.env.RELEASE_SHA}));})().catch(e=>{console.error(e.message);process.exitCode=1;}).finally(()=>db.$disconnect());
           JS
+          docker exec -i intercity-backend node <<'KEYJS'
+          const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+          const keyPath=path.join(process.env.TECH_STORAGE_DIR||'/app/technical-data','kaspi-certification-key.pem');
+          if(!fs.existsSync(keyPath)){const pair=crypto.generateKeyPairSync('rsa',{modulusLength:2048});fs.writeFileSync(keyPath,pair.privateKey.export({format:'pem',type:'pkcs8'}),{mode:0o600,flag:'wx'});}
+          const jwk=crypto.createPublicKey(fs.readFileSync(keyPath)).export({format:'jwk'});console.log(JSON.stringify({kaspiConfigPublicKey:jwk}));
+          KEYJS
           REMOTE
