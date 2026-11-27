@@ -1,4 +1,4 @@
-import 'admin_people_page.dart' show recordNumber, recordStatuses, recordModes, recordError;
+import 'admin_people_page.dart' show recordNumber, recordStatuses, recordModes, recordTime, recordError;
 import 'admin_attention_page.dart';
 import '../widgets/finance_dashboard.dart';
 import 'dart:async';
@@ -1812,9 +1812,9 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                       return ListTile(
                         dense: true,
                         title: Text(
-                            '${e['fromStatus'] ?? '-'} -> ${e['toStatus'] ?? '-'}'),
+                            '${recordStatuses[e['fromStatus']] ?? 'Начало истории'} → ${recordStatuses[e['toStatus']] ?? 'Статус уточняется'}'),
                         subtitle:
-                            Text('${e['createdAt']} • ${e['source'] ?? '-'}'),
+                            Text(recordTime(e['createdAt'])),
                       );
                     },
                   ),
