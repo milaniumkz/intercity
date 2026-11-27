@@ -1,7 +1,7 @@
 import {recordDates} from '../admin/customer-records';
 import { normalizePlate } from './vehicle-document';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, OnModuleDestroy, OnModuleInit, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
-import { createHash, randomBytes, randomInt } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma.service';
 import { IdentityVault } from './identity-vault';
@@ -90,7 +90,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
    if(user.role==='DRIVER' && input.driverConsent!==true)throw new BadRequestException('Подтвердите согласие на сверку с удостоверением личности');
    if(user.biometricProfile)throw new ConflictException('Видеопроверка уже пройдена. Эталон нельзя заменить через первичную регистрацию.');
   } else if(!user||user.blockedAt||user.role==='ADMIN'||user.phone.startsWith('erased:')||user.biometricProfile?.status!=='VERIFIED')user=null;
-  const pool=['TURN_LEFT','TURN_RIGHT','LOOK_UP','OPEN_MOUTH','BLINK'];
+  const pool=['TURN_LEFT','TURN_RIGHT','BLINK'];
   for(let i=pool.length-1;i>0;i--){const j=randomInt(i+1);[pool[i],pool[j]]=[pool[j],pool[i]];}
   const actions=pool.slice(0,enrollment?2:3),secret=token();
   const row=await this.prisma.biometricChallenge.create({data:{userId:user?.id||null,subjectHash,ipHash,purpose:enrollment?'ENROLL':'RECOVERY',secretHash:hash(secret),authVersion:user?.authVersion??0,actions,expiresAt:new Date(Date.now()+5*60000),consentVersion:input.consentVersion,driverConsent:enrollment&&input.driverConsent===true}});
@@ -108,6 +108,14 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   if(user&&!user.blockedAt&&user.authVersion===c.authVersion&&c.consentVersion===IDENTITY_CONSENT)videoPath=await this.vault.write(c.userId,video);
   try{const changed=await this.prisma.biometricChallenge.updateMany({where:{id:c.id,status:'PROCESSING'},data:{status,reason,videoPath}});if(changed.count!==1&&videoPath)await this.vault.remove(c.userId,videoPath);}
   catch(e){if(videoPath)await this.vault.remove(c.userId,videoPath);throw e;}
+ }
+ async clientEvent(id:string,secret:string,phase:string,bytes?:number,statusCode?:number){
+  const c=await this.getChallenge(id,secret);
+  const phases=['CAMERA_READY','RECORDING','CAPTURED','UPLOADING','UPLOAD_RETRY','CAMERA_ERROR','CAPTURE_ERROR','UPLOAD_ERROR'];
+  if(!phases.includes(phase))throw new BadRequestException('Некорректный этап проверки');
+  const count=await this.prisma.techEvent.count({where:{objectId:c.id,action:'identity.client',at:{gte:new Date(Date.now()-3600000)}}});
+  if(count<20)await this.prisma.techEvent.create({data:{userId:c.userId,requestId:randomUUID(),objectId:c.id,action:'identity.client',stage:phase,result:phase.endsWith('_ERROR')?'FAILURE':'PENDING',details:{source:'client',...(typeof bytes==='number'&&Number.isInteger(bytes)&&bytes>=0&&bytes<=16*1024*1024?{bytes}:{}),...(typeof statusCode==='number'&&Number.isInteger(statusCode)&&statusCode>=0&&statusCode<=599?{statusCode}:{})}}});
+  return {received:true};
  }
  async history(q:any={}){
   const take=Math.min(100,Math.max(1,Number.parseInt(q.take)||30)),skip=Math.max(0,Number.parseInt(q.skip)||0);
@@ -128,12 +136,18 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   const c=await this.getChallenge(id,secret);
   if(c.purpose==='ENROLL'&&c.userId!==userId)throw new UnauthorizedException();
   if(c.purpose==='ENROLL'&&!supportedIdentityConsent(c.consentVersion))throw new BadRequestException('Условия хранения первичной записи обновлены. Начните новую проверку и подтвердите согласие.');
-  if(c.expiresAt<new Date()||c.status!=='READY')throw new ConflictException('Проверка истекла или уже использована. Начните новую запись.');
   if(!video||video.length<10000||video.length>16*1024*1024)throw new BadRequestException('Запишите видео с камеры, не более 16 МБ');
+  const digest=this.vault.digest('video:'+hash(video));
+  if(c.status!=='READY'){
+   // A lost HTTP response must not force another recording or repeat verification.
+   if(c.videoDigest===digest)return this.challengeStatus(id,secret);
+   throw new ConflictException('Эта проверка уже использована с другой записью. Начните новую проверку.');
+  }
+  if(c.expiresAt<new Date())throw new ConflictException('Проверка истекла. Начните новую запись.');
   let claimed;
-  try { claimed=await this.prisma.biometricChallenge.updateMany({where:{id,status:'READY',expiresAt:{gt:new Date()}},data:{status:'PROCESSING',claimedAt:new Date(),videoDigest:this.vault.digest('video:'+hash(video)),attempts:{increment:1}}});
+  try { claimed=await this.prisma.biometricChallenge.updateMany({where:{id,status:'READY',expiresAt:{gt:new Date()}},data:{status:'PROCESSING',claimedAt:new Date(),videoDigest:digest,attempts:{increment:1}}});
   } catch(error:any) { if(error.code==='P2002')throw new ForbiddenException('Эта запись уже использовалась. Снимите новое видео.');throw error; }
-  if(claimed.count!==1)throw new ConflictException('Эта запись уже обрабатывается');
+  if(claimed.count!==1){const current=await this.getChallenge(id,secret);if(current.videoDigest===digest)return this.challengeStatus(id,secret);throw new ConflictException('Эта запись уже обрабатывается');}
   let result;
   try{result=await this.engine.verify(video,c.actions as string[]);}catch(error){await this.failedVideo(c,video,'FAILED','Сервис проверки недоступен');throw error;}
   const user=c.userId?await this.prisma.user.findUnique({where:{id:c.userId},include:{biometricProfile:true}}):null;
@@ -171,6 +185,9 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   videoPath=verdict==='REVIEW'||c.purpose==='ENROLL'?await this.vault.write(user.id,video):null;
   await this.prisma.$transaction(async tx=>{
    await tx.$executeRaw`SELECT id FROM "User" WHERE id=${user.id} FOR UPDATE`;
+   await tx.$executeRaw`SELECT id FROM "BiometricChallenge" WHERE id=${id} FOR UPDATE`;
+   const processing=await tx.biometricChallenge.findUnique({where:{id}});
+   if(processing?.status!=='PROCESSING'||processing.videoDigest!==digest)throw new ConflictException('Обработка этой записи уже завершена. Начните новую проверку.');
    const current=await tx.user.findUnique({where:{id:user.id}});
    if(!current||current.blockedAt||current.authVersion!==c.authVersion)throw new UnauthorizedException(identityFailure);
    if(c.purpose==='ENROLL'&&verdict==='PASS' && await tx.biometricProfile.findUnique({where:{userId:user.id}}))throw new ConflictException('Эталон уже создан. Повторная привязка не разрешена');
@@ -195,7 +212,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
    if(!c.resetExpiresAt||c.resetExpiresAt<new Date())throw new UnauthorizedException('Разрешение на смену пароля истекло. Повторите видео.');
    return {status:'VERIFIED',resetToken:proof,message:'Личность подтверждена. Придумайте новый пароль.'};
   }
-  return {status:c.status,message:c.status==='FAILED'?'Обработка прервана. Запишите новое видео.':c.status==='EXPIRED'?'Срок проверки истёк. Запишите новое видео.':c.status==='REVIEW'?(c.reason||'Не удалось уверенно завершить автоматическую проверку.')+' Можно записать новое видео или дождаться решения администратора.':c.status==='VERIFIED'?'Видеопроверка пройдена.':c.status==='REJECTED'?(c.purpose==='ENROLL'?c.reason||'Видеопроверка не пройдена':identityFailure):undefined};
+  return {status:c.status,message:c.status==='PROCESSING'?'Видео получено. Проверяем запись; при нагрузке это может занять несколько минут. Новая запись не нужна.':c.status==='FAILED'?'Обработка прервана. Запишите новое видео.':c.status==='EXPIRED'?'Срок проверки истёк. Запишите новое видео.':c.status==='REVIEW'?(c.reason||'Не удалось уверенно завершить автоматическую проверку.')+' Можно записать новое видео или дождаться решения администратора.':c.status==='VERIFIED'?'Видеопроверка пройдена.':c.status==='REJECTED'?(c.purpose==='ENROLL'?c.reason||'Видеопроверка не пройдена':identityFailure):undefined};
  }
  async resetPassword(proof:string,password:string){
   if(!proof||proof.length!==64||!password||password.length<6||Buffer.byteLength(password)>72)throw new BadRequestException('Укажите разрешение проверки и новый пароль от 6 символов, не более 72 байт');
@@ -239,7 +256,7 @@ export class IdentityService implements OnModuleInit,OnModuleDestroy {
   return {success:true};
  }
  async maintenance(){
-  await this.prisma.biometricChallenge.updateMany({where:{status:'PROCESSING',claimedAt:{lt:new Date(Date.now()-3*60000)}},data:{status:'FAILED',reason:'Обработка прервана. Нужна новая запись'}});
+  await this.prisma.biometricChallenge.updateMany({where:{status:'PROCESSING',claimedAt:{lt:new Date(Date.now()-6*60000)}},data:{status:'FAILED',reason:'Обработка прервана. Нужна новая запись'}});
   await this.prisma.biometricChallenge.updateMany({where:{status:'REVIEW',createdAt:{lt:new Date(Date.now()-86400000)}},data:{status:'EXPIRED'}});
   const old=await this.prisma.biometricChallenge.findMany({where:{createdAt:{lt:new Date(Date.now()-7*86400000)}},take:100});
   for(const c of old){if(c.userId){for(const file of [c.videoPath,c.referencePath,c.secondaryPath])if(file)await this.vault.remove(c.userId,file);}await this.prisma.biometricChallenge.delete({where:{id:c.id}});}

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+import '../../../core/services/identity_video_uploader.dart';
 import '../../../core/services/identity_face_monitor.dart';
 import '../../../core/services/identity_face_guide_model.dart';
 import '../../../core/services/identity_error_voice.dart';
@@ -52,6 +54,8 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
   String _lastCue = '';
   int _countdown = 0;
   Timer? _timer, _poll;
+  Uint8List? _pendingVideo;
+  String _pendingFilename = 'camera.mp4';
   Map<String, dynamic>? _challenge;
   bool _consent = false, _busy = false, _recording = false, _cancelled = false;
   double _seconds = 0;
@@ -168,6 +172,7 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
 
   Future<void> _start() async {
     if (!_consent || _busy) return;
+    _pendingVideo = null;
     _lastErrorVoice = '';
     _lastGuideVoice = DateTime.now();
     _faceSample = IdentityFaceSample.unavailable;
@@ -211,7 +216,9 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       }
       setState(() => _busy = false);
       unawaited(_faceMonitor.start(camera, _updateFaceGuide));
+      _captureEvent('CAMERA_READY');
     } catch (error) {
+      _captureEvent('CAMERA_ERROR');
       if (mounted) {
         setState(() {
           _busy = false;
@@ -252,20 +259,13 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       if (!mounted || _camera != camera) return;
       setState(() => _countdown = 0);
       await _faceMonitor.beforeRecording(camera);
+      // Android devices may fail to finalize a recording while image
+      // analysis is attached. The server checks every recorded face frame.
       if (_faceMonitor.usesCameraStream) {
-        try {
-          await camera.startVideoRecording(onAvailable: _faceMonitor.process);
-        } on CameraException {
-          // Some devices cannot stream and record concurrently. Recording
-          // remains available; never simulate a successful position check.
-          setState(() => _faceSample = IdentityFaceSample.unavailable);
-          if (!camera.value.isRecordingVideo) {
-            await camera.startVideoRecording();
-          }
-        }
-      } else {
-        await camera.startVideoRecording();
+        setState(() => _faceSample = IdentityFaceSample.unavailable);
       }
+      await camera.startVideoRecording();
+      _captureEvent('RECORDING');
       if (!mounted) {
         await camera.dispose();
         return;
@@ -297,9 +297,11 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
         }
       });
     } catch (e) {
+      _captureEvent('CAPTURE_ERROR');
       if (mounted) {
         setState(() {
           _busy = false;
+          _countdown = 0;
           _message = errorMessageRu(e);
         });
         _announceError(_message);
@@ -319,7 +321,9 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
     try {
       final camera = _camera!;
       await _faceMonitor.stop();
-      final file = await camera.stopVideoRecording();
+      final file = await camera.stopVideoRecording().timeout(const Duration(seconds: 15));
+      // Read the finalized file while the camera still owns its capture.
+      final bytes = discard || _cancelled ? null : await file.readAsBytes().timeout(const Duration(seconds: 15));
       await camera.dispose();
       _camera = null;
       if (discard || _cancelled) {
@@ -330,43 +334,78 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
         }
         return;
       }
-      final bytes = await file.readAsBytes();
       await deleteCapturedVideo(file.path);
-      if (bytes.length > 16 * 1024 * 1024) {
-        throw Exception(
-            'Видео слишком большое. Повторите запись в обычном качестве');
+      if (bytes == null || bytes.length < 10000 || bytes.length > 16 * 1024 * 1024) {
+        throw StateError('Не удалось сохранить полное видео до 16 МБ. Повторите запись.');
       }
-      if (!mounted) return;
-      setState(() => _message =
-          'Проверяем подлинность записи и лицо. Это может занять около минуты.');
-      final c = _challenge!;
-      final response = await _api.post(
-          '/auth/identity/${_recovery ? 'recovery' : 'enroll'}/${c['challengeId']}/video',
-          data: FormData.fromMap({
-            'challengeToken': c['challengeToken'],
-            'video': MultipartFile.fromBytes(bytes,
-                filename: file.name.isEmpty ? 'camera.mp4' : file.name),
-          }),
-          options: Options(
-              contentType: 'multipart/form-data',
-              sendTimeout: const Duration(seconds: 60),
-              receiveTimeout: const Duration(seconds: 100)));
-      if (mounted) _result(Map<String, dynamic>.from(response.data as Map));
+      _pendingVideo = bytes;
+      _pendingFilename = file.name.isEmpty ? 'camera.mp4' : file.name;
+      _captureEvent('CAPTURED', bytes: bytes.length);
+      await _sendPendingVideo();
     } catch (error) {
-      if (error is DioException &&
-          error.type == DioExceptionType.receiveTimeout &&
-          mounted) {
-        _result({
-          'status': 'PROCESSING',
-          'message': 'Запись ещё обрабатывается. Ожидайте результата.'
-        });
-      } else if (mounted) {
-        setState(() => _message = errorMessageRu(error));
+      final failedCamera = _camera;
+      _camera = null;
+      try { await failedCamera?.dispose(); } catch (_) {}
+      _captureEvent(_pendingVideo == null ? 'CAPTURE_ERROR' : 'UPLOAD_ERROR',
+          statusCode: error is DioException ? error.response?.statusCode : null);
+      _discardRejectedUpload(error);
+      if (mounted) {
+        setState(() => _message = _pendingVideo == null
+            ? errorMessageRu(error)
+            : 'Запись сохранена на этом экране, но отправка не завершилась. Проверьте интернет и нажмите «Повторить отправку».');
         _announceError(_message);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  void _captureEvent(String phase, {int? bytes, int? statusCode}) {
+    final c = _challenge;
+    if (c == null) return;
+    unawaited(_api.post('/auth/identity/client-event', data: {
+      'challengeId': c['challengeId'], 'challengeToken': c['challengeToken'],
+      'phase': phase, if (bytes != null) 'bytes': bytes,
+      if (statusCode != null) 'statusCode': statusCode,
+    }, options: Options(
+      sendTimeout: const Duration(seconds: 5),
+      receiveTimeout: const Duration(seconds: 5),
+      extra: {'intercity.auth.skip_refresh': true},
+    )).then<void>((_) {}, onError: (Object _) {}));
+  }
+
+  Future<void> _sendPendingVideo() async {
+    final bytes = _pendingVideo;
+    if (bytes == null || _challenge == null) return;
+    if (mounted) setState(() => _message = 'Отправляем запись и проверяем лицо. Это может занять около минуты.');
+    _captureEvent('UPLOADING', bytes: bytes.length);
+    final result = await IdentityVideoUploader(_api).send(
+      challenge: _challenge!, recovery: _recovery, bytes: bytes,
+      filename: _pendingFilename,
+      onRetry: () => _captureEvent('UPLOAD_RETRY'),
+    );
+    _pendingVideo = null;
+    if (mounted) _result(result);
+  }
+
+  void _discardRejectedUpload(Object error) {
+    if (error is! DioException) return;
+    final status = error.response?.statusCode ?? 0;
+    if (status >= 400 && status < 500 && status != 429) {
+      _pendingVideo = null;
+      _state = 'FAILED';
+    }
+  }
+
+  Future<void> _retryUpload() async {
+    if (_busy || _pendingVideo == null) return;
+    setState(() => _busy = true);
+    try { await _sendPendingVideo(); }
+    catch (error) {
+      _captureEvent('UPLOAD_ERROR');
+      _discardRejectedUpload(error);
+      if (mounted) setState(() => _message = _pendingVideo == null ? errorMessageRu(error) : 'Не удалось отправить запись. Проверьте интернет и повторите отправку.');
+    } finally { if (mounted) setState(() => _busy = false); }
   }
 
   void _result(Map<String, dynamic> result) {
@@ -409,6 +448,9 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
       if (mounted) {
         setState(() => _message = errorMessageRu(error));
         _announceError(_message);
+        if (_state == 'PROCESSING' || _state == 'REVIEW') {
+          _poll = Timer(const Duration(seconds: 8), _check);
+        }
       }
     }
   }
@@ -484,6 +526,12 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                   padding: const EdgeInsets.only(bottom: 16),
                                   child: Text(_message,
                                       style: theme.textTheme.bodyMedium)),
+                            if (_pendingVideo != null)
+                              FilledButton.icon(
+                                onPressed: _busy ? null : _retryUpload,
+                                icon: const Icon(Icons.cloud_upload),
+                                label: const Text('Повторить отправку'),
+                              ),
                             if ((_state == 'REJECTED' || _state == 'FAILED') &&
                                 _camera == null)
                               FilledButton.icon(
@@ -578,8 +626,9 @@ class _FaceVerificationPageState extends State<FaceVerificationPage>
                                 _state == 'PROCESSING') ...[
                               const Icon(Icons.pending_actions, size: 56),
                               const SizedBox(height: 16),
-                              const Text(
-                                  'Автоматической проверке не хватило уверенности. Можно сразу записать новое видео или дождаться решения администратора. Материалы доступны для ручной проверки до 24 часов.'),
+                              Text(_state == 'PROCESSING'
+                                  ? 'Видео получено. Проверяем запись; при нагрузке обработка может занять несколько минут. Новое видео снимать не нужно.'
+                                  : 'Автоматической проверке не хватило уверенности. Можно сразу записать новое видео или дождаться решения администратора. Материалы доступны для ручной проверки до 24 часов.'),
                               TextButton(
                                   onPressed: _busy ? null : _check,
                                   child: const Text('Проверить результат')),

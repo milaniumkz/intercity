@@ -1,0 +1,64 @@
+name: Verify published Kaspi FIO
+on:
+  workflow_run:
+    workflows: [Deploy VPS]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.head_sha == '0c796cc3e31b0a2079205321215d5abdd684bc21' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+      - name: Check required FIO without creating payments or printing personal details
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          docker exec -i intercity-backend node <<'JS'
+          const assert=require('node:assert/strict'),{createHash}=require('node:crypto'),{PrismaClient}=require('@prisma/client');
+          const {KaspiService}=require('./dist/src/wallet/kaspi.service');
+          const db=new PrismaClient();
+          (async()=>{
+           assert.equal(process.env.RELEASE_SHA,'0c796cc3e31b0a2079205321215d5abdd684bc21');
+           const users=await db.user.findMany({where:{phone:{not:{startsWith:'erased:'}}},select:{id:true,phone:true,name:true,role:true,blockedAt:true,driverProfile:{select:{status:true}}}});
+           const user=users.find(u=>createHash('sha256').update('kaspi-certification-20261127:'+u.phone.replace(/\D/g,'')).digest('hex')==='010976e515b5e8a13664e1d96b561c6e22c6b1037a6ad654a423b581cc4e7a7f');
+           assert(user);assert.equal(user.role,'DRIVER');assert(user.driverProfile);assert.equal(user.blockedAt,null);
+           const account=user.phone.replace(/\D/g,''),fio=user.name.normalize('NFC').trim().replace(/\s+/g,' ');assert(fio.split(' ').length>=3);
+           const wallet=await db.wallet.findUniqueOrThrow({where:{userId:user.id}}),topups=await db.topupRequest.count({where:{walletId:wallet.id}}),history=await db.walletTransaction.count({where:{walletId:wallet.id}});
+           const service=new KaspiService(db);
+           for(let i=0;i<20;i++){
+            const r=await service.process({command:'check',txn_id:String(700000000000000000n+BigInt(i)),account,sum:'ignored',fio:'untrusted input'});
+            assert.equal(r.result,0);assert.deepEqual(r.fields.field3,{'@name':'fio','#text':fio});
+            assert.deepEqual(r.fields.field1,{'@name':'account','#text':account});
+            assert.equal(r.fields.field2['@name'],'service');
+           }
+           assert.deepEqual(await db.wallet.findUnique({where:{id:wallet.id}}),wallet);
+           assert.equal(await db.topupRequest.count({where:{walletId:wallet.id}}),topups);
+           assert.equal(await db.walletTransaction.count({where:{walletId:wallet.id}}),history);
+           const link=new URL('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/payments/kaspi');for(const [k,v]of Object.entries({command:'check',txn_id:'123',account}))link.searchParams.set(k,v);
+           const denied=await fetch(link,{signal:AbortSignal.timeout(10000)});assert.equal(denied.status,403);const deniedBody=await denied.json();assert.equal(deniedBody.fields,undefined);
+           console.log(JSON.stringify({publishedKaspiFioVerified:true,release:process.env.RELEASE_SHA,requestedDriverAccountReady:true,fullFioMatchesProfile:true,mandatoryFieldName:'fio',repeatedCheckCount:20,bankInputCannotOverrideFio:true,balanceUnchanged:true,paymentsAndHistoryUnchanged:true,noPayExecuted:true,untrustedSourceDenied:true,driverStatus:user.driverProfile.status}));
+          })().catch(e=>{console.error('Kaspi runtime verification failed: '+e.message);process.exitCode=1;}).finally(()=>db.$disconnect());
+          JS
+          REMOTE

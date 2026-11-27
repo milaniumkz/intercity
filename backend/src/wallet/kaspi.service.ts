@@ -5,6 +5,13 @@ export const KASPI_IPS = ['194.187.247.152','194.187.245.108','197.187.244.108']
 export const KASPI_TEST_PHONE = '70000000001';
 const reply = (txn_id:string,result:number,comment:string,extra={}) => ({txn_id,result,comment,...extra});
 const scalar = (v:unknown):string => typeof v === 'string' ? v : '';
+// The bank displays one FIO string; do not guess separate name components.
+export function kaspiDriverFio(value:unknown):string|null {
+    if(typeof value!=='string'||value.length>200||/[\u0000-\u0008\u000e-\u001f\u007f]/.test(value))return null;
+    const fio=value.normalize('NFC').trim().replace(/\s+/g,' ');
+    const parts=fio.split(' ');
+    return fio.length<=100&&parts.length>=3&&parts.length<=8&&parts.every(p=>/^\p{L}[\p{L}\p{M}'’\-]*$/u.test(p))?fio:null;
+}
 export function kaspiAmount(raw:string):number|null {
     if (!/^(?:0|[1-9]\d{0,7})\.\d{2}$/.test(raw)) return null;
     const cents=Number(raw.replace('.',''));
@@ -22,10 +29,12 @@ export class KaspiService {
     async instructions(userId:string) {
         const user=await this.prisma.user.findUnique({where:{id:userId},include:{driverProfile:true}});
         if (!user?.driverProfile || user.blockedAt) return {available:false,message:'Пополнение Kaspi доступно водителям с действующим счётом.'};
+        const fio=kaspiDriverFio(user.name);
+        if(!fio)return {available:false,account:user.phone.replace(/\D/g,''),currency:'KZT',fioRequired:true,message:'Для пополнения через Kaspi укажите полное ФИО: фамилию, имя и отчество. Обратитесь в поддержку для обновления карточки водителя.'};
         const setting=await this.prisma.appSettings.findUnique({where:{key:'kaspiPaymentUrl'}});
         let paymentUrl:string|null=null;
         try {const url=new URL(setting?.value||'');if(url.protocol==='https:' && ['kaspi.kz','pay.kaspi.kz'].includes(url.hostname) && !url.username && !url.password) paymentUrl=url.toString();}catch(_){}
-        return {available:true,account:user.phone.replace(/\D/g,''),currency:'KZT',paymentUrl,bankConnectionReady:!!paymentUrl,
+        return {available:true,account:user.phone.replace(/\D/g,''),fio,currency:'KZT',paymentUrl,bankConnectionReady:!!paymentUrl,
             message:paymentUrl ? 'Откройте Kaspi.kz, проверьте услугу InterCity и укажите номер счёта. После оплаты обновите баланс.' : 'Оплата Kaspi находится на подключении у банка. После появления услуги InterCity в Kaspi.kz → Платежи укажите этот номер счёта. До подключения используйте онлайн-оплату картой.'};
     }
     async process(query:Record<string,unknown>) {
@@ -34,7 +43,9 @@ export class KaspiService {
         if(command==='check') {
             try {const user=await this.prisma.user.findUnique({where:{phone:'+'+account},include:{driverProfile:true,wallet:true}});
                 if(!user?.driverProfile||!user.wallet||user.blockedAt)return reply(txnId,1,'Счёт не найден или недоступен');
-                return reply(txnId,0,'Счёт доступен для пополнения',{fields:{field1:{'@name':'account','#text':account},field2:{'@name':'service','#text':'InterCity — баланс водителя'}}});
+                const fio=kaspiDriverFio(user.name);
+                if(!fio)return reply(txnId,1,'Для пополнения Kaspi необходимо полное ФИО водителя');
+                return reply(txnId,0,'Счёт доступен для пополнения',{fields:{field1:{'@name':'account','#text':account},field2:{'@name':'service','#text':'InterCity — баланс водителя'},field3:{'@name':'fio','#text':fio}}});
             }catch(_){return reply(txnId,5,'Временная ошибка провайдера');}
         }
         const cents=kaspiAmount(scalar(query.sum)),txnDate=scalar(query.txn_date);
@@ -51,6 +62,7 @@ export class KaspiService {
             }
             const user=await tx.user.findUnique({where:{phone:'+'+account},include:{wallet:true,driverProfile:true}});
             if(!user?.wallet||!user.driverProfile||user.blockedAt)return reply(txnId,1,'Счёт не найден или недоступен');
+            if(!kaspiDriverFio(user.name))return reply(txnId,1,'Для пополнения Kaspi необходимо полное ФИО водителя');
             const bankDate=new Date(`${txnDate.slice(0,4)}-${txnDate.slice(4,6)}-${txnDate.slice(6,8)}T${txnDate.slice(8,10)}:${txnDate.slice(10,12)}:${txnDate.slice(12,14)}+05:00`);
             const amount=cents/100,id=`${Date.now()}${randomInt(100000,1000000)}`;
             const topup=await tx.topupRequest.create({data:{id,walletId:user.wallet.id,amount,currency:'KZT',provider:'KASPI',externalOrderId:key,status:'APPROVED'}});

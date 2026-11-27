@@ -1,7 +1,7 @@
 import { DriverDocumentService } from './driver-document.service';
 import { BadRequestException, Body, Controller, Get, Header, Param, Post, Request, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { IsBoolean, IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, Min, Max, IsOptional, IsString, IsUUID, Matches, MaxLength, MinLength } from 'class-validator';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { IdentityService, IDENTITY_CONSENT, supportedIdentityConsent } from './identity.service';
@@ -10,6 +10,7 @@ class EnrollDto extends ConsentDto { @IsOptional() @IsString() @MinLength(1) @Ma
 class DriverConsentDto extends ConsentDto { @IsString() @MinLength(1) @MaxLength(72) password:string; @IsBoolean() driverConsent:boolean; }
 class RecoveryDto extends ConsentDto { @Matches(/^\+7\d{10}$/) phone:string; }
 class ProofDto { @IsUUID() challengeId:string; @IsString() @MinLength(40) @MaxLength(100) challengeToken:string; }
+class ClientEventDto extends ProofDto { @IsIn(['CAMERA_READY','RECORDING','CAPTURED','UPLOADING','UPLOAD_RETRY','CAMERA_ERROR','CAPTURE_ERROR','UPLOAD_ERROR']) phase:string; @IsOptional() @IsInt() @Min(0) @Max(16777216) bytes?:number; @IsOptional() @IsInt() @Min(0) @Max(599) statusCode?:number; }
 class VideoProofDto { @IsString() @MinLength(40) @MaxLength(100) challengeToken:string; }
 class ResetDto { @Matches(/^[a-f0-9]{64}$/) resetToken:string; @IsString() @MinLength(12) @MaxLength(72) password:string; }
 @Controller('auth/identity')
@@ -28,6 +29,8 @@ export class IdentityController {
  @Post('recovery/:id/video') @Throttle({default:{limit:3,ttl:60000}})
  @UseInterceptors(FileInterceptor('video',{limits:{fileSize:16*1024*1024,files:1,fields:1}}))
  recoveryVideo(@Param('id') id:string,@Body() b:VideoProofDto,@UploadedFile() file:any){return this.identity.submit(id,b.challengeToken,file?.buffer);}
+ @Post('client-event') @Throttle({default:{limit:30,ttl:60000}})
+ clientEvent(@Body() b:ClientEventDto){return this.identity.clientEvent(b.challengeId,b.challengeToken,b.phase,b.bytes,b.statusCode);}
  @Post('challenge-status') @Throttle({default:{limit:30,ttl:60000}})
  challengeStatus(@Body() b:ProofDto){return this.identity.challengeStatus(b.challengeId,b.challengeToken);}
  @Post('reset-password') @Throttle({default:{limit:5,ttl:60000}})

@@ -1,0 +1,54 @@
+name: Verify identity capture and recognition
+on:
+  pull_request:
+    paths:
+      - 'backend/src/identity/**'
+      - 'backend/test/identity*.test.js'
+      - 'services/identity/**'
+      - 'apps/mobile_flutter/lib/core/services/identity*'
+      - 'apps/mobile_flutter/lib/features/auth/screens/face_verification_page.dart'
+      - '.github/workflows/identity_verify.yml'
+permissions:
+  contents: read
+jobs:
+  persistence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: qa
+          POSTGRES_PASSWORD: isolated_test_only
+          POSTGRES_DB: dispatch_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Verify identity retries, isolation and queue against PostgreSQL
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://qa:isolated_test_only@127.0.0.1:5432/dispatch_test
+          DISPATCH_TEST_DATABASE_URL: postgresql://qa:isolated_test_only@127.0.0.1:5432/dispatch_test
+          NODE_ENV: test
+        run: |
+          npm ci
+          npx prisma generate
+          npx prisma db push --skip-generate
+          npm run build
+          node --test --test-concurrency=1 test/identity-engine-queue.test.js test/identity-recovery.test.js test/identity-driver-documents.test.js
+  vision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify actual codecs and private vision models without networking
+        run: |
+          docker build -t intercity-identity:ci services/identity
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,noexec,nosuid,size=256m --memory=768m --cpus=1.5 --pids-limit=128 --cap-drop=ALL --security-opt no-new-privileges:true intercity-identity:ci python -m unittest test_engine

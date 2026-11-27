@@ -92,6 +92,36 @@ void main() {
   });
 
   group('ApiClient refresh flow', () {
+    test('identity video multipart is rebuilt after access token refresh', () async {
+      final store = _MemoryTokenStore()
+        ..values[AppConstants.accessTokenKey] = 'stale-access'
+        ..values[AppConstants.refreshTokenKey] = 'valid-refresh';
+      var sends = 0;
+      FormData? first;
+      final api = _buildMockDio((options) async {
+        sends++;
+        final body = options.data as FormData;
+        expect(body.fields.single.value, 'camera-secret');
+        expect(body.files.single.value.length, 12000);
+        if (sends == 1) {
+          first = body;
+          return _jsonBody({'message': 'Unauthorized'}, statusCode: 401);
+        }
+        expect(identical(first, body), isFalse);
+        expect(options.headers['Authorization'], 'Bearer new-access');
+        return _jsonBody({'status': 'PROCESSING'});
+      });
+      final refresh = _buildMockDio((_) async =>
+        _jsonBody({'accessToken': 'new-access', 'refreshToken': 'new-refresh'}));
+      final client = ApiClient(dio: api, refreshDio: refresh, tokenStore: store,
+        baseUrl: 'https://api.example.com/api');
+      final response = await client.post('/auth/identity/enroll/session/video',
+        data: FormData.fromMap({'challengeToken': 'camera-secret',
+          'video': MultipartFile.fromBytes(Uint8List(12000), filename: 'camera.mp4')}));
+      expect(response.data['status'], 'PROCESSING');
+      expect(sends, 2);
+    });
+
     test('wrong current password preserves the authenticated session',
         () async {
       final store = _MemoryTokenStore()
