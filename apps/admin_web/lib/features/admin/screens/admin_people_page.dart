@@ -37,6 +37,13 @@ const recordModes = {
   'DELIVERY_INTERCITY': 'Междугородняя доставка',
   'DELIVERY_RF': 'Доставка по РФ'
 };
+String recordNumber(dynamic value) {
+  final raw = value?.toString() ?? '';
+  if (raw.isEmpty) return 'Номер не указан';
+  final compact = raw.replaceAll('-', '');
+  return '№${compact.substring(0, compact.length > 10 ? 10 : compact.length).toUpperCase()}';
+}
+
 String recordRole(Map user) => user['role'] == 'ADMIN'
     ? 'Администратор'
     : user['driverProfile'] != null || user['role'] == 'DRIVER'
@@ -954,7 +961,7 @@ class _AdminTripListState extends State<AdminTripList> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                           recordLine('Состояние',
-                              recordStatuses[row['status']] ?? row['status']),
+                              recordStatuses[row['status']] ?? 'Статус уточняется'),
                           recordLine('Откуда', row['origin']),
                           recordLine('Куда', row['destination']),
                           recordLine('Создан', recordTime(row['createdAt'])),
@@ -985,7 +992,7 @@ class _AdminTripListState extends State<AdminTripList> {
                           ExpansionTile(
                               title:
                                   const Text('Номер обращения для поддержки'),
-                              children: [SelectableText('${row['id']}')])
+                              children: [SelectableText(recordNumber(row['id']))])
                         ]))),
                 actions: [
                   TextButton(
@@ -1067,7 +1074,7 @@ class _AdminTripListState extends State<AdminTripList> {
                 leading: const Icon(Icons.route_outlined),
                 title: Text('${row['origin']} → ${row['destination']}'),
                 subtitle: Text(
-                    '${recordModes[row['mode']] ?? row['mode']} • ${recordStatuses[row['status']] ?? row['status']}\n${recordTime(row['createdAt'])} • ${recordMoney(row['price'], '${row['currency']}')}'),
+                    '${recordModes[row['mode']] ?? 'Режим уточняется'} • ${recordStatuses[row['status']] ?? 'Статус уточняется'}\n${recordTime(row['createdAt'])} • ${recordMoney(row['price'], '${row['currency']}')}'),
                 isThreeLine: true,
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => _open(row));
