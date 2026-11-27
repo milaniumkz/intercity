@@ -54,6 +54,11 @@ jobs:
           RUN_MACOS_SMOKE: 0
         run: bash scripts/verify_flutter_apps.sh
 
+      - name: Verify admin navigation in Chrome
+        if: github.event_name == 'pull_request'
+        working-directory: apps/admin_web
+        run: flutter test --platform chrome test/dashboard_navigation_test.dart test/widget_test.dart
+
   mobile-smoke-macos:
     name: macOS smoke test for mobile app
     runs-on: ${{ github.event_name == 'push' && fromJSON('["milanium-mac-arm64", "repo-intercity"]') || fromJSON('["macos-latest"]') }}
