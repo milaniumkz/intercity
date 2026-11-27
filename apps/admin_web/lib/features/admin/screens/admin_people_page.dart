@@ -989,7 +989,7 @@ class _AdminTripListState extends State<AdminTripList> {
                           ExpansionTile(
                               title:
                                   const Text('Номер обращения для поддержки'),
-                              children: [SelectableText(recordNumber(row['publicNumber']))])
+                              children: [SelectableText(row['source'] == 'MARKET' ? 'Заявка ${recordNumber(row['publicNumber'])}' : 'Заказ ${recordNumber(row['publicNumber'])}')])
                         ]))),
                 actions: [
                   TextButton(
