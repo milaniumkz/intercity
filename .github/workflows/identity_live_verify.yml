@@ -1,0 +1,95 @@
+name: Verify published identity flow
+on:
+  workflow_run:
+    workflows: [Deploy VPS]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.head_sha == '7bb60ae093b1727278cad8227ff1e06ad37bd6cf' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+      - name: Verify actual upload, safe retries and simplified challenges
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID" '7bb60ae093b1727278cad8227ff1e06ad37bd6cf' <<'REMOTE'
+          set -euo pipefail
+          probe="/tmp/identity-qa-$1.mp4"
+          cleanup() {
+            docker exec -u 0 intercity-backend rm -f "$probe" || true
+            docker exec intercity-identity rm -f "$probe" || true
+            rm -f "$probe"
+          }
+          trap cleanup EXIT
+          docker exec -i -e IDENTITY_QA_VIDEO="$probe" intercity-identity python <<'PY'
+          import cv2,numpy as np,os
+          path=os.environ['IDENTITY_QA_VIDEO']
+          writer=cv2.VideoWriter(path,cv2.VideoWriter_fourcc(*'mp4v'),10,(640,480))
+          assert writer.isOpened()
+          for _ in range(140):writer.write(np.zeros((480,640,3),dtype=np.uint8))
+          writer.release()
+          PY
+          docker cp "intercity-identity:$probe" "$probe"
+          docker cp "$probe" "intercity-backend:$probe"
+          docker exec -i -e IDENTITY_QA_RUN="$1" -e IDENTITY_EXPECTED_RELEASE="$2" intercity-backend node <<'JS'
+          const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),{randomInt,randomUUID}=require('node:crypto'),bcrypt=require('bcrypt');
+          const {PrismaClient}=require('@prisma/client'),{IdentityService,IDENTITY_CONSENT}=require('./dist/src/identity/identity.service'),{IdentityEngine}=require('./dist/src/identity/identity-engine');
+          const db=new PrismaClient(),service=new IdentityService(db,new IdentityEngine(),{notifyReviews:async()=>{}}),run=process.env.IDENTITY_QA_RUN;
+          let user;const root='http://127.0.0.1:'+(process.env.PORT||3000)+'/api';
+          async function post(route,body,token,expected=201){
+           const response=await fetch(root+route,{method:'POST',headers:{...(body instanceof FormData?{}:{'Content-Type':'application/json'}),...(token?{Authorization:'Bearer '+token}:{}),'X-Client-Session':'identity-qa-'+run,'X-Client-Platform':'identity-test','X-App-Version':process.env.RELEASE_SHA},body:body instanceof FormData?body:JSON.stringify(body),signal:AbortSignal.timeout(180000)});
+           const result=await response.json();assert.equal(response.status,expected,'Unexpected HTTP status for '+route+': '+response.status);return result;
+          }
+          (async()=>{
+           assert.match(run,/^[0-9]+$/);assert.equal(process.env.RELEASE_SHA,process.env.IDENTITY_EXPECTED_RELEASE);
+           await fs.access(service.vault.root+'/key.bin');await service.vault.init();
+           assert.equal(await service.enabled(),true);
+           const password='Identity-QA-'+randomUUID(),phone='+7000'+String(randomInt(10000000)).padStart(7,'0');
+           user=await db.user.create({data:{phone,password:await bcrypt.hash(password,4),role:'PASSENGER',name:'Identity isolated QA',refCode:randomUUID(),refLink:''}});
+           const login=await post('/auth/login',{phone,password}),access=login.accessToken;assert(access);
+           const c=await post('/auth/identity/enroll',{consentVersion:IDENTITY_CONSENT,driverConsent:false},access);
+           assert.equal(c.recordingSeconds,14);assert(c.actions.every(a=>['TURN_LEFT','TURN_RIGHT','BLINK'].includes(a)));
+           for(let i=0;i<20;i++){
+            const challenge=await service.challenge({userId:user.id,ip:'127.0.0.1',consentVersion:IDENTITY_CONSENT});
+            assert.equal(challenge.actions.length,2);assert(challenge.actions.every(a=>['TURN_LEFT','TURN_RIGHT','BLINK'].includes(a)));
+           }
+           for(const phase of ['CAMERA_READY','RECORDING','CAPTURED','UPLOADING'])await post('/auth/identity/client-event',{challengeId:c.challengeId,challengeToken:c.challengeToken,phase},null);
+           const clip=await fs.readFile('/tmp/identity-qa-'+run+'.mp4');assert(clip.length>=10000&&clip.length<16*1024*1024);
+           const form=()=>{const f=new FormData();f.append('challengeToken',c.challengeToken);f.append('video',new Blob([clip],{type:'video/mp4'}),'camera.mp4');return f;};
+           const first=await post('/auth/identity/enroll/'+c.challengeId+'/video',form(),access);assert.equal(first.status,'REJECTED');
+           const duplicate=await post('/auth/identity/enroll/'+c.challengeId+'/video',form(),access);assert.equal(duplicate.status,'REJECTED');
+           const resends=await Promise.all(Array.from({length:20},()=>service.submit(c.challengeId,c.challengeToken,clip,user.id)));assert(resends.every(r=>r.status==='REJECTED'));
+           const changed=Buffer.from(clip);changed[changed.length-1]^=1;
+           const wrong=new FormData();wrong.append('challengeToken',c.challengeToken);wrong.append('video',new Blob([changed],{type:'video/mp4'}),'camera.mp4');
+           await post('/auth/identity/enroll/'+c.challengeId+'/video',wrong,access,409);
+           await post('/auth/identity/client-event',{challengeId:c.challengeId,challengeToken:'x'.repeat(43),phase:'CAPTURED'},null,401);
+           const row=await db.biometricChallenge.findUnique({where:{id:c.challengeId}});assert.equal(row.attempts,1);
+           assert.equal(await db.biometricProfile.count({where:{userId:user.id}}),0);
+           assert.equal(await db.techEvent.count({where:{objectId:c.challengeId,action:'identity.client'}}),4);
+           console.log(JSON.stringify({publishedIdentityVerified:true,release:process.env.RELEASE_SHA,newChallengePoolChecks:21,removedMouthAndChin:true,actualHttpVideoUpload:true,actualPrivateEngineRejectsBlankVideo:true,duplicateResends:20,engineAttempts:row.attempts,differentClipRejected:true,forgedCaptureProofRejected:true,clientStagesRecorded:4,noFalseIdentityGranted:true}));
+          })().catch(e=>{console.error('Published identity verification failed: '+e.message);process.exitCode=1;}).finally(async()=>{
+           try{if(user){await db.refreshToken.deleteMany({where:{userId:user.id}});await db.techEvent.deleteMany({where:{userId:user.id}});await db.user.delete({where:{id:user.id}});await fs.rm(path.join(service.vault.root,user.id),{recursive:true,force:true});console.log(JSON.stringify({identityQaCleanup:true,temporaryAccountAndEncryptedFixtureRemoved:true}));}}finally{await db.$disconnect();}
+          });
+          JS
+          REMOTE
