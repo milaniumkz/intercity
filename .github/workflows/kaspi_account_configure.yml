@@ -1,0 +1,65 @@
+name: Configure Kaspi certification account
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/kaspi_account_configure.yml']
+permissions:
+  contents: read
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+      - name: Apply encrypted account details without changing funds
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID" <<'REMOTE'
+          set -euo pipefail
+          docker exec -i -e GITHUB_PROBE_RUN="$1" intercity-backend node <<'JS'
+          const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),assert=require('node:assert/strict'),{PrismaClient}=require('@prisma/client');
+          const db=new PrismaClient(),root=process.env.TECH_STORAGE_DIR||'/app/technical-data',keyPath=path.join(root,'kaspi-certification-key.pem');
+          (async()=>{
+           const data=JSON.parse(crypto.privateDecrypt({key:fs.readFileSync(keyPath),padding:crypto.constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},Buffer.from('D/l8Y/wT6RKfTxo73qqK9AXR24L0F3lMDg4KiaxJpj2adjfiPbDDbnk+pG1KsSP6PReDHVKErlBT5S2qA7xs3hBOS7jRJxPMz+0YTVVm8w9ek+vcpkmIRHOyzTGziYnIGOQLLkEfD/KkjZD6E5s8nnDgQFGp6mFsd2eUQT6lMkQmtRDLAVG5/BRQKsQMbOWqTbc22wYG5tRKBIyMDdsdMzwgn6lwCIMsZQpjuL0ztqFDhkKOeBzC9skuxnqxevdc+sh+Pz0ulwwjO8nGqEdDHmRDGylPPwqiZQnsSTyzkSItCdxHNeyPvNNUjD2LaeSlavPwZU44NTx4tQbtWV3owg==','base64')).toString('utf8'));
+           assert.equal(data.op,'kaspi-fio-v1');assert.match(data.account,/^7[0-9]{10}$/);
+           assert.equal(crypto.createHash('sha256').update('kaspi-certification-20261127:'+data.account).digest('hex'),'010976e515b5e8a13664e1d96b561c6e22c6b1037a6ad654a423b581cc4e7a7f');
+           assert.equal(typeof data.fio,'string');assert(data.fio.length<=100&&data.fio.trim().split(/\s+/).length>=3);
+           assert.equal(process.env.RELEASE_SHA,'7bb60ae093b1727278cad8227ff1e06ad37bd6cf');
+           let created=false,status;
+           await db.$transaction(async tx=>{
+            const found=await tx.user.findUniqueOrThrow({where:{phone:'+'+data.account}});
+            assert.notEqual(found.role,'ADMIN');assert.equal(found.blockedAt,null);
+            await tx.$executeRawUnsafe('SELECT id FROM "User" WHERE id=$1 FOR UPDATE',found.id);
+            await tx.$executeRawUnsafe('SELECT id FROM "Wallet" WHERE "userId"=$1 FOR UPDATE',found.id);
+            const user=await tx.user.findUniqueOrThrow({where:{id:found.id},include:{driverProfile:true,wallet:true}});assert(user.wallet);
+            const backup=path.join(root,'kaspi-certification-backup-'+process.env.GITHUB_PROBE_RUN+'.json');
+            fs.writeFileSync(backup,JSON.stringify({release:process.env.RELEASE_SHA,userId:user.id,previousName:user.name,previousRole:user.role,hadDriverProfile:!!user.driverProfile,at:new Date().toISOString()}),{mode:0o600,flag:'wx'});
+            const walletBefore=await tx.wallet.findUnique({where:{id:user.wallet.id}});
+            await tx.user.update({where:{id:user.id},data:{name:data.fio,role:'DRIVER'}});
+            if(!user.driverProfile){created=true;await tx.driverProfile.create({data:{userId:user.id,status:'PENDING',acceptCityFixed:false,acceptCityAuction:false,acceptIntercity:false,acceptDelivery:false,acceptCargo:false,online:{create:{isOnline:false}},rating:{create:{}},priorityFlags:{create:{}},serviceStats:{create:{}},fuelBonus:{create:{}}}});}
+            const after=await tx.user.findUniqueOrThrow({where:{id:user.id},include:{driverProfile:true,wallet:true}});
+            assert.equal(after.name,data.fio);assert.equal(after.role,'DRIVER');assert(after.driverProfile);
+            assert.equal(after.password,user.password);assert.equal(after.authVersion,user.authVersion);
+            assert.deepEqual(after.wallet,walletBefore);
+            if(user.driverProfile)assert.deepEqual(after.driverProfile,user.driverProfile);
+            status=after.driverProfile.status;
+           });
+           console.log(JSON.stringify({kaspiRequestedAccountConfigured:true,exactProvidedFioSaved:true,driverProfilePresent:true,driverProfileCreated:created,driverStatus:status,balanceAndHistoryUnchanged:true,existingDriverSettingsPreserved:true,loginCredentialsPreserved:true,privateAccountBackupCreated:true}));
+          })().catch(e=>{console.error('Kaspi account configuration failed: '+e.message);process.exitCode=1;}).finally(async()=>{await db.$disconnect();try{fs.unlinkSync(keyPath);}catch(e){if(e.code!=='ENOENT')throw e;}});
+          
+          JS
+          REMOTE
