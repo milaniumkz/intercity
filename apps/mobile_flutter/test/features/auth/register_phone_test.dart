@@ -63,6 +63,9 @@ void main() {
     await tester.ensureVisible(submit);
     await tester.tap(submit);
     await tester.pumpAndSettle();
+    expect(find.text('Восстановление доступа'), findsOneWidget);
+    await tester.tap(find.text('Позже'));
+    await tester.pumpAndSettle();
     expect(find.text('Регистрация завершена'), findsOneWidget);
     expect(locationCalls, isEmpty);
     expect(

@@ -191,6 +191,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           final next = widget.downloadAfterRegistration && code != null
               ? '/ref/$code/download'
               : (_isDriver ? '/driver/verification' : '/order');
+          setState(() => _isLoading = false);
           final link = await showDialog<bool>(context:context,builder:(dialog)=>AlertDialog(
             title:const Text('Восстановление доступа'),
             content:const Text('Подключите Google или Apple для восстановления пароля. Можно добавить оба аккаунта сейчас или позже в профиле.'),
