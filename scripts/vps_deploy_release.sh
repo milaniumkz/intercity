@@ -147,7 +147,6 @@ printf '\nRELEASE_SHA=%s\n' "$COMMIT_SHA" >> "$RELEASE_DIR/infra/vps/.env"
 cd "$RELEASE_DIR/infra/vps"
 # Build while the previous backend continues running. Additive migrations run
 # before the new application starts; never fall back to an unrestricted db push.
-compose --profile whatsapp up -d whatsapp
 compose build backend identity routing
 compose run --rm --no-deps backend npx prisma migrate deploy
 compose run --rm --no-deps backend node dist/src/geo/import-city-catalog.js
@@ -156,6 +155,7 @@ python3 "$RELEASE_DIR/scripts/prepare_brouter_data.py" "$RELEASE_DIR/services/ro
 ln -s "$SHARED_DIR/brouter/segments4" "$RELEASE_DIR/routing-data"
 switch_started=1
 compose up -d --no-build identity routing backend caddy
+compose --profile whatsapp up -d whatsapp
 
 # Verify a real private car route before accepting the new release.
 docker exec -i intercity-backend node <<'JSROUTING'
