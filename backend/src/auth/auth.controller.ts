@@ -33,6 +33,10 @@ export class AuthController {
         return this.authService.refreshToken(dto.refreshToken);
     }
 
+    @UseGuards(JwtAuthGuard)
+    @Get('recovery/links')
+    listRecoveryLinks(@Request() req) { return this.authService.recoveryLinks(req.user.sub); }
+
     @Post('recovery/provider/start')
     startRecovery(@Body('provider') provider:string) { return this.authService.startProvider(provider); }
 

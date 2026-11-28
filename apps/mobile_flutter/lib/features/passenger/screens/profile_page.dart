@@ -1,3 +1,4 @@
+import '../../auth/screens/linked_accounts_page.dart';
 import '../../shared/widgets/legal_documents.dart';
 import 'package:dio/dio.dart';
 import '../../../core/services/pwa_support.dart';
@@ -1448,7 +1449,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
 
         return Scaffold(
           backgroundColor: theme.scaffoldBackgroundColor,
-          bottomNavigationBar: const Column(mainAxisSize: MainAxisSize.min, children: [LegalDocuments(), PassengerBottomNav(currentIndex: 3)]),
+          bottomNavigationBar: const Column(mainAxisSize: MainAxisSize.min, children: [LinkedAccountsEntry(), LegalDocuments(), PassengerBottomNav(currentIndex: 3)]),
           body: RefreshIndicator(
             onRefresh: _loadMe,
             color: colorScheme.primary,
@@ -2183,7 +2184,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage>
     final displayName = name.isEmpty ? 'Пассажир' : name;
     final displayPhone = phone.isEmpty ? 'Телефон не указан' : phone;
     return Scaffold(
-      bottomNavigationBar: const Column(mainAxisSize: MainAxisSize.min, children: [LegalDocuments(), PassengerBottomNav(currentIndex: 3)]),
+      bottomNavigationBar: const Column(mainAxisSize: MainAxisSize.min, children: [LinkedAccountsEntry(), LegalDocuments(), PassengerBottomNav(currentIndex: 3)]),
       backgroundColor: isDark ? AppTheme.darkBackground : AppTheme.lightSurface,
       body: SafeArea(
         child: Padding(

@@ -219,6 +219,11 @@ export class AuthService {
         throw new UnauthorizedException('Invalid refresh token');
     }
 
+    async recoveryLinks(userId: string) {
+        const rows = await this.prisma.recoveryIdentity.findMany({where:{userId},select:{provider:true}});
+        return { providers: rows.map(row => row.provider) };
+    }
+
     async startProvider(provider: string, userId?: string) {
         providerConfig(provider);
         const nonce = randomBytes(32).toString('hex');
