@@ -36,6 +36,7 @@ jobs:
           (async()=>{const admins=await db.user.findMany({where:{role:'ADMIN',blockedAt:null},select:{phone:true}});
           const failures=await db.adminAttention.count({where:{category:'whatsapp-send',createdAt:{gte:new Date(Date.now()-86400000)}}});
           console.log('Admin phone formats:',admins.map(x=>{const d=x.phone.replace(/\D/g,'');return /^7\d{10}$/.test(d)?'international':/^8\d{10}$/.test(d)?'national':/^\d{10}$/.test(d)?'local':'other'}),'recent gateway failures:',failures);
+          for (const a of admins) {const digits=a.phone.replace(/\D/g,''); const t=await fetch('http://whatsapp:3000/api/contacts/check-exists?session=default&phone='+digits,{headers:{'X-Api-Key':process.env.WHATSAPP_CHANNEL_KEY}});const info=await t.json();console.log('Recipient lookup',t.status,info.numberExists,'recipientType',String(info.chatId||'').split('@')[1]||'none','sameAsConnected',false);}
           const res=await fetch('http://whatsapp:3000/api/sessions/default',{headers:{'X-Api-Key':process.env.WHATSAPP_CHANNEL_KEY}});const j=await res.json();console.log('Channel:',j.status,'engine:',j.engine?.engine||j.config?.engine||'unknown');})().finally(()=>db.$disconnect());
           JS
           docker logs --since 2h "$(docker ps -q --filter label=com.docker.compose.service=whatsapp | head -1)" 2>&1 | python3 -c 'import json,sys,re
