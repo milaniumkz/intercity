@@ -1,3 +1,6 @@
+import {randomInt,randomUUID} from 'crypto';
+import {PrismaService} from '../prisma.service';
+import {channelRequest, channelState, sendRecoveryCode} from '../attention/whatsapp.channel';
 import {AccountDeletionService} from '../auth/account-deletion.service';
 import { Controller, Get, Post, Body, Param, Patch, Delete, UseGuards, Request, ForbiddenException, Query, BadRequestException, Header } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -11,7 +14,36 @@ import { MonthlyBasisDto, RemittanceDto, TaxSettingsDto, VerifyTaxProfileDto } f
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class AdminController {
-    constructor(private adminService: AdminService, private taxService: TaxService, private accountDeletion:AccountDeletionService) { }
+    constructor(private adminService: AdminService, private taxService: TaxService, private accountDeletion:AccountDeletionService, private db:PrismaService) { }
+
+    @Get('whatsapp')
+    @Header('Cache-Control','no-store')
+    async whatsapp(@Request() req) {
+        await this.ensurePermission(req,'settings.manage');
+        const status = await channelState();
+        const qr = status === 'SCAN_QR_CODE' ? await channelRequest('/api/default/auth/qr') : null;
+        return {status, image:qr?.data || null};
+    }
+
+    @Post('whatsapp/test')
+    async testWhatsapp(@Request() req) {
+        await this.ensurePermission(req,'settings.manage');
+        const actor = await this.db.user.findUniqueOrThrow({where:{id:req.user.sub},select:{phone:true}});
+        const digits = actor.phone.replace(/[^0-9]/g,'');
+        if (!/^7\d{10}$/.test(digits)) throw new BadRequestException('Укажите телефон в профиле администратора');
+        await sendRecoveryCode(this.db,digits,String(randomInt(100000,1000000)),randomUUID(),true);
+        return {sent:true};
+    }
+
+    @Post('whatsapp/connect')
+    async startWhatsapp(@Request() req) {
+        await this.ensurePermission(req,'settings.manage');
+        const sessions = await channelRequest('/api/sessions?all=true');
+        const existing = sessions.find(s => s.name === 'default');
+        if (!existing) await channelRequest('/api/sessions',{name:'default',start:true});
+        else if (['STOPPED','FAILED'].includes(existing.status)) await channelRequest('/api/sessions/default/start',{});
+        return {started:true};
+    }
 
     @Get('tax/registry')
     async taxRegistry(@Request() req, @Query('period') period: string, @Query('kind') kind?: string) {
