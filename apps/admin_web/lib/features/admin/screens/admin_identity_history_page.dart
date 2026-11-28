@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../core/api/admin_api_client.dart';
 import '../widgets/identity_video.dart';
 import 'admin_dashboard_page.dart';
@@ -184,7 +185,7 @@ class _AdminIdentityHistoryPageState extends State<AdminIdentityHistoryPage> {
                                 style: Theme.of(context).textTheme.titleMedium),
                             const SizedBox(height: 6),
                             Text(
-                                '${identityPurposes[row['purpose']] ?? 'Проверка'} • ${recordStatuses[row['status']] ?? row['status']} • ${recordTime(row['createdAt'])}'),
+                                '${identityPurposes[row['purpose']] ?? 'Проверка'} • ${recordStatuses[row['status']] ?? 'Статус уточняется'} • ${recordTime(row['createdAt'])}'),
                             const SizedBox(height: 8),
                             Text(
                                 '${row['reason'] ?? 'Причина отказа отсутствует'}'),
@@ -199,6 +200,18 @@ class _AdminIdentityHistoryPageState extends State<AdminIdentityHistoryPage> {
                                 const Chip(
                                     label: Text(
                                         'Видео не сохранено или удалено по сроку')),
+                              if ((row['user']?['phone'] ?? '').toString().trim().isNotEmpty)
+                                TextButton.icon(
+                                    onPressed: () async {
+                                      try {
+                                        await Clipboard.setData(ClipboardData(text: row['user']['phone'].toString()));
+                                        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Номер телефона скопирован')));
+                                      } catch (_) {
+                                        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Не удалось скопировать номер. Телефон указан рядом с именем.')));
+                                      }
+                                    },
+                                    icon: const Icon(Icons.copy),
+                                    label: const Text('Скопировать телефон')),
                               if (row['userId'] != null)
                                 TextButton.icon(
                                     onPressed: () => Navigator.pushNamed(

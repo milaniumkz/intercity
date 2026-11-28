@@ -246,7 +246,7 @@ class _FinanceDashboardState extends State<FinanceDashboard> {
         for (final payout in (_data?['payouts'] as List? ?? [])
             .where((r) => r['currency'] == _currency))
           Text(
-              'Выплаты: ${recordStatuses[payout['status']] ?? payout['status']} · ${payout['_count']} · ${recordMoney(payout['_sum']?['amount'], _currency)} (по времени последнего изменения заявки)'),
+              'Выплаты: ${recordStatuses[payout['status']] ?? 'Статус уточняется'} · ${payout['_count']} · ${recordMoney(payout['_sum']?['amount'], _currency)} (по времени последнего изменения заявки)'),
       ]),
       recordSection(context, 'Операции за выбранный период: $_total', [
         Wrap(spacing: 12, children: [

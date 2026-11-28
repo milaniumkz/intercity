@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -210,15 +211,15 @@ void main() {
         .ensureVisible(find.widgetWithText(OutlinedButton, 'Экспорт CSV'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'Экспорт CSV'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('CSV готов'), findsOneWidget);
-    expect(copiedCsv, contains('Валюта'));
+    expect(find.textContaining(kIsWeb ? 'CSV скачан' : 'CSV готов'), findsOneWidget);
+    if (!kIsWeb) expect(copiedCsv, contains('Валюта'));
     expect(api.calls, contains('GET /admin/finance-dashboard'));
 
     await tester.tap(find.text('Заказы').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Таймлайн').first);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'История заказа').first);
     await tester.pumpAndSettle();
-    expect(find.textContaining('Таймлайн заказа'), findsOneWidget);
+    expect(find.descendant(of: find.byType(AlertDialog), matching: find.textContaining('История заказа')), findsOneWidget);
     await tester.tap(find.text('Закрыть'));
     await tester.pumpAndSettle();
     await tester.tap(find

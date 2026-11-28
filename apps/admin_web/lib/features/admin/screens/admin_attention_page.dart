@@ -246,7 +246,7 @@ class _AdminAttentionPageState extends State<AdminAttentionPage> {
               Text('${row['pushError']}',
                   style: TextStyle(color: Theme.of(context).colorScheme.error)),
             Text(
-                '${recordTime(row['createdAt'])} · ${attentionCategories[row['category']] ?? row['category']} · ${row['resolvedAt'] == null ? 'Ожидает действий' : 'Обработано'}'),
+                '${recordTime(row['createdAt'])} · ${attentionCategories[row['category']] ?? 'Другие события'} · ${row['resolvedAt'] == null ? 'Ожидает действий' : 'Обработано'}'),
             Wrap(spacing: 12, children: [
               FilledButton(
                   onPressed: () async {

@@ -1,3 +1,4 @@
+import 'admin_people_page.dart' show recordNumber, recordStatuses, recordModes, recordTime, recordError;
 import 'admin_attention_page.dart';
 import '../widgets/finance_dashboard.dart';
 import 'dart:async';
@@ -42,7 +43,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _summary = 'Ошибка загрузки: $e');
+      setState(() => _summary = 'Ошибка загрузки. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -192,7 +193,7 @@ class _AdminDriversPageState extends State<AdminDriversPage> {
       await task();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = '$action failed: $e');
+      setState(() => _message = 'Не удалось выполнить действие. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _busyAction = null);
@@ -220,7 +221,7 @@ class _AdminDriversPageState extends State<AdminDriversPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = 'Ошибка загрузки: $e');
+      setState(() => _message = 'Ошибка загрузки. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -297,7 +298,7 @@ class _AdminDriversPageState extends State<AdminDriversPage> {
                           title: Text(
                               '${driver['user']?['phone'] ?? 'Телефон не указан'}'),
                           subtitle:
-                              Text('ID $id\nСтатус ${driver['status'] ?? '-'}'),
+                              Text('${recordNumber(driver['publicNumber'])}\nСтатус ${recordStatuses[driver['status']] ?? 'Статус уточняется'}'),
                           isThreeLine: true,
                           trailing: Wrap(
                             spacing: 8,
@@ -416,7 +417,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       await task();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = '$action: $e');
+      setState(() => _message = '$action. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _busyAction = null);
@@ -462,7 +463,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = 'Ошибка загрузки: $e');
+      setState(() => _message = 'Ошибка загрузки. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -602,7 +603,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                           tileColor: const Color(0xFFF7FAFC),
                           title: Text(user['phone']?.toString() ?? '-'),
                           subtitle: Text(
-                            'ID ${user['id']}\n'
+                            '${recordNumber(user['publicNumber'])}\n'
                             '${user['name'] ?? 'Без имени'} • роль ${user['role'] ?? '-'} • город ${city?['name'] ?? user['cityId'] ?? '-'}',
                           ),
                           isThreeLine: true,
@@ -685,7 +686,7 @@ class _AdminCitiesPageState extends State<AdminCitiesPage> {
       await task();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = '$action failed: $e');
+      setState(() => _message = 'Не удалось выполнить действие. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _busyAction = null);
@@ -704,7 +705,7 @@ class _AdminCitiesPageState extends State<AdminCitiesPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = 'Ошибка загрузки: $e');
+      setState(() => _message = 'Ошибка загрузки. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -871,7 +872,7 @@ class _AdminCitiesPageState extends State<AdminCitiesPage> {
                             title: Text(
                                 '${city['name']} • ${rideCurrencySymbol(city)}'),
                             subtitle: Text(
-                                'ID ${city['id']} • ${city['region'] ?? '-'}\n${city['lat']}, ${city['lng']}'),
+                                '${recordNumber(city['publicNumber'])} • ${city['region'] ?? '-'}\n${city['lat']}, ${city['lng']}'),
                             isThreeLine: true,
                             trailing: OutlinedButton(
                               onPressed: _busyAction == null
@@ -953,7 +954,7 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
       await task();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = '$action failed: $e');
+      setState(() => _message = 'Не удалось выполнить действие. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _busyAction = null);
@@ -980,7 +981,7 @@ class _AdminTariffsPageState extends State<AdminTariffsPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = 'Не удалось загрузить данные: $e');
+      setState(() => _message = 'Не удалось загрузить данные. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -1319,7 +1320,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = 'Не удалось загрузить настройки: $e');
+      setState(() => _message = 'Не удалось загрузить настройки. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -1337,7 +1338,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
       await _load();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = 'Не удалось сохранить настройку: $e');
+      setState(() => _message = 'Не удалось сохранить настройку. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _saving = false);
@@ -1355,7 +1356,7 @@ class _AdminSettingsPageState extends State<AdminSettingsPage> {
       await _load();
     } catch (e) {
       if (mounted) {
-        setState(() => _message = 'Не удалось изменить налоговый режим: $e');
+        setState(() => _message = 'Не удалось изменить налоговый режим. ${recordError(e)}');
       }
     } finally {
       if (mounted) {
@@ -1499,7 +1500,7 @@ class _AdminTopupsPageState extends State<AdminTopupsPage> {
       await task();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = '$action failed: $e');
+      setState(() => _message = 'Не удалось выполнить действие. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _busyAction = null);
@@ -1518,7 +1519,7 @@ class _AdminTopupsPageState extends State<AdminTopupsPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = 'Не удалось загрузить данные: $e');
+      setState(() => _message = 'Не удалось загрузить данные. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -1569,7 +1570,7 @@ class _AdminTopupsPageState extends State<AdminTopupsPage> {
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('ID ${m['id']} • ${m['status']}'),
+                              Text('${recordNumber(m['publicNumber'])} • ${recordStatuses[m['status']] ?? 'Статус уточняется'}'),
                               const SizedBox(height: 8),
                               Wrap(
                                 spacing: 8,
@@ -1628,7 +1629,7 @@ class _AdminPayoutsPageState extends State<AdminPayoutsPage> {
       await task();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = '$action failed: $e');
+      setState(() => _message = 'Не удалось выполнить действие. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _busyAction = null);
@@ -1647,7 +1648,7 @@ class _AdminPayoutsPageState extends State<AdminPayoutsPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = 'Не удалось загрузить данные: $e');
+      setState(() => _message = 'Не удалось загрузить данные. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -1698,7 +1699,7 @@ class _AdminPayoutsPageState extends State<AdminPayoutsPage> {
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('ID ${m['id']} • ${m['status']}'),
+                              Text('${recordNumber(m['publicNumber'])} • ${recordStatuses[m['status']] ?? 'Статус уточняется'}'),
                               const SizedBox(height: 8),
                               Wrap(
                                 spacing: 8,
@@ -1762,7 +1763,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = 'Ошибка загрузки: $e');
+      setState(() => _message = 'Ошибка загрузки. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -1777,11 +1778,11 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         'status': status,
         'reason': 'Ручное изменение статуса через admin_web',
       });
-      setState(() => _message = 'Статус заказа $id изменён на $status');
+      setState(() => _message = 'Статус заказа обновлён');
       await _load();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = 'Ошибка смены статуса: $e');
+      setState(() => _message = 'Ошибка смены статуса. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _busyAction = null);
@@ -1789,7 +1790,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
     }
   }
 
-  Future<void> _showTimeline(String id) async {
+  Future<void> _showTimeline(String id, dynamic number) async {
     try {
       final res = await AdminApiClient.instance
           .get('/admin/orders/$id/events', query: {'take': 100});
@@ -1798,7 +1799,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
       showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text('Таймлайн заказа: $id'),
+          title: Text('История заказа ${recordNumber(number)}'),
           content: SizedBox(
             width: 680,
             child: events.isEmpty
@@ -1811,9 +1812,9 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                       return ListTile(
                         dense: true,
                         title: Text(
-                            '${e['fromStatus'] ?? '-'} -> ${e['toStatus'] ?? '-'}'),
+                            '${recordStatuses[e['fromStatus']] ?? 'Начало истории'} → ${recordStatuses[e['toStatus']] ?? 'Статус уточняется'}'),
                         subtitle:
-                            Text('${e['createdAt']} • ${e['source'] ?? '-'}'),
+                            Text(recordTime(e['createdAt'])),
                       );
                     },
                   ),
@@ -1827,7 +1828,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = 'Ошибка загрузки таймлайна: $e');
+      setState(() => _message = 'Не удалось загрузить историю заказа. ${recordError(e)}');
     }
   }
 
@@ -1856,15 +1857,15 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(18)),
                           tileColor: const Color(0xFFF7FAFC),
-                          title: Text('${m['mode']} • ${m['status']}'),
+                          title: Text('${recordModes[m['mode']] ?? 'Режим уточняется'} • ${recordStatuses[m['status']] ?? 'Статус уточняется'}'),
                           subtitle: Text(
-                              'ID $id • цена ${m['price']} ${rideCurrencySymbol(m)}'),
+                              '${recordNumber(m['publicNumber'])} • цена ${m['price']} ${rideCurrencySymbol(m)}'),
                           trailing: Wrap(
                             spacing: 8,
                             children: [
                               OutlinedButton(
-                                onPressed: () => _showTimeline(id),
-                                child: const Text('Таймлайн'),
+                                onPressed: () => _showTimeline(id, m['publicNumber']),
+                                child: const Text('История заказа'),
                               ),
                               PopupMenuButton<String>(
                                 enabled: _busyAction == null,
@@ -1951,7 +1952,7 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
       await task();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = 'Не удалось выполнить действие «$action»: $e');
+      setState(() => _message = 'Не удалось выполнить действие «$action». ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _busyAction = null);
@@ -1995,7 +1996,7 @@ class _AdminNotificationsPageState extends State<AdminNotificationsPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _message = 'Не удалось загрузить данные: $e');
+      setState(() => _message = 'Не удалось загрузить данные. ${recordError(e)}');
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -2584,8 +2585,8 @@ class _TariffList extends StatelessWidget {
             title: Text('${m['name']}'),
             subtitle: Text(
               cityAware
-                  ? 'ID ${m['id']} • активен ${m['isActive']} • класс ${m['vehicleClass'] ?? 'ECONOMY'} • город ${((m['city'] as Map?)?['name'] ?? m['cityId'])}\nБаза: ${m['basePrice']} ${rideCurrencySymbol(m)} • км: ${m['pricePerKm']} ${rideCurrencySymbol(m)} • мин: ${m['pricePerMin']} ${rideCurrencySymbol(m)} • минимум: ${m['minPrice']} ${rideCurrencySymbol(m)}'
-                  : 'ID ${m['id']} • активен ${m['isActive']} • ${m['countryCode'] ?? 'KZ'}\nБаза: ${m['basePrice']} • км: ${m['pricePerKm']} • кг: ${m['pricePerKg']} • минимум: ${m['minPrice']}',
+                  ? '${recordNumber(m['publicNumber'])} • ${m['isActive'] == true ? 'Действует' : 'Отключён'} • класс ${const {'ECONOMY': 'Эконом', 'COMFORT': 'Комфорт', 'BUSINESS': 'Бизнес'}[m['vehicleClass'] ?? 'ECONOMY'] ?? 'Не указан'} • город ${((m['city'] as Map?)?['name'] ?? 'Не указан')}\nБаза: ${m['basePrice']} ${rideCurrencySymbol(m)} • км: ${m['pricePerKm']} ${rideCurrencySymbol(m)} • мин: ${m['pricePerMin']} ${rideCurrencySymbol(m)} • минимум: ${m['minPrice']} ${rideCurrencySymbol(m)}'
+                  : '${recordNumber(m['publicNumber'])} • ${m['isActive'] == true ? 'Действует' : 'Отключён'} • ${const {'KZ': 'Казахстан', 'RU': 'Россия'}[m['countryCode'] ?? 'KZ'] ?? 'Страна не указана'}\nБаза: ${m['basePrice']} • км: ${m['pricePerKm']} • кг: ${m['pricePerKg']} • минимум: ${m['minPrice']}',
             ),
             trailing: OutlinedButton(
               onPressed: () => onDelete(m['id'] as String),
@@ -2651,7 +2652,7 @@ class _DriverDailyBonusSettingsCardState
       }
       _ready = true;
     } catch (e) {
-      _error = 'Не удалось загрузить акцию: $e';
+      _error = 'Не удалось загрузить акцию. ${recordError(e)}';
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -2687,7 +2688,7 @@ class _DriverDailyBonusSettingsCardState
       }
       if (mounted) setState(() => _error = 'Ежедневные бонусы сохранены');
     } catch (e) {
-      if (mounted) setState(() => _error = 'Ошибка сохранения: $e');
+      if (mounted) setState(() => _error = 'Ошибка сохранения. ${recordError(e)}');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
