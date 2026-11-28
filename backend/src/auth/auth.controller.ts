@@ -41,11 +41,11 @@ export class AuthController {
 
     @UseGuards(JwtAuthGuard)
     @Post('recovery/link/start')
-    startLink(@Request() req,@Body('provider') provider:string) { return this.authService.startProvider(provider,req.user.id); }
+    startLink(@Request() req,@Body('provider') provider:string) { return this.authService.startProvider(provider,req.user.sub); }
 
     @UseGuards(JwtAuthGuard)
     @Post('recovery/link/verify')
-    verifyLink(@Request() req,@Body() b:any) { return this.authService.finishProvider(b.provider,b.nonce,b.idToken,req.user.id,b.password); }
+    verifyLink(@Request() req,@Body() b:any) { return this.authService.finishProvider(b.provider,b.nonce,b.idToken,req.user.sub,b.password); }
 
     @Post('recovery/password')
     completeRecovery(@Body() b:any) { return this.authService.completeRecovery(b.grant,b.password); }
