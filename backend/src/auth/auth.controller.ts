@@ -37,6 +37,12 @@ export class AuthController {
     @Get('recovery/links')
     listRecoveryLinks(@Request() req) { return this.authService.recoveryLinks(req.user.sub); }
 
+    @Post('recovery/whatsapp/start')
+    whatsappCode(@Body('phone') phone:string) {return this.authService.requestWhatsappCode(phone);}
+
+    @Post('recovery/whatsapp/verify')
+    whatsappVerify(@Body() b:any) {return this.authService.verifyWhatsappCode(b.challenge,b.code);}
+
     @Post('recovery/admin-request')
     requestRecoveryHelp(@Body('phone') phone: string) {
         return this.authService.requestRecoveryHelp(phone);

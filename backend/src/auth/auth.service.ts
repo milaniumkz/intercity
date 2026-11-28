@@ -1,3 +1,5 @@
+import {sendRecoveryCode} from '../attention/whatsapp.channel';
+import {randomInt, createHmac, timingSafeEqual} from 'crypto';
 import { createHash, randomBytes } from 'crypto';
 import { providerConfig, verifiedSubject } from './recovery-provider';
 import { IdentityService } from '../identity/identity.service';
@@ -217,6 +219,52 @@ export class AuthService {
             current = await tx.refreshToken.findUnique({ where: { id: current.replacementId } });
         }
         throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    async requestWhatsappCode(input:string) {
+        if (typeof input !== 'string' || !/^\+?7\d{10}$/.test(input)) throw new BadRequestException('Введите номер полностью');
+        const digits=input.replace(/^\+/,'');
+        const nonce=randomBytes(32).toString('hex');
+        const code=randomInt(100000,1000000).toString();
+        const digest=createHmac('sha256',this.getRequiredSecret('JWT_SECRET')).update(nonce+code).digest('hex');
+        const send=await this.prisma.$transaction(async tx=>{
+            const user=await tx.user.findFirst({where:{phone:{in:[digits,'+'+digits]},blockedAt:null,role:{not:'ADMIN'}}});
+            if(!user)return false;
+            await tx.$executeRaw`SELECT id FROM "User" WHERE id=${user.id} FOR UPDATE`;
+            if(await tx.recoveryIdentity.count({where:{userId:user.id}}))return false;
+            const now=Date.now();
+            const recent=await tx.whatsappCode.count({where:{userId:user.id,createdAt:{gt:new Date(now-3600000)}}});
+            if(recent>=5 || await tx.whatsappCode.count({where:{userId:user.id,createdAt:{gt:new Date(now-60000)}}}))return false;
+            await tx.whatsappCode.updateMany({where:{userId:user.id},data:{used:true}});
+            await tx.whatsappCode.create({data:{id:nonce,userId:user.id,digest,authVersion:user.authVersion,expiresAt:new Date(now+300000)}});
+            return true;
+        });
+        if(send) {
+            try { await sendRecoveryCode(this.prisma,digits,code,nonce); }
+            catch(e) {await this.prisma.whatsappCode.update({where:{id:nonce},data:{used:true}});throw e;}
+        }
+        return {challenge:nonce};
+    }
+
+    async verifyWhatsappCode(id:string,code:string) {
+        if(typeof id!=='string'||!/^[a-f0-9]{64}$/.test(id)||typeof code!=='string'||!/^\d{6}$/.test(code))throw new BadRequestException('Проверьте код');
+        const grant=await this.prisma.$transaction(async tx=>{
+            await tx.$executeRaw`SELECT id FROM "WhatsappCode" WHERE id=${id} FOR UPDATE`;
+            const row=await tx.whatsappCode.findUnique({where:{id}});
+            if(!row||row.used||row.attempts>=5||row.expiresAt<=new Date())return null;
+            const digest=createHmac('sha256',this.getRequiredSecret('JWT_SECRET')).update(id+code).digest();
+            if(!timingSafeEqual(digest,Buffer.from(row.digest,'hex'))){
+                await tx.whatsappCode.update({where:{id},data:{attempts:{increment:1}}});
+                return null;
+            }
+            if(await tx.recoveryIdentity.count({where:{userId:row.userId}}))return null;
+            await tx.whatsappCode.update({where:{id},data:{used:true}});
+            const token=randomBytes(32).toString('hex');
+            await tx.recoveryProof.create({data:{id:createHash('sha256').update(token).digest('hex'),userId:row.userId,authVersion:row.authVersion,provider:'WHATSAPP',purpose:'PASSWORD',expiresAt:new Date(Date.now()+300000)}});
+            return token;
+        });
+        if(!grant)throw new UnauthorizedException('Код неверен или истёк');
+        return {grant};
     }
 
     async requestRecoveryHelp(input: string) {

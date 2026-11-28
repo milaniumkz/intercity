@@ -7,6 +7,8 @@ import 'admin_dashboard_page.dart';
 import 'admin_people_page.dart';
 
 const attentionCategories = {
+  'whatsapp-channel': 'Подключение WhatsApp',
+  'whatsapp-send': 'Отправка кодов WhatsApp',
   'identity': 'Видеопроверки',
   'identity-failed': 'Отказы видеопроверки',
   'topup-completed': 'Завершённые пополнения',

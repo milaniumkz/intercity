@@ -62,8 +62,20 @@ services:
       retries: 6
       start_period: 15s
 
+  whatsapp:
+    image: ${WHATSAPP_CHANNEL_IMAGE:-devlikeapro/waha:latest}
+    profiles: [whatsapp]
+    restart: unless-stopped
+    environment:
+      WAHA_API_KEY: ${WHATSAPP_CHANNEL_KEY:-}
+      WAHA_DASHBOARD_ENABLED: "false"
+      WHATSAPP_SWAGGER_ENABLED: "false"
+    networks: [whatsapp_channel]
+    volumes:
+      - whatsapp_session:/app/.sessions
+
   backend:
-    networks: [default, identity_internal, routing_internal]
+    networks: [default, identity_internal, routing_internal, whatsapp_channel]
     build:
       context: ../../backend
       dockerfile: Dockerfile
@@ -110,11 +122,13 @@ services:
       - backend
 
 volumes:
+  whatsapp_session:
   postgres_data:
   caddy_data:
   caddy_config:
 
 networks:
+  whatsapp_channel:
   routing_internal:
     internal: true
   identity_internal:
