@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_appauth/flutter_appauth.dart';
+import 'provider_sign_in.dart';
 import '../../../core/api/api_client.dart';
 
 class LinkedAccountsEntry extends StatelessWidget {
@@ -41,13 +41,6 @@ class _LinkedAccountsState extends State<LinkedAccountsPage> {
   }
 
   Future<void> connect(String provider) async {
-    final google = provider == 'GOOGLE';
-    final client = google ? const String.fromEnvironment('GOOGLE_OIDC_CLIENT_ID') : const String.fromEnvironment('APPLE_OIDC_CLIENT_ID');
-    final redirect = google ? const String.fromEnvironment('GOOGLE_OIDC_REDIRECT') : const String.fromEnvironment('APPLE_OIDC_REDIRECT');
-    if (kIsWeb || client.isEmpty || redirect.isEmpty) {
-      setState(() => message = 'Подключение пока недоступно на этом устройстве.');
-      return;
-    }
     String currentPassword = '';
     final approved = await showDialog<bool>(context: context, builder: (dialog) => AlertDialog(
       title: const Text('Подтвердите пароль InterCity'),
@@ -58,13 +51,7 @@ class _LinkedAccountsState extends State<LinkedAccountsPage> {
     if (!mounted || approved != true || currentPassword.isEmpty) return;
     setState(() {busy = true; message = '';});
     try {
-      final start = await api.post('/auth/recovery/link/start', data: {'provider': provider});
-      final nonce = start.data['nonce'] as String;
-      final result = await const FlutterAppAuth().authorizeAndExchangeCode(
-        AuthorizationTokenRequest(client, redirect, issuer: google ? 'https://accounts.google.com' : 'https://appleid.apple.com',
-          scopes: const ['openid'], nonce: nonce));
-      if (result.idToken == null) throw StateError('missing token');
-      await api.post('/auth/recovery/link/verify', data: {'provider':provider,'nonce':nonce,'idToken':result.idToken,'password':currentPassword});
+      await providerSignIn(api,provider,password:currentPassword,active:()=>mounted);
       await load();
     } catch (_) {
       if (mounted) setState(() => message = 'Привязка не завершена. Проверьте пароль и повторите.');

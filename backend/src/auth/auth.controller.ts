@@ -48,11 +48,16 @@ export class AuthController {
         return this.authService.requestRecoveryHelp(phone);
     }
 
+    @Get('recovery/callback')
+    googleCallback(@Query('state') state:string,@Query('code') code:string) {return this.authService.providerCallback(state,code);}
+    @Post('recovery/callback')
+    appleCallback(@Body('state') state:string,@Body('code') code:string) {return this.authService.providerCallback(state,code);}
+
     @Post('recovery/provider/start')
     startRecovery(@Body('provider') provider:string) { return this.authService.startProvider(provider); }
 
     @Post('recovery/provider/verify')
-    verifyRecovery(@Body() b:any) { return this.authService.finishProvider(b.provider,b.nonce,b.idToken); }
+    verifyRecovery(@Body() b:any) { return this.authService.finishProvider(b.provider,b.nonce,b.ticket); }
 
     @UseGuards(JwtAuthGuard)
     @Post('recovery/link/start')
@@ -60,7 +65,7 @@ export class AuthController {
 
     @UseGuards(JwtAuthGuard)
     @Post('recovery/link/verify')
-    verifyLink(@Request() req,@Body() b:any) { return this.authService.finishProvider(b.provider,b.nonce,b.idToken,req.user.sub,b.password); }
+    verifyLink(@Request() req,@Body() b:any) { return this.authService.finishProvider(b.provider,b.nonce,b.ticket,req.user.sub,b.password); }
 
     @Post('recovery/password')
     completeRecovery(@Body() b:any) { return this.authService.completeRecovery(b.grant,b.password); }

@@ -45,3 +45,13 @@ export async function verifiedSubject(provider: string, token: string, nonce: st
         typeof claims.sub !== 'string' || !claims.sub || claims.sub.length > 255) throw invalid();
     return claims.sub as string;
 }
+
+export function browserProvider(provider:string) {
+    const config=providerConfig(provider);
+    const client=config.audiences[0];
+    const redirect=process.env.RECOVERY_OAUTH_CALLBACK;
+    const secret=process.env[provider==='APPLE'?'APPLE_RECOVERY_CLIENT_SECRET':'GOOGLE_RECOVERY_CLIENT_SECRET'];
+    if(!redirect?.startsWith('https://')||!secret)throw new ServiceUnavailableException('Подключение провайдера пока не настроено');
+    const apple=provider==='APPLE';
+    return {client,redirect,secret,authorize:apple?'https://appleid.apple.com/auth/authorize':'https://accounts.google.com/o/oauth2/v2/auth',exchange:apple?'https://appleid.apple.com/auth/token':'https://oauth2.googleapis.com/token'};
+}

@@ -1324,6 +1324,9 @@ model RecoveryIdentity {
   @@unique([userId, provider])
 }
 model RecoveryProof {
+  ticketHash String?
+  verifiedSubject String?
+  verifier String?
   id String @id
   purpose String
   provider String

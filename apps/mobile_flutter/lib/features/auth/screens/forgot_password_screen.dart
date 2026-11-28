@@ -1,6 +1,6 @@
 import '../../../core/utils/app_mode_manager.dart';
 import 'package:dio/dio.dart';
-import 'package:flutter_appauth/flutter_appauth.dart';
+import 'provider_sign_in.dart';
 import 'package:flutter/material.dart';
 import '../../../core/api/api_client.dart';
 import 'package:go_router/go_router.dart';
@@ -67,21 +67,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   Future<void> recoverLinked(String provider) async {
     if (_sending) return;
-    final google = provider == 'GOOGLE';
-    final client = google ? const String.fromEnvironment('GOOGLE_OIDC_CLIENT_ID') : const String.fromEnvironment('APPLE_OIDC_CLIENT_ID');
-    final redirect = google ? const String.fromEnvironment('GOOGLE_OIDC_REDIRECT') : const String.fromEnvironment('APPLE_OIDC_REDIRECT');
-    if (client.isEmpty || redirect.isEmpty) {
-      setState(() => notice = 'Этот способ входа пока не настроен. Обратитесь в техподдержку.');
-      return;
-    }
     setState(() { _sending = true; notice = ''; });
     try {
-      final start = await api.post('/auth/recovery/provider/start',data:{'provider':provider});
-      final nonce = start.data['nonce'] as String;
-      final result = await const FlutterAppAuth().authorizeAndExchangeCode(
-        AuthorizationTokenRequest(client,redirect,issuer:google?'https://accounts.google.com':'https://appleid.apple.com',scopes:const ['openid'],nonce:nonce));
-      final verified = await api.post('/auth/recovery/provider/verify',data:{'provider':provider,'nonce':nonce,'idToken':result.idToken});
-      if (mounted) setState(() => grant = verified.data['grant'] as String);
+      final verified = await providerSignIn(api,provider,active:()=>mounted);
+      if (mounted) setState(() => grant = verified['grant'] as String);
     } catch (_) {
       if (mounted) setState(() => notice = 'Не удалось подтвердить привязанный аккаунт. Повторите вход или обратитесь в техподдержку.');
     } finally {
@@ -182,47 +171,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                               key: const ValueKey('whatsapp-code'), keyboardType: TextInputType.number, maxLength: 6,
                               decoration: const InputDecoration(labelText:'Код из WhatsApp'),
                               onChanged:(value) => code = value,
-                              validator:(value) => RegExp(r'^\d{6}
-                            ),
-                            const SizedBox(height: 12),
-                            if (challenge == null && grant == null) ...[
-                              TextButton(onPressed: _sending ? null : () => recoverLinked('GOOGLE'), child: const Text('Восстановить через Google')),
-                              TextButton(onPressed: _sending ? null : () => recoverLinked('APPLE'), child: const Text('Восстановить через Apple')),
-                            ],
-                            if (challenge != null) TextButton(onPressed: _sending ? null : () => setState(() {challenge = null; grant = null; code = ''; password = ''; notice = ''; }), child: const Text('Запросить новый код')),
-                            OutlinedButton.icon(
-                              label: const Text('Написать в техподдержку'),
-                              icon: const Icon(Icons.support_agent),
-                              onPressed: _sending ? null : _sendRequest,
-                            ),
-                            const SizedBox(height: 12),
-                            OutlinedButton(
-                              onPressed: () => context.go('/login'),
-                              child: const Text('Вернуться ко входу'),
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Никому не сообщайте пароль от аккаунта. '
-                              'Если вы уже вошли и знаете текущий пароль, '
-                              'измените его в профиле: '
-                              'Настройки → Безопасность.',
-                              style: theme.textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-).hasMatch(value ?? '') ? null : 'Введите шесть цифр',
+                              validator:(value) => RegExp(r'^\d{6}$').hasMatch(value ?? '') ? null : 'Введите шесть цифр',
                             ),
                             if (grant != null) TextFormField(
                               key: const ValueKey('new-password'), obscureText: true,
@@ -233,12 +182,16 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                             if (notice.isNotEmpty) Text(notice),
                             ICGradientButton(
                               label: grant != null ? 'Сохранить пароль и войти' : challenge != null ? 'Проверить код' : 'Отправить код на WhatsApp',
-                              icon: Icons.lock_outline,
-                              onPressed: _sending ? null : advance,
+                              icon: Icons.lock_outline, onPressed: _sending ? null : advance,
                             ),
                             const SizedBox(height: 12),
+                            if (challenge == null && grant == null) ...[
+                              TextButton(onPressed: _sending ? null : () => recoverLinked('GOOGLE'), child: const Text('Восстановить через Google')),
+                              TextButton(onPressed: _sending ? null : () => recoverLinked('APPLE'), child: const Text('Восстановить через Apple')),
+                            ],
+                            if (challenge != null) TextButton(onPressed: _sending ? null : () => setState(() {challenge = null; grant = null; code = ''; password = ''; notice = ''; }), child: const Text('Запросить новый код')),
                             OutlinedButton.icon(
-                              label: const Text('Обратиться к администратору'),
+                              label: const Text('Написать в техподдержку'),
                               icon: const Icon(Icons.support_agent),
                               onPressed: _sending ? null : _sendRequest,
                             ),

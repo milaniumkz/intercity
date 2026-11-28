@@ -1,7 +1,7 @@
 import {sendRecoveryCode} from '../attention/whatsapp.channel';
 import {randomInt, createHmac, timingSafeEqual} from 'crypto';
 import { createHash, randomBytes } from 'crypto';
-import { providerConfig, verifiedSubject } from './recovery-provider';
+import { browserProvider, verifiedSubject } from './recovery-provider';
 import { IdentityService } from '../identity/identity.service';
 import {
     BadRequestException,
@@ -111,7 +111,7 @@ export class AuthService {
                 name: user.name,
                 role: user.role,
                 mustChangePassword: user.mustChangePassword,
-                identityRequired: await this.identity?.needsVerification(user.id,user.role) ?? false,
+                identityRequired: false,
                 refCode: user.refCode,
                 refLink: this.buildReferralLink(user.refCode),
             },
@@ -145,7 +145,7 @@ export class AuthService {
                 name: user.name,
                 role: user.role,
                 mustChangePassword: user.mustChangePassword,
-                identityRequired: await this.identity?.needsVerification(user.id,user.role) ?? false,
+                identityRequired: false,
                 refCode: user.refCode,
             },
             ...tokens,
@@ -298,20 +298,44 @@ export class AuthService {
     }
 
     async startProvider(provider: string, userId?: string) {
-        providerConfig(provider);
+        const config = browserProvider(provider);
+        const ticket = randomBytes(32).toString('hex');
+        const verifier = randomBytes(32).toString('base64url');
         const nonce = randomBytes(32).toString('hex');
         const user = userId ? await this.prisma.user.findUniqueOrThrow({where:{id:userId}}) : null;
         await this.prisma.recoveryProof.deleteMany({where:{expiresAt:{lt:new Date()}}});
-        await this.prisma.recoveryProof.create({data:{id:nonce,provider,userId,purpose:userId?'LINK':'RECOVER',authVersion:user?.authVersion,expiresAt:new Date(Date.now()+300000)}});
-        return { nonce };
+        await this.prisma.recoveryProof.create({data:{id:nonce,provider,userId,verifier,ticketHash:createHash('sha256').update(ticket).digest('hex'),purpose:userId?'LINK':'RECOVER',authVersion:user?.authVersion,expiresAt:new Date(Date.now()+300000)}});
+        const url = new URL(config.authorize);
+        url.search = new URLSearchParams({client_id:config.client,redirect_uri:config.redirect,response_type:'code',scope:'openid',state:nonce,nonce,
+            ...(provider==='GOOGLE'?{code_challenge_method:'S256',code_challenge:createHash('sha256').update(verifier).digest('base64url')}:{response_mode:'form_post'})}).toString();
+        return {nonce,ticket,url:url.toString()};
     }
 
-    async finishProvider(provider: string, nonce: string, token: string, userId?: string, password?: string) {
+    async providerCallback(state:string,code:string) {
+        if(typeof state!=='string'||!/^[a-f0-9]{64}$/.test(state)||typeof code!=='string'||code.length>8192) throw new BadRequestException('Некорректное подтверждение');
+        const proof = await this.prisma.recoveryProof.findUnique({where:{id:state}});
+        if(!proof?.verifier||proof.expiresAt<=new Date()||proof.verifiedSubject) throw new UnauthorizedException('Начните вход заново');
+        const config=browserProvider(proof.provider);
+        const response=await fetch(config.exchange,{method:'POST',signal:AbortSignal.timeout(8000),body:new URLSearchParams({
+            code,client_id:config.client,client_secret:config.secret,redirect_uri:config.redirect,grant_type:'authorization_code',
+            ...(proof.provider==='GOOGLE'?{code_verifier:proof.verifier}:{})})});
+        if(!response.ok) throw new UnauthorizedException('Провайдер не подтвердил вход');
+        const data=await response.json();
+        const subject=await verifiedSubject(proof.provider,data.id_token,state);
+        await this.prisma.recoveryProof.updateMany({where:{id:state,verifiedSubject:null,expiresAt:{gt:new Date()}},data:{verifiedSubject:subject,verifier:null}});
+        return 'Аккаунт подтверждён. Вернитесь в приложение InterCity.';
+
+    }
+
+    async finishProvider(provider: string, nonce: string, ticket: string, userId?: string, password?: string) {
         if (typeof nonce !== 'string' || !/^[a-f0-9]{64}$/.test(nonce)) throw new BadRequestException('Некорректный запрос');
-        const subject = await verifiedSubject(provider, token, nonce);
+        if(typeof ticket!=='string'||!/^[a-f0-9]{64}$/.test(ticket)) throw new UnauthorizedException('Начните вход заново');
         return this.prisma.$transaction(async tx => {
             const proof = await tx.recoveryProof.findUnique({where:{id:nonce}});
-            if (!proof || proof.purpose !== (userId?'LINK':'RECOVER') || proof.userId !== (userId || null) || proof.provider !== provider ||
+            if (!proof || proof.expiresAt<=new Date() || proof.ticketHash!==createHash('sha256').update(ticket).digest('hex') || proof.provider!==provider || proof.userId!==(userId||null)) throw new UnauthorizedException('Начните вход заново');
+            if(!proof.verifiedSubject) return {pending:true};
+            const subject=proof.verifiedSubject;
+            if (proof.purpose !== (userId?'LINK':'RECOVER') || proof.userId !== (userId || null) || proof.provider !== provider ||
                 !(await tx.recoveryProof.deleteMany({where:{id:nonce,expiresAt:{gt:new Date()}}})).count)
                 throw new UnauthorizedException('Начните подтверждение заново');
             if (userId) {
@@ -371,7 +395,7 @@ export class AuthService {
         });
         if (!user || user.blockedAt || user.phone.startsWith('erased:')) return null;
         const { password, ...safeUser } = user;
-        return { ...safeUser, driverDocumentsRequired: !!user.driverProfile && (await this.identity?.driverDocumentsRequired(user.id) ?? false), identityRequired: await this.identity?.needsVerification(user.id,user.role) ?? false, refLink: this.buildReferralLink(user.refCode) };
+        return { ...safeUser, driverDocumentsRequired: !!user.driverProfile && (await this.identity?.driverDocumentsRequired(user.id) ?? false), identityRequired: false, refLink: this.buildReferralLink(user.refCode) };
     }
 
     async getReferralSummary(userId: string) {
