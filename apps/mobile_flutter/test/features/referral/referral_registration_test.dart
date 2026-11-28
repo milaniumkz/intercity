@@ -164,9 +164,7 @@ void main() {
     await tester.ensureVisible(find.text('Создать аккаунт'));
     await tester.tap(find.text('Создать аккаунт'));
     await tester.pumpAndSettle();
-    expect(find.text('Восстановление доступа'), findsOneWidget);
-    await tester.tap(find.text('Позже'));
-    await tester.pumpAndSettle();
+    expect(find.text('Восстановление доступа'), findsNothing);
     expect(api.registration!['referralCode'], 'INVITE42');
     expect(await AppPreferences.getPendingReferralCode(), isNull);
   });
