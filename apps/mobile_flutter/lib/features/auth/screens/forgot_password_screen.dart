@@ -1,4 +1,5 @@
-import 'face_verification_page.dart';
+import '../../../core/utils/app_mode_manager.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import '../../../core/api/api_client.dart';
 import 'package:go_router/go_router.dart';
@@ -24,17 +25,53 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     super.dispose();
   }
 
-  Future<void> _videoRecovery() async {
-    if (!_formKey.currentState!.validate()) return;
-    final phone = normalizeKzLocalPhone(_phoneController.text.trim());
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => FaceVerificationPage(phone: phone)));
+  String? challenge;
+  String? grant;
+  String code = '';
+  String password = '';
+  String notice = '';
+  final api = ApiClient();
+
+  Future<void> advance() async {
+    if (_sending || !_formKey.currentState!.validate()) return;
+    setState(() { _sending = true; notice = ''; });
+    try {
+      if (challenge == null) {
+        final result = await api.post('/auth/recovery/whatsapp/start', data: {
+          'phone': normalizeKzLocalPhone(_phoneController.text),
+        });
+        if (!mounted) return;
+        setState(() { challenge = result.data['challenge'] as String; notice = 'Проверьте WhatsApp на указанном номере. Код действует 5 минут.'; });
+      } else if (grant == null) {
+        final result = await api.post('/auth/recovery/whatsapp/verify', data: {'challenge':challenge,'code':code.trim()});
+        if (!mounted) return;
+        setState(() {grant = result.data['grant'] as String; notice = '';});
+      } else {
+        final result = await api.post('/auth/recovery/password', data: {'grant':grant,'password':password});
+        await api.setTokens(result.data['accessToken'] as String, result.data['refreshToken'] as String);
+        final user = result.data['user'];
+        final route = await AppModeManager.resolveHomeRoute(api,role:user['role'] as String,userId:user['id'] as String);
+        if (mounted) context.go(route);
+      }
+    } on DioException catch (e) {
+      final body = e.response?.data;
+      final reason = body is Map ? body['message'] : null;
+      if (mounted) setState(() => notice = reason is String && RegExp('[А-Яа-я]').hasMatch(reason) ? reason : 'Не удалось выполнить действие. Проверьте соединение.');
+    } catch (_) {
+      if (mounted) setState(() => notice = 'Не удалось завершить восстановление. Попробуйте ещё раз.');
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   bool _sending = false;
 
   Future<void> _sendRequest() async {
-    if (_sending || !_formKey.currentState!.validate()) return;
+    if (_sending) return;
+    if (!isValidKzPhone(normalizeKzLocalPhone(_phoneController.text))) {
+      _formKey.currentState!.validate();
+      return;
+    }
     setState(() => _sending = true);
     try {
       await ApiClient().post('/auth/recovery/admin-request', data: {
@@ -89,15 +126,12 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                             const ICPremiumInfoBanner(
                               icon: Icons.info_outline_rounded,
                               text:
-                                  'Восстановите доступ по новой видеозаписи. Лицо сравнивается с эталоном, сохранённым при первичной проверке.',
+                                  'Одноразовый код придёт сообщением в WhatsApp на номер вашего аккаунта InterCity.',
                             ),
                             const SizedBox(height: 16),
-                            const Text('1. Укажите телефон своего аккаунта.\n'
-                                '2. Пройдите видеопроверку по случайным подсказкам.\n'
-                                '3. После подтверждения лица придумайте новый пароль. Если эталона ещё нет или лицо не совпадает, сброс не разрешается.'),
-                            const SizedBox(height: 18),
                             TextFormField(
                               controller: _phoneController,
+                              readOnly: challenge != null || _sending,
                               keyboardType: TextInputType.phone,
                               autofillHints: const [
                                 AutofillHints.telephoneNumberNational
@@ -115,10 +149,59 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                   : 'Введите телефон аккаунта полностью',
                             ),
                             const SizedBox(height: 16),
+                            if (challenge != null && grant == null) TextFormField(
+                              key: const ValueKey('whatsapp-code'), keyboardType: TextInputType.number, maxLength: 6,
+                              decoration: const InputDecoration(labelText:'Код из WhatsApp'),
+                              onChanged:(value) => code = value,
+                              validator:(value) => RegExp(r'^\d{6}
+                            ),
+                            const SizedBox(height: 12),
+                            if (challenge != null) TextButton(onPressed: _sending ? null : () => setState(() {challenge = null; grant = null; code = ''; password = ''; notice = ''; }), child: const Text('Запросить новый код')),
+                            OutlinedButton.icon(
+                              label: const Text('Написать в техподдержку'),
+                              icon: const Icon(Icons.support_agent),
+                              onPressed: _sending ? null : _sendRequest,
+                            ),
+                            const SizedBox(height: 12),
+                            OutlinedButton(
+                              onPressed: () => context.go('/login'),
+                              child: const Text('Вернуться ко входу'),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Никому не сообщайте пароль от аккаунта. '
+                              'Если вы уже вошли и знаете текущий пароль, '
+                              'измените его в профиле: '
+                              'Настройки → Безопасность.',
+                              style: theme.textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+).hasMatch(value ?? '') ? null : 'Введите шесть цифр',
+                            ),
+                            if (grant != null) TextFormField(
+                              key: const ValueKey('new-password'), obscureText: true,
+                              decoration: const InputDecoration(labelText:'Новый пароль'),
+                              onChanged:(value) => password = value,
+                              validator:(value) => (value ?? '').length >= 12 ? null : 'Введите не менее 12 символов',
+                            ),
+                            if (notice.isNotEmpty) Text(notice),
                             ICGradientButton(
-                              label: 'Восстановить по видеопроверке',
-                              icon: Icons.videocam_outlined,
-                              onPressed: _videoRecovery,
+                              label: grant != null ? 'Сохранить пароль и войти' : challenge != null ? 'Проверить код' : 'Отправить код на WhatsApp',
+                              icon: Icons.lock_outline,
+                              onPressed: _sending ? null : advance,
                             ),
                             const SizedBox(height: 12),
                             OutlinedButton.icon(
