@@ -1,5 +1,6 @@
 import '../../../core/utils/app_mode_manager.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter_appauth/flutter_appauth.dart';
 import 'package:flutter/material.dart';
 import '../../../core/api/api_client.dart';
 import 'package:go_router/go_router.dart';
@@ -36,7 +37,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     if (_sending || !_formKey.currentState!.validate()) return;
     setState(() { _sending = true; notice = ''; });
     try {
-      if (challenge == null) {
+      if (challenge == null && grant == null) {
         final result = await api.post('/auth/recovery/whatsapp/start', data: {
           'phone': normalizeKzLocalPhone(_phoneController.text),
         });
@@ -59,6 +60,30 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       if (mounted) setState(() => notice = reason is String && RegExp('[А-Яа-я]').hasMatch(reason) ? reason : 'Не удалось выполнить действие. Проверьте соединение.');
     } catch (_) {
       if (mounted) setState(() => notice = 'Не удалось завершить восстановление. Попробуйте ещё раз.');
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> recoverLinked(String provider) async {
+    if (_sending) return;
+    final google = provider == 'GOOGLE';
+    final client = google ? const String.fromEnvironment('GOOGLE_OIDC_CLIENT_ID') : const String.fromEnvironment('APPLE_OIDC_CLIENT_ID');
+    final redirect = google ? const String.fromEnvironment('GOOGLE_OIDC_REDIRECT') : const String.fromEnvironment('APPLE_OIDC_REDIRECT');
+    if (client.isEmpty || redirect.isEmpty) {
+      setState(() => notice = 'Этот способ входа пока не настроен. Обратитесь в техподдержку.');
+      return;
+    }
+    setState(() { _sending = true; notice = ''; });
+    try {
+      final start = await api.post('/auth/recovery/provider/start',data:{'provider':provider});
+      final nonce = start.data['nonce'] as String;
+      final result = await const FlutterAppAuth().authorizeAndExchangeCode(
+        AuthorizationTokenRequest(client,redirect,issuer:google?'https://accounts.google.com':'https://appleid.apple.com',scopes:const ['openid'],nonce:nonce));
+      final verified = await api.post('/auth/recovery/provider/verify',data:{'provider':provider,'nonce':nonce,'idToken':result.idToken});
+      if (mounted) setState(() => grant = verified.data['grant'] as String);
+    } catch (_) {
+      if (mounted) setState(() => notice = 'Не удалось подтвердить привязанный аккаунт. Повторите вход или обратитесь в техподдержку.');
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -131,7 +156,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                             const SizedBox(height: 16),
                             TextFormField(
                               controller: _phoneController,
-                              readOnly: challenge != null || _sending,
+                              readOnly: challenge != null || grant != null || _sending,
                               keyboardType: TextInputType.phone,
                               autofillHints: const [
                                 AutofillHints.telephoneNumberNational
@@ -143,7 +168,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                 prefixText: '+7 ',
                                 prefixIcon: Icon(Icons.phone_outlined),
                               ),
-                              validator: (value) => isValidKzPhone(
+                              validator: (value) => grant != null || isValidKzPhone(
                                       normalizeKzLocalPhone(value ?? ''))
                                   ? null
                                   : 'Введите телефон аккаунта полностью',
@@ -156,6 +181,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                               validator:(value) => RegExp(r'^\d{6}
                             ),
                             const SizedBox(height: 12),
+                            if (challenge == null && grant == null) ...[
+                              TextButton(onPressed: _sending ? null : () => recoverLinked('GOOGLE'), child: const Text('Восстановить через Google')),
+                              TextButton(onPressed: _sending ? null : () => recoverLinked('APPLE'), child: const Text('Восстановить через Apple')),
+                            ],
                             if (challenge != null) TextButton(onPressed: _sending ? null : () => setState(() {challenge = null; grant = null; code = ''; password = ''; notice = ''; }), child: const Text('Запросить новый код')),
                             OutlinedButton.icon(
                               label: const Text('Написать в техподдержку'),
