@@ -13,7 +13,8 @@ export async function channelRequest(path: string, body?: object) {
         signal: AbortSignal.timeout(8000),
     });
     if (!response.ok) throw new ServiceUnavailableException('Канал WhatsApp временно недоступен');
-    return response.json();
+    const content = await response.text();
+    return content.trim() ? JSON.parse(content) : null;
 }
 
 export async function channelState() {
