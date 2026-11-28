@@ -95,6 +95,9 @@ void main() {
     await tester.ensureVisible(submit);
     await tester.tap(submit);
     await tester.pumpAndSettle();
+    expect(find.text('Восстановление доступа'), findsOneWidget);
+    await tester.tap(find.text('Позже'));
+    await tester.pumpAndSettle();
     expect(api.registration!['referralCode'], 'INVITE42');
     expect(find.text('Registered'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -138,6 +141,9 @@ void main() {
     await tester.ensureVisible(find.text('Создать аккаунт'));
     await tester.tap(find.text('Создать аккаунт'));
     await tester.pumpAndSettle();
+    expect(find.text('Восстановление доступа'), findsOneWidget);
+    await tester.tap(find.text('Позже'));
+    await tester.pumpAndSettle();
     expect(api.registration!['referralCode'], 'NEW222');
     expect(await AppPreferences.getPendingReferralCode(), isNull);
     expect(find.text('NEW222'), findsNothing);
@@ -158,6 +164,7 @@ void main() {
     await tester.ensureVisible(find.text('Создать аккаунт'));
     await tester.tap(find.text('Создать аккаунт'));
     await tester.pumpAndSettle();
+    expect(find.text('Восстановление доступа'), findsNothing);
     expect(api.registration!['referralCode'], 'INVITE42');
     expect(await AppPreferences.getPendingReferralCode(), isNull);
   });

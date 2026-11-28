@@ -33,6 +33,43 @@ export class AuthController {
         return this.authService.refreshToken(dto.refreshToken);
     }
 
+    @UseGuards(JwtAuthGuard)
+    @Get('recovery/links')
+    listRecoveryLinks(@Request() req) { return this.authService.recoveryLinks(req.user.sub); }
+
+    @Post('recovery/whatsapp/start')
+    whatsappCode(@Body('phone') phone:string) {return this.authService.requestWhatsappCode(phone);}
+
+    @Post('recovery/whatsapp/verify')
+    whatsappVerify(@Body() b:any) {return this.authService.verifyWhatsappCode(b.challenge,b.code);}
+
+    @Post('recovery/admin-request')
+    requestRecoveryHelp(@Body('phone') phone: string) {
+        return this.authService.requestRecoveryHelp(phone);
+    }
+
+    @Get('recovery/callback')
+    googleCallback(@Query('state') state:string,@Query('code') code:string) {return this.authService.providerCallback(state,code);}
+    @Post('recovery/callback')
+    appleCallback(@Body('state') state:string,@Body('code') code:string) {return this.authService.providerCallback(state,code);}
+
+    @Post('recovery/provider/start')
+    startRecovery(@Body('provider') provider:string) { return this.authService.startProvider(provider); }
+
+    @Post('recovery/provider/verify')
+    verifyRecovery(@Body() b:any) { return this.authService.finishProvider(b.provider,b.nonce,b.ticket); }
+
+    @UseGuards(JwtAuthGuard)
+    @Post('recovery/link/start')
+    startLink(@Request() req,@Body('provider') provider:string) { return this.authService.startProvider(provider,req.user.sub); }
+
+    @UseGuards(JwtAuthGuard)
+    @Post('recovery/link/verify')
+    verifyLink(@Request() req,@Body() b:any) { return this.authService.finishProvider(b.provider,b.nonce,b.ticket,req.user.sub,b.password); }
+
+    @Post('recovery/password')
+    completeRecovery(@Body() b:any) { return this.authService.completeRecovery(b.grant,b.password); }
+
     @Post('reset-password')
     @ApiOperation({ summary: 'Reset password by phone' })
     async resetPassword(@Body() dto: ResetPasswordDto) {

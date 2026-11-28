@@ -1,3 +1,4 @@
+import 'linked_accounts_page.dart';
 import '../../../core/services/pwa_support.dart';
 import '../../../core/utils/referral_code.dart';
 import 'package:flutter/material.dart';
@@ -190,15 +191,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
           final next = widget.downloadAfterRegistration && code != null
               ? '/ref/$code/download'
               : (_isDriver ? '/driver/verification' : '/order');
-          final required =
-              loginResponse.data['user']?['identityRequired'] == true ||
-                  response.data['user']?['identityRequired'] == true;
-          context.go(required
-              ? Uri(path: '/identity', queryParameters: {
-                  'next': next,
-                  'driver': _isDriver ? '1' : '0'
-                }).toString()
-              : next);
+          setState(() => _isLoading = false);
+          final link = await showDialog<bool>(context:context,builder:(dialog)=>AlertDialog(
+            title:const Text('Восстановление доступа'),
+            content:const Text('Подключите Google или Apple для восстановления пароля. Можно добавить оба аккаунта сейчас или позже в профиле.'),
+            actions:[
+              TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('Позже')),
+              FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('Подключить')),
+            ],
+          ));
+          if (!mounted) return;
+          if (link == true) await Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>const LinkedAccountsPage()));
+          if (mounted) context.go(next);
         }
       }
     } catch (e) {

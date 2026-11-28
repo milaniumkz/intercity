@@ -1,3 +1,7 @@
+import {sendRecoveryCode} from '../attention/whatsapp.channel';
+import {randomInt, createHmac, timingSafeEqual} from 'crypto';
+import { createHash, randomBytes } from 'crypto';
+import { browserProvider, verifiedSubject } from './recovery-provider';
 import { IdentityService } from '../identity/identity.service';
 import {
     BadRequestException,
@@ -107,7 +111,7 @@ export class AuthService {
                 name: user.name,
                 role: user.role,
                 mustChangePassword: user.mustChangePassword,
-                identityRequired: await this.identity?.needsVerification(user.id,user.role) ?? false,
+                identityRequired: false,
                 refCode: user.refCode,
                 refLink: this.buildReferralLink(user.refCode),
             },
@@ -141,7 +145,7 @@ export class AuthService {
                 name: user.name,
                 role: user.role,
                 mustChangePassword: user.mustChangePassword,
-                identityRequired: await this.identity?.needsVerification(user.id,user.role) ?? false,
+                identityRequired: false,
                 refCode: user.refCode,
             },
             ...tokens,
@@ -217,6 +221,158 @@ export class AuthService {
         throw new UnauthorizedException('Invalid refresh token');
     }
 
+    async requestWhatsappCode(input:string) {
+        if (typeof input !== 'string' || !/^\+?7\d{10}$/.test(input)) throw new BadRequestException('Введите номер полностью');
+        const digits=input.replace(/^\+/,'');
+        const nonce=randomBytes(32).toString('hex');
+        const code=randomInt(100000,1000000).toString();
+        const digest=createHmac('sha256',this.getRequiredSecret('JWT_SECRET')).update(nonce+code).digest('hex');
+        const send=await this.prisma.$transaction(async tx=>{
+            const user=await tx.user.findFirst({where:{phone:{in:[digits,'+'+digits]},blockedAt:null,role:{not:'ADMIN'}}});
+            if(!user)return false;
+            await tx.$executeRaw`SELECT id FROM "User" WHERE id=${user.id} FOR UPDATE`;
+            if(await tx.recoveryIdentity.count({where:{userId:user.id}}))return false;
+            const now=Date.now();
+            const recent=await tx.whatsappCode.count({where:{userId:user.id,createdAt:{gt:new Date(now-3600000)}}});
+            if(recent>=5 || await tx.whatsappCode.count({where:{userId:user.id,createdAt:{gt:new Date(now-60000)}}}))return false;
+            await tx.whatsappCode.updateMany({where:{userId:user.id},data:{used:true}});
+            await tx.whatsappCode.create({data:{id:nonce,userId:user.id,digest,authVersion:user.authVersion,expiresAt:new Date(now+300000)}});
+            return true;
+        });
+        if(send) {
+            try { await sendRecoveryCode(this.prisma,digits,code,nonce); }
+            catch(e) {await this.prisma.whatsappCode.update({where:{id:nonce},data:{used:true}});throw e;}
+        }
+        return {challenge:nonce};
+    }
+
+    async verifyWhatsappCode(id:string,code:string) {
+        if(typeof id!=='string'||!/^[a-f0-9]{64}$/.test(id)||typeof code!=='string'||!/^\d{6}$/.test(code))throw new BadRequestException('Проверьте код');
+        const grant=await this.prisma.$transaction(async tx=>{
+            await tx.$executeRaw`SELECT id FROM "WhatsappCode" WHERE id=${id} FOR UPDATE`;
+            const row=await tx.whatsappCode.findUnique({where:{id}});
+            if(!row||row.used||row.attempts>=5||row.expiresAt<=new Date())return null;
+            const digest=createHmac('sha256',this.getRequiredSecret('JWT_SECRET')).update(id+code).digest();
+            if(!timingSafeEqual(digest,Buffer.from(row.digest,'hex'))){
+                await tx.whatsappCode.update({where:{id},data:{attempts:{increment:1}}});
+                return null;
+            }
+            if(await tx.recoveryIdentity.count({where:{userId:row.userId}}))return null;
+            await tx.whatsappCode.update({where:{id},data:{used:true}});
+            const token=randomBytes(32).toString('hex');
+            await tx.recoveryProof.create({data:{id:createHash('sha256').update(token).digest('hex'),userId:row.userId,authVersion:row.authVersion,provider:'WHATSAPP',purpose:'PASSWORD',expiresAt:new Date(Date.now()+300000)}});
+            return token;
+        });
+        if(!grant)throw new UnauthorizedException('Код неверен или истёк');
+        return {grant};
+    }
+
+    async requestRecoveryHelp(input: string) {
+        if (typeof input !== 'string' || !/^\+?7\d{10}$/.test(input)) {
+            throw new BadRequestException('Введите номер телефона полностью');
+        }
+        const digits = input.replace(/^\+/, '');
+        const accepted = { message: 'Если аккаунт найден, обращение передано администратору.' };
+        await this.prisma.$transaction(async tx => {
+            const user = await tx.user.findFirst({
+                where: { phone: { in: [digits, '+' + digits] }, blockedAt: null, role: { not: 'ADMIN' } },
+                select: { id: true },
+            });
+            if (!user) return;
+            await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${user.id} FOR UPDATE`;
+            const type = 'ACCOUNT_RECOVERY';
+            const recent = await tx.complaint.findFirst({
+                where: { userId: user.id, type, OR: [{status: 'NEW'}, {createdAt: {gte: new Date(Date.now() - 86400000)}}] },
+                select: { id: true },
+            });
+            if (!recent) await tx.complaint.create({data: {
+                userId: user.id, type, text: 'Запрошено восстановление доступа. Проверьте владельца перед выдачей временного пароля.',
+            }});
+        });
+        return accepted;
+    }
+
+    async recoveryLinks(userId: string) {
+        const rows = await this.prisma.recoveryIdentity.findMany({where:{userId},select:{provider:true}});
+        return { providers: rows.map(row => row.provider) };
+    }
+
+    async startProvider(provider: string, userId?: string) {
+        const config = browserProvider(provider);
+        const ticket = randomBytes(32).toString('hex');
+        const verifier = randomBytes(32).toString('base64url');
+        const nonce = randomBytes(32).toString('hex');
+        const user = userId ? await this.prisma.user.findUniqueOrThrow({where:{id:userId}}) : null;
+        await this.prisma.recoveryProof.deleteMany({where:{expiresAt:{lt:new Date()}}});
+        await this.prisma.recoveryProof.create({data:{id:nonce,provider,userId,verifier,ticketHash:createHash('sha256').update(ticket).digest('hex'),purpose:userId?'LINK':'RECOVER',authVersion:user?.authVersion,expiresAt:new Date(Date.now()+300000)}});
+        const url = new URL(config.authorize);
+        url.search = new URLSearchParams({client_id:config.client,redirect_uri:config.redirect,response_type:'code',scope:'openid',state:nonce,nonce,
+            ...(provider==='GOOGLE'?{code_challenge_method:'S256',code_challenge:createHash('sha256').update(verifier).digest('base64url')}:{response_mode:'form_post'})}).toString();
+        return {nonce,ticket,url:url.toString()};
+    }
+
+    async providerCallback(state:string,code:string) {
+        if(typeof state!=='string'||!/^[a-f0-9]{64}$/.test(state)||typeof code!=='string'||code.length>8192) throw new BadRequestException('Некорректное подтверждение');
+        const proof = await this.prisma.recoveryProof.findUnique({where:{id:state}});
+        if(!proof?.verifier||proof.expiresAt<=new Date()||proof.verifiedSubject) throw new UnauthorizedException('Начните вход заново');
+        const config=browserProvider(proof.provider);
+        const response=await fetch(config.exchange,{method:'POST',signal:AbortSignal.timeout(8000),body:new URLSearchParams({
+            code,client_id:config.client,client_secret:config.secret,redirect_uri:config.redirect,grant_type:'authorization_code',
+            ...(proof.provider==='GOOGLE'?{code_verifier:proof.verifier}:{})})});
+        if(!response.ok) throw new UnauthorizedException('Провайдер не подтвердил вход');
+        const data=await response.json();
+        const subject=await verifiedSubject(proof.provider,data.id_token,state);
+        await this.prisma.recoveryProof.updateMany({where:{id:state,verifiedSubject:null,expiresAt:{gt:new Date()}},data:{verifiedSubject:subject,verifier:null}});
+        return 'Аккаунт подтверждён. Вернитесь в приложение InterCity.';
+
+    }
+
+    async finishProvider(provider: string, nonce: string, ticket: string, userId?: string, password?: string) {
+        if (typeof nonce !== 'string' || !/^[a-f0-9]{64}$/.test(nonce)) throw new BadRequestException('Некорректный запрос');
+        if(typeof ticket!=='string'||!/^[a-f0-9]{64}$/.test(ticket)) throw new UnauthorizedException('Начните вход заново');
+        return this.prisma.$transaction(async tx => {
+            const proof = await tx.recoveryProof.findUnique({where:{id:nonce}});
+            if (!proof || proof.expiresAt<=new Date() || proof.ticketHash!==createHash('sha256').update(ticket).digest('hex') || proof.provider!==provider || proof.userId!==(userId||null)) throw new UnauthorizedException('Начните вход заново');
+            if(!proof.verifiedSubject) return {pending:true};
+            const subject=proof.verifiedSubject;
+            if (proof.purpose !== (userId?'LINK':'RECOVER') || proof.userId !== (userId || null) || proof.provider !== provider ||
+                !(await tx.recoveryProof.deleteMany({where:{id:nonce,expiresAt:{gt:new Date()}}})).count)
+                throw new UnauthorizedException('Начните подтверждение заново');
+            if (userId) {
+                const user = await tx.user.findUniqueOrThrow({where:{id:userId}});
+                if (user.blockedAt || user.authVersion !== proof.authVersion || typeof password !== 'string' || !await bcrypt.compare(password,user.password))
+                    throw new UnauthorizedException('Подтвердите текущий пароль');
+                await tx.recoveryIdentity.create({data:{userId,provider,subject}});
+                return { linked:true };
+            }
+            const identity = await tx.recoveryIdentity.findUnique({where:{provider_subject:{provider,subject}}});
+            const user = identity && await tx.user.findUnique({where:{id:identity.userId}});
+            if (!user || user.blockedAt || user.role === 'ADMIN' || user.phone.startsWith('erased:')) throw new UnauthorizedException('Этот способ восстановления недоступен');
+            const grant = randomBytes(32).toString('hex');
+            await tx.recoveryProof.create({data:{id:createHash('sha256').update(grant).digest('hex'),provider,purpose:'PASSWORD',userId:user.id,authVersion:user.authVersion,expiresAt:new Date(Date.now()+300000)}});
+            return { grant };
+        });
+    }
+
+    async completeRecovery(grant: string, password: string) {
+        if (typeof grant!=='string' || !/^[0-9a-f]{64}$/.test(grant) || typeof password!=='string' || password.length<12 || Buffer.byteLength(password)>72)
+            throw new BadRequestException('Проверьте ссылку восстановления и новый пароль');
+        const id=createHash('sha256').update(grant).digest('hex');
+        return this.prisma.$transaction(async tx=>{
+            const proof=await tx.recoveryProof.findUnique({where:{id}});
+            if (!proof?.userId || proof.authVersion===null || proof.purpose!=='PASSWORD' || !(await tx.recoveryProof.deleteMany({where:{id,expiresAt:{gt:new Date()}}})).count)
+                throw new UnauthorizedException('Начните восстановление заново');
+            const passwordHash=await bcrypt.hash(password,12);
+            const change=await tx.user.updateMany({where:{id:proof.userId,authVersion:proof.authVersion,blockedAt:null,role:{not:'ADMIN'},NOT:{phone:{startsWith:'erased:'}}},data:{password:passwordHash,authVersion:{increment:1},mustChangePassword:false}});
+            if (!change.count) throw new UnauthorizedException('Начните восстановление заново');
+            const user=await tx.user.findUniqueOrThrow({where:{id:proof.userId}});
+            await tx.refreshToken.deleteMany({where:{userId:user.id}});
+            const tokens=this.sessionTokens(user);
+            await tx.refreshToken.create({data:{userId:user.id,token:tokens.refreshToken,expiresAt:new Date(Date.now()+604800000)}});
+            return {...tokens,user:{id:user.id,phone:user.phone,role:user.role}};
+        });
+    }
+
     async resetPassword(dto: ResetPasswordDto) {
         throw new ForbiddenException('Для восстановления пароля пройдите видеопроверку личности');
     }
@@ -239,7 +395,7 @@ export class AuthService {
         });
         if (!user || user.blockedAt || user.phone.startsWith('erased:')) return null;
         const { password, ...safeUser } = user;
-        return { ...safeUser, driverDocumentsRequired: !!user.driverProfile && (await this.identity?.driverDocumentsRequired(user.id) ?? false), identityRequired: await this.identity?.needsVerification(user.id,user.role) ?? false, refLink: this.buildReferralLink(user.refCode) };
+        return { ...safeUser, driverDocumentsRequired: !!user.driverProfile && (await this.identity?.driverDocumentsRequired(user.id) ?? false), identityRequired: false, refLink: this.buildReferralLink(user.refCode) };
     }
 
     async getReferralSummary(userId: string) {

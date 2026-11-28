@@ -1,0 +1,2 @@
+CREATE TABLE "WhatsappCode" ("id" TEXT PRIMARY KEY,"userId" TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,"digest" TEXT NOT NULL,"authVersion" INTEGER NOT NULL,"createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,"expiresAt" TIMESTAMP(3) NOT NULL,"attempts" INTEGER NOT NULL DEFAULT 0,"used" BOOLEAN NOT NULL DEFAULT false);
+CREATE INDEX "WhatsappCode_userId_createdAt_idx" ON "WhatsappCode"("userId","createdAt");
