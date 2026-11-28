@@ -1,7 +1,7 @@
 self.addEventListener('install',()=>self.skipWaiting());
 self.addEventListener('push',event=>{
  let data={};try{data=event.data.json();}catch(_){}
- event.waitUntil(self.registration.showNotification(data.title||'InterCity — проверка личности',{body:data.body||'Откройте очередь проверок.',tag:data.tag||'identity-review',icon:'/icons/Icon-192.png',data:{url:typeof data.url==='string'&&data.url.startsWith('/#/')?data.url:'/#/attention'}}));
+ event.waitUntil(self.registration.showNotification(data.title||'InterCity — проверка личности',{body:data.body||'Откройте очередь проверок.',tag:data.tag||'identity-review',icon:'/icons/Icon-192.png?v=intercity',data:{url:typeof data.url==='string'&&data.url.startsWith('/#/')?data.url:'/#/attention'}}));
 });
 self.addEventListener('notificationclick',event=>{
  event.notification.close();const url=new URL(event.notification.data?.url||'/#/attention',self.location.origin).href;
