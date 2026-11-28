@@ -33,6 +33,28 @@ class _WhatsappState extends State<WhatsappPage> {
       if (mounted) setState(() => sending = false);
     }
   }
+  bool switching = false;
+  Future<void> logout() async {
+    final approved = await showDialog<bool>(context:context,builder:(dialog)=>AlertDialog(
+      title:const Text('Выйти из WhatsApp?'),
+      content:const Text('Отправка кодов и переписка приостановятся до подключения номера по QR-коду.'),
+      actions:[
+        TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('Отмена')),
+        FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('Выйти из WhatsApp')),
+      ],
+    ));
+    if (!mounted || approved != true) return;
+    setState(() => switching = true);
+    try {
+      await AdminApiClient.instance.post('/admin/whatsapp/logout');
+      if (mounted) setState(() { status = 'Отключён'; image = null; message = 'Подключите нужный номер через QR-код.'; });
+    } catch (_) {
+      if (mounted) setState(() => message = 'Выход не подтверждён. Проверьте состояние канала.');
+    } finally {
+      if (mounted) setState(() => switching = false);
+      await refresh();
+    }
+  }
   String status = 'Загрузка';
   String? image;
   @override
@@ -43,7 +65,7 @@ class _WhatsappState extends State<WhatsappPage> {
   }
 
   Future<void> refresh({bool connect = false}) async {
-    if (loading) return;
+    if (loading || switching || !mounted) return;
     loading = true;
     try {
       if (connect) await AdminApiClient.instance.post('/admin/whatsapp/connect');
@@ -66,6 +88,8 @@ class _WhatsappState extends State<WhatsappPage> {
   Widget build(BuildContext context) => AdminShell(title:'Канал WhatsApp',subtitle:'Отправка кодов восстановления',child:ListView(
     padding:const EdgeInsets.all(20),children:[
       Text(status),
+      if (status == 'Подключён') OutlinedButton.icon(onPressed:switching || sending ? null : logout,icon:const Icon(Icons.logout),label:const Text('Выйти из WhatsApp')),
+      TextButton(onPressed:()=>Navigator.pushNamed(context,'/whatsapp-dialogs'),child:const Text('Открыть диалоги WhatsApp')),
       if (status == 'Подключён') TextField(
         keyboardType: TextInputType.phone, enabled: !sending,
         decoration: const InputDecoration(labelText:'Тестовый номер WhatsApp', hintText:'+7', helperText:'Оставьте пустым для отправки на телефон из профиля.'),

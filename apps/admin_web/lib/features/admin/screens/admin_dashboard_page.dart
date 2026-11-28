@@ -2171,6 +2171,7 @@ class AdminShell extends StatelessWidget {
     ),
     ('/cities', 'Города', Icons.location_city_outlined),
     ('/tariffs', 'Тарифы', Icons.sell_outlined),
+    ('/whatsapp-dialogs', 'Диалоги WhatsApp', Icons.forum_outlined),
     ('/whatsapp', 'Канал WhatsApp', Icons.chat_outlined),
     ('/settings', 'Настройки', Icons.tune_rounded),
     ('/topups', 'Пополнения', Icons.account_balance_wallet_outlined),
