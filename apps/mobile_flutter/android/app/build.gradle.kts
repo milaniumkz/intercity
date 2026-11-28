@@ -35,6 +35,7 @@ android {
 
     defaultConfig {
         applicationId = "com.milanium.intercity"
+        manifestPlaceholders["appAuthRedirectScheme"] = "com.milanium.intercity"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

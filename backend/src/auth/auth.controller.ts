@@ -37,6 +37,11 @@ export class AuthController {
     @Get('recovery/links')
     listRecoveryLinks(@Request() req) { return this.authService.recoveryLinks(req.user.sub); }
 
+    @Post('recovery/admin-request')
+    requestRecoveryHelp(@Body('phone') phone: string) {
+        return this.authService.requestRecoveryHelp(phone);
+    }
+
     @Post('recovery/provider/start')
     startRecovery(@Body('provider') provider:string) { return this.authService.startProvider(provider); }
 

@@ -219,6 +219,31 @@ export class AuthService {
         throw new UnauthorizedException('Invalid refresh token');
     }
 
+    async requestRecoveryHelp(input: string) {
+        if (typeof input !== 'string' || !/^\+?7\d{10}$/.test(input)) {
+            throw new BadRequestException('Введите номер телефона полностью');
+        }
+        const digits = input.replace(/^\+/, '');
+        const accepted = { message: 'Если аккаунт найден, обращение передано администратору.' };
+        await this.prisma.$transaction(async tx => {
+            const user = await tx.user.findFirst({
+                where: { phone: { in: [digits, '+' + digits] }, blockedAt: null, role: { not: 'ADMIN' } },
+                select: { id: true },
+            });
+            if (!user) return;
+            await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${user.id} FOR UPDATE`;
+            const type = 'ACCOUNT_RECOVERY';
+            const recent = await tx.complaint.findFirst({
+                where: { userId: user.id, type, OR: [{status: 'NEW'}, {createdAt: {gte: new Date(Date.now() - 86400000)}}] },
+                select: { id: true },
+            });
+            if (!recent) await tx.complaint.create({data: {
+                userId: user.id, type, text: 'Запрошено восстановление доступа. Проверьте владельца перед выдачей временного пароля.',
+            }});
+        });
+        return accepted;
+    }
+
     async recoveryLinks(userId: string) {
         const rows = await this.prisma.recoveryIdentity.findMany({where:{userId},select:{provider:true}});
         return { providers: rows.map(row => row.provider) };

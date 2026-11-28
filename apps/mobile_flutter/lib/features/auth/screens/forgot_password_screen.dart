@@ -1,6 +1,6 @@
 import 'face_verification_page.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import '../../../core/api/api_client.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/utils/navigation_back.dart';
@@ -31,35 +31,24 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         builder: (_) => FaceVerificationPage(phone: phone)));
   }
 
-  Future<void> _copyRequest() async {
-    if (!_formKey.currentState!.validate()) return;
-    final phone = normalizeKzLocalPhone(_phoneController.text.trim());
-    final message = 'Восстановление доступа InterCity\n'
-        'Телефон аккаунта: $phone\n'
-        'Не могу войти в аккаунт. Прошу помочь восстановить доступ. '
-        'Готов подтвердить, что аккаунт принадлежит мне.';
+  bool _sending = false;
+
+  Future<void> _sendRequest() async {
+    if (_sending || !_formKey.currentState!.validate()) return;
+    setState(() => _sending = true);
     try {
-      await Clipboard.setData(ClipboardData(text: message));
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content:
-            Text('Текст скопирован. Отправьте его администратору InterCity.'),
+      await ApiClient().post('/auth/recovery/admin-request', data: {
+        'phone': normalizeKzLocalPhone(_phoneController.text.trim()),
+      });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Если аккаунт найден, обращение передано администратору.'),
       ));
     } catch (_) {
-      if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Обращение администратору'),
-          content: SingleChildScrollView(child: SelectableText(message)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Закрыть'),
-            ),
-          ],
-        ),
-      );
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Не удалось отправить обращение. Проверьте связь и повторите.'),
+      ));
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
   }
 
@@ -135,7 +124,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                             OutlinedButton.icon(
                               label: const Text('Обратиться к администратору'),
                               icon: const Icon(Icons.support_agent),
-                              onPressed: _copyRequest,
+                              onPressed: _sending ? null : _sendRequest,
                             ),
                             const SizedBox(height: 12),
                             OutlinedButton(
