@@ -42,10 +42,12 @@ class _WhatsappState extends State<WhatsappPage> {
     try {
       if (connect) await AdminApiClient.instance.post('/admin/whatsapp/connect');
       final result = await AdminApiClient.instance.get('/admin/whatsapp');
-      if (mounted) setState(() {
+      if (mounted) {
+        setState(() {
         image = result.data['image'] as String?;
         status = const {'WORKING':'Подключён','SCAN_QR_CODE':'Отсканируйте QR-код','STARTING':'Подключается','STOPPED':'Отключён','FAILED':'Соединение потеряно'}[result.data['status']] ?? 'Уточняется';
-      });
+        });
+      }
     } catch (_) {
       if (mounted) setState(() {image = null; status = 'Не удалось получить состояние канала. Проверьте доступ и настройки сервера.';});
     } finally { loading = false; }
