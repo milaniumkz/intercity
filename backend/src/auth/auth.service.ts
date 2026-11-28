@@ -1,3 +1,5 @@
+import { createHash, randomBytes } from 'crypto';
+import { providerConfig, verifiedSubject } from './recovery-provider';
 import { IdentityService } from '../identity/identity.service';
 import {
     BadRequestException,
@@ -215,6 +217,58 @@ export class AuthService {
             current = await tx.refreshToken.findUnique({ where: { id: current.replacementId } });
         }
         throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    async startProvider(provider: string, userId?: string) {
+        providerConfig(provider);
+        const nonce = randomBytes(32).toString('hex');
+        const user = userId ? await this.prisma.user.findUniqueOrThrow({where:{id:userId}}) : null;
+        await this.prisma.recoveryProof.deleteMany({where:{expiresAt:{lt:new Date()}}});
+        await this.prisma.recoveryProof.create({data:{id:nonce,provider,userId,purpose:userId?'LINK':'RECOVER',authVersion:user?.authVersion,expiresAt:new Date(Date.now()+300000)}});
+        return { nonce };
+    }
+
+    async finishProvider(provider: string, nonce: string, token: string, userId?: string, password?: string) {
+        if (typeof nonce !== 'string' || !/^[a-f0-9]{64}$/.test(nonce)) throw new BadRequestException('Некорректный запрос');
+        const subject = await verifiedSubject(provider, token, nonce);
+        return this.prisma.$transaction(async tx => {
+            const proof = await tx.recoveryProof.findUnique({where:{id:nonce}});
+            if (!proof || proof.purpose !== (userId?'LINK':'RECOVER') || proof.userId !== (userId || null) || proof.provider !== provider ||
+                !(await tx.recoveryProof.deleteMany({where:{id:nonce,expiresAt:{gt:new Date()}}})).count)
+                throw new UnauthorizedException('Начните подтверждение заново');
+            if (userId) {
+                const user = await tx.user.findUniqueOrThrow({where:{id:userId}});
+                if (user.blockedAt || user.authVersion !== proof.authVersion || typeof password !== 'string' || !await bcrypt.compare(password,user.password))
+                    throw new UnauthorizedException('Подтвердите текущий пароль');
+                await tx.recoveryIdentity.create({data:{userId,provider,subject}});
+                return { linked:true };
+            }
+            const identity = await tx.recoveryIdentity.findUnique({where:{provider_subject:{provider,subject}}});
+            const user = identity && await tx.user.findUnique({where:{id:identity.userId}});
+            if (!user || user.blockedAt || user.role === 'ADMIN' || user.phone.startsWith('erased:')) throw new UnauthorizedException('Этот способ восстановления недоступен');
+            const grant = randomBytes(32).toString('hex');
+            await tx.recoveryProof.create({data:{id:createHash('sha256').update(grant).digest('hex'),provider,purpose:'PASSWORD',userId:user.id,authVersion:user.authVersion,expiresAt:new Date(Date.now()+300000)}});
+            return { grant };
+        });
+    }
+
+    async completeRecovery(grant: string, password: string) {
+        if (typeof grant!=='string' || !/^[0-9a-f]{64}$/.test(grant) || typeof password!=='string' || password.length<12 || Buffer.byteLength(password)>72)
+            throw new BadRequestException('Проверьте ссылку восстановления и новый пароль');
+        const id=createHash('sha256').update(grant).digest('hex');
+        return this.prisma.$transaction(async tx=>{
+            const proof=await tx.recoveryProof.findUnique({where:{id}});
+            if (!proof?.userId || proof.authVersion===null || proof.purpose!=='PASSWORD' || !(await tx.recoveryProof.deleteMany({where:{id,expiresAt:{gt:new Date()}}})).count)
+                throw new UnauthorizedException('Начните восстановление заново');
+            const passwordHash=await bcrypt.hash(password,12);
+            const change=await tx.user.updateMany({where:{id:proof.userId,authVersion:proof.authVersion,blockedAt:null,role:{not:'ADMIN'},NOT:{phone:{startsWith:'erased:'}}},data:{password:passwordHash,authVersion:{increment:1},mustChangePassword:false}});
+            if (!change.count) throw new UnauthorizedException('Начните восстановление заново');
+            const user=await tx.user.findUniqueOrThrow({where:{id:proof.userId}});
+            await tx.refreshToken.deleteMany({where:{userId:user.id}});
+            const tokens=this.sessionTokens(user);
+            await tx.refreshToken.create({data:{userId:user.id,token:tokens.refreshToken,expiresAt:new Date(Date.now()+604800000)}});
+            return {...tokens,user:{id:user.id,phone:user.phone,role:user.role}};
+        });
     }
 
     async resetPassword(dto: ResetPasswordDto) {

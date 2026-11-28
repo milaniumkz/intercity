@@ -1315,3 +1315,20 @@ model VtbSandboxPayment {
   @@unique([userId, requestKey])
   @@index([userId, createdAt])
 }
+
+model RecoveryIdentity {
+  provider String
+  subject String
+  userId String
+  @@id([provider, subject])
+  @@unique([userId, provider])
+}
+model RecoveryProof {
+  id String @id
+  purpose String
+  provider String
+  userId String?
+  expiresAt DateTime
+  authVersion Int?
+  @@index([expiresAt])
+}

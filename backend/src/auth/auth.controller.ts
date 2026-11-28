@@ -33,6 +33,23 @@ export class AuthController {
         return this.authService.refreshToken(dto.refreshToken);
     }
 
+    @Post('recovery/provider/start')
+    startRecovery(@Body('provider') provider:string) { return this.authService.startProvider(provider); }
+
+    @Post('recovery/provider/verify')
+    verifyRecovery(@Body() b:any) { return this.authService.finishProvider(b.provider,b.nonce,b.idToken); }
+
+    @UseGuards(JwtAuthGuard)
+    @Post('recovery/link/start')
+    startLink(@Request() req,@Body('provider') provider:string) { return this.authService.startProvider(provider,req.user.id); }
+
+    @UseGuards(JwtAuthGuard)
+    @Post('recovery/link/verify')
+    verifyLink(@Request() req,@Body() b:any) { return this.authService.finishProvider(b.provider,b.nonce,b.idToken,req.user.id,b.password); }
+
+    @Post('recovery/password')
+    completeRecovery(@Body() b:any) { return this.authService.completeRecovery(b.grant,b.password); }
+
     @Post('reset-password')
     @ApiOperation({ summary: 'Reset password by phone' })
     async resetPassword(@Body() dto: ResetPasswordDto) {

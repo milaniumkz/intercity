@@ -1,0 +1,3 @@
+CREATE TABLE "RecoveryIdentity" ("provider" TEXT NOT NULL, "subject" TEXT NOT NULL, "userId" TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE, PRIMARY KEY ("provider","subject"), UNIQUE ("userId","provider"));
+CREATE TABLE "RecoveryProof" (id TEXT PRIMARY KEY, purpose TEXT NOT NULL, provider TEXT NOT NULL, "userId" TEXT REFERENCES "User"(id) ON DELETE CASCADE, "expiresAt" TIMESTAMP(3) NOT NULL, "authVersion" INTEGER);
+CREATE INDEX "RecoveryProof_expiresAt_idx" ON "RecoveryProof"("expiresAt");
