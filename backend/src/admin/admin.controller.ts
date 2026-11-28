@@ -78,6 +78,13 @@ export class AdminController {
         return {sent:true};
     }
 
+    @Post('whatsapp/logout')
+    async logoutWhatsapp(@Request() req) {
+        await this.ensurePermission(req,'settings.manage');
+        await channelRequest('/api/sessions/default/logout',{});
+        return {loggedOut:true};
+    }
+
     @Post('whatsapp/connect')
     async startWhatsapp(@Request() req) {
         await this.ensurePermission(req,'settings.manage');
