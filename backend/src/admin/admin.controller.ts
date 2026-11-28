@@ -34,15 +34,27 @@ export class AdminController {
     async whatsappMessages(@Request() req,@Param('chat') chat:string) {
         await this.ensurePermission(req,'settings.manage');
         const rows=await channelRequest('/api/default/chats/'+this.directChat(chat)+'/messages?limit=50&downloadMedia=false');
-        return rows.map(m=>({id:m.id,mine:m.fromMe===true,time:m.timestamp,text:/^(Тестовый код InterCity|Код восстановления InterCity):/.test(m.body||'')?'Код подтверждения скрыт':m.body||'Вложение'})).sort((a,b)=>a.time-b.time);
+        const preview = (body: unknown) => typeof body === 'string' && body
+            ? (/^(Тестовый код InterCity|Код восстановления InterCity):/.test(body) ? 'Код подтверждения скрыт' : body)
+            : 'Вложение';
+        return rows.map(m => ({
+            id: m.id, mine: m.fromMe === true, time: m.timestamp, text: preview(m.body),
+            quote: m.replyTo ? preview(m.replyTo.body) : null,
+            ack: typeof m.ack === 'number' ? m.ack : null,
+        })).sort((a,b) => a.time-b.time);
     }
 
     @Post('whatsapp/dialogs/:chat/messages')
-    async replyWhatsapp(@Request() req,@Param('chat') chat:string,@Body('text') message:string) {
+    async replyWhatsapp(@Request() req,@Param('chat') chat:string,@Body('text') message:string,@Body('replyTo') replyTo?:string) {
         await this.ensurePermission(req,'settings.manage');
         this.directChat(chat);
         if(typeof message!=='string'||!message.trim()||message.length>4096)throw new BadRequestException('Введите сообщение до 4096 символов');
-        await channelRequest('/api/sendText',{session:'default',chatId:chat,text:message.trim()});
+        if (replyTo !== undefined) {
+            if (typeof replyTo !== 'string' || replyTo.length > 250 || !/^[^/\s?#]+$/.test(replyTo)) throw new BadRequestException('Некорректная цитата');
+            const original = await channelRequest('/api/default/chats/'+this.directChat(chat)+'/messages/'+encodeURIComponent(replyTo)+'?downloadMedia=false');
+            if (original?.id !== replyTo || (original.fromMe ? original.to : original.from) !== chat) throw new BadRequestException('Сообщение не найдено в этом диалоге');
+        }
+        await channelRequest('/api/sendText',{session:'default',chatId:chat,text:message.trim(),...(replyTo ? {reply_to:replyTo} : {})});
         return {accepted:true};
     }
 
