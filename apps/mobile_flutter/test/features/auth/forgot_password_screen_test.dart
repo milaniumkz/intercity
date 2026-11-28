@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intercity_mobile/features/auth/screens/forgot_password_screen.dart';
@@ -25,10 +24,10 @@ void main() {
 
   for (final dark in [false, true]) {
     testWidgets(
-        'video recovery is explained before requesting a password (dark=$dark)',
+        'WhatsApp delivery is explained before requesting a password (dark=$dark)',
         (tester) async {
       await open(tester, dark: dark);
-      expect(find.textContaining('Восстановите доступ по новой видеозаписи'),
+      expect(find.textContaining('Одноразовый код придёт сообщением в WhatsApp'),
           findsOneWidget);
       expect(find.byType(TextFormField), findsOneWidget);
       expect(tester.widget<TextField>(find.byType(TextField)).obscureText,
@@ -43,58 +42,17 @@ void main() {
     });
   }
 
-  testWidgets(
-      'request copies only the validated account phone and does not claim to reset it',
-      (tester) async {
-    String? copied;
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
-      if (call.method == 'Clipboard.setData') {
-        copied = (call.arguments as Map)['text'] as String;
-      }
-      return null;
+  for (final action in ['Отправить код на WhatsApp', 'Написать в техподдержку']) {
+    testWidgets('A valid account phone is required for $action', (tester) async {
+      await open(tester);
+      final button = find.text(action);
+      await tester.ensureVisible(button);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(find.text('Введите телефон аккаунта полностью'), findsOneWidget);
+      expect(find.text('Сохранить пароль и войти'), findsNothing);
     });
-    addTearDown(() =>
-        messenger.setMockMethodCallHandler(SystemChannels.platform, null));
-    await open(tester);
-    final button = find.text('Обратиться к администратору');
-    await tester.ensureVisible(button);
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-    expect(copied, isNull);
-    expect(find.text('Введите телефон аккаунта полностью'), findsOneWidget);
-    await tester.enterText(find.byType(TextFormField), '7000000123');
-    await tester.ensureVisible(button);
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-    expect(copied, contains('Телефон аккаунта: +77000000123'));
-    expect(copied, contains('Готов подтвердить'));
-    expect(find.textContaining('Текст скопирован.'), findsOneWidget);
-  });
-
-  testWidgets(
-      'video recovery needs a valid phone and consent before opening camera',
-      (tester) async {
-    await open(tester);
-    final button = find.text('Восстановить по видеопроверке');
-    await tester.ensureVisible(button);
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-    expect(find.text('Введите телефон аккаунта полностью'), findsOneWidget);
-    await tester.enterText(find.byType(TextFormField), '7000000123');
-    await tester.ensureVisible(button);
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-    expect(find.text('Восстановление по лицу'), findsOneWidget);
-    expect(find.textContaining('Без первичного эталона'), findsOneWidget);
-    expect(find.text('Сохранить новый пароль'), findsNothing);
-    await tester.scrollUntilVisible(find.text('Начать видеопроверку'), 300);
-    final start = tester
-        .widget<FilledButton>(find.byWidgetPredicate((w) => w is FilledButton));
-    expect(start.onPressed, isNull);
-    expect(tester.takeException(), isNull);
-  });
+  }
 
   testWidgets('small phone and open keyboard leave the return action reachable',
       (tester) async {
