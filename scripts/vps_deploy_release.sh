@@ -81,6 +81,20 @@ rollback_on_failure() {
 }
 trap rollback_on_failure EXIT
 
+if ! grep -q '^WHATSAPP_CHANNEL_KEY=.' "$SHARED_DIR/.env"; then
+  env_changed=1
+  python3 - "$SHARED_DIR/.env" <<'PYWA'
+import secrets,sys
+from pathlib import Path
+p=Path(sys.argv[1])
+lines=[line for line in p.read_text().splitlines() if not line.startswith('WHATSAPP_CHANNEL_KEY=')]
+lines.append('WHATSAPP_CHANNEL_KEY='+secrets.token_hex(32))
+p.write_text('\n'.join(lines)+'\n')
+PYWA
+fi
+cp "$SHARED_DIR/.env" "$RELEASE_DIR/infra/vps/.env"
+chmod 600 "$RELEASE_DIR/infra/vps/.env"
+
 # VTB sandbox credentials are sealed to a private key held only by this VPS.
 vtb_sealed="$RELEASE_DIR/infra/vps/vtb-sandbox.sealed.json"
 vtb_key="$SHARED_DIR/vtb-sandbox-secrets/private.pem"
@@ -133,6 +147,7 @@ printf '\nRELEASE_SHA=%s\n' "$COMMIT_SHA" >> "$RELEASE_DIR/infra/vps/.env"
 cd "$RELEASE_DIR/infra/vps"
 # Build while the previous backend continues running. Additive migrations run
 # before the new application starts; never fall back to an unrestricted db push.
+compose --profile whatsapp up -d whatsapp
 compose build backend identity routing
 compose run --rm --no-deps backend npx prisma migrate deploy
 compose run --rm --no-deps backend node dist/src/geo/import-city-catalog.js
