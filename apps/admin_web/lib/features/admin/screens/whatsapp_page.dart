@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:dio/dio.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../../core/api/admin_api_client.dart';
@@ -14,13 +15,18 @@ class _WhatsappState extends State<WhatsappPage> {
   Timer? timer;
   bool loading = false;
   bool sending = false;
+  String phone = '';
   String message = '';
   Future<void> testDelivery() async {
     if (sending) return;
     setState(() { sending = true; message = ''; });
     try {
-      await AdminApiClient.instance.post('/admin/whatsapp/test');
-      if (mounted) setState(() => message = 'WhatsApp принял сообщение. Проверьте номер своего профиля.');
+      await AdminApiClient.instance.post('/admin/whatsapp/test', data: {'phone':phone.trim()});
+      if (mounted) setState(() => message = 'WhatsApp принял сообщение. Проверьте WhatsApp на выбранном телефоне.');
+    } on DioException catch (error) {
+      final body = error.response?.data;
+      final reason = body is Map ? body['message'] : null;
+      if (mounted) setState(() => message = reason is String && RegExp('[А-Яа-я]').hasMatch(reason) ? reason : 'Не удалось отправить сообщение. Проверьте соединение и повторите.');
     } catch (_) {
       if (mounted) setState(() => message = 'Отправить не удалось. Проверьте номер профиля и состояние канала.');
     } finally {
@@ -60,7 +66,12 @@ class _WhatsappState extends State<WhatsappPage> {
   Widget build(BuildContext context) => AdminShell(title:'Канал WhatsApp',subtitle:'Отправка кодов восстановления',child:ListView(
     padding:const EdgeInsets.all(20),children:[
       Text(status),
-      if (status == 'Подключён') FilledButton(onPressed:sending ? null : testDelivery, child:const Text('Отправить тестовый код на мой номер')),
+      if (status == 'Подключён') TextField(
+        keyboardType: TextInputType.phone, enabled: !sending,
+        decoration: const InputDecoration(labelText:'Тестовый номер WhatsApp', hintText:'+7', helperText:'Оставьте пустым для отправки на телефон из профиля.'),
+        onChanged:(value) => phone = value,
+      ),
+      if (status == 'Подключён') FilledButton(onPressed:sending ? null : testDelivery, child:const Text('Отправить тестовый код')),
       if (message.isNotEmpty) Text(message),
       if (image != null) ...[
         const Text('На служебном телефоне откройте WhatsApp → Связанные устройства → Привязка устройства.'),

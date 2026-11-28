@@ -26,11 +26,24 @@ export class AdminController {
     }
 
     @Post('whatsapp/test')
-    async testWhatsapp(@Request() req) {
+    async testWhatsapp(@Request() req, @Body('phone') phone?: string) {
         await this.ensurePermission(req,'settings.manage');
         const actor = await this.db.user.findUniqueOrThrow({where:{id:req.user.sub},select:{phone:true}});
-        const digits = actor.phone.replace(/[^0-9]/g,'');
+        const raw = phone || actor.phone;
+        if (typeof raw !== 'string' || !/^[+0-9 ()-]{10,24}$/.test(raw)) throw new BadRequestException('Введите номер WhatsApp в формате +7');
+        const number = raw.replace(/\D/g,'');
+        const digits = number.length === 10 ? '7'+number : number.replace(/^8(?=\d{10}$)/,'7');
         if (!/^7\d{10}$/.test(digits)) throw new BadRequestException('Укажите телефон в профиле администратора');
+        const rateKey = 'whatsapp.test.last.' + req.user.sub;
+        await this.db.$transaction(async tx => {
+            await tx.$executeRaw`SELECT id FROM "User" WHERE id=${req.user.sub} FOR UPDATE`;
+            const last = await tx.appSettings.findUnique({where:{key:rateKey}});
+            if (last && Date.now()-Number(last.value)<30000) throw new BadRequestException('Повторите через 30 секунд');
+            const value=String(Date.now());
+            await tx.appSettings.upsert({where:{key:rateKey},create:{key:rateKey,value},update:{value}});
+        });
+        const recipient = await channelRequest('/api/contacts/check-exists?session=default&phone='+digits);
+        if (recipient.numberExists === false) throw new BadRequestException('Этот номер не зарегистрирован в WhatsApp. Введите номер телефона с WhatsApp.');
         await sendRecoveryCode(this.db,digits,String(randomInt(100000,1000000)),randomUUID(),true);
         return {sent:true};
     }
