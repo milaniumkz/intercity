@@ -10,7 +10,7 @@ export class Kassa24Gateway {
         const data = await response.json().catch(()=>null);
         if (!response.ok) {
             // Never include provider responses, credentials or token values in logs/errors.
-            if (path==='payment/create' && [400,401,403,422].includes(response.status)) return {requestRejected:true};
+            if (path==='payment/create' && [400,401,403,422].includes(response.status)) return {requestRejected:true,httpStatus:response.status};
             if (response.status===404) return {notFound:true};
             if (response.status===409) return {duplicate:true};
             throw new BadGatewayException(`Платёжный шлюз недоступен (${response.status})`);

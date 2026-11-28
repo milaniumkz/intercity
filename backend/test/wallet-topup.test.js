@@ -47,3 +47,18 @@ test('provider demo mismatch, ownership, confirmation, duplicate callbacks and l
   if(user){await p.walletTransaction.deleteMany({where:{walletId:user.wallet.id}});await p.topupRequest.deleteMany({where:{walletId:user.wallet.id}});await p.wallet.delete({where:{id:user.wallet.id}});await p.user.delete({where:{id:user.id}});}await p.$disconnect();for(const k of ['KASSA24_DEMO','KASSA24_LOGIN','KASSA24_PASSWORD'])if(saved[k]===undefined)delete process.env[k];else process.env[k]=saved[k];
  }
 });
+
+test('Kassa24 rejection reports unavailability without claiming a completed topup or changing money',async()=>{
+ const saved={...process.env};
+ try{
+  process.env.KASSA24_DEMO='false';process.env.KASSA24_LOGIN='qa-merchant';process.env.KASSA24_PASSWORD='qa-only';
+  let updates=0,amount=200;
+  const row={id:'qa-rejected',provider:'ONLINE',status:'PENDING',amount:1000,currency:'KZT'};
+  const db={appSettings:{findUnique:async()=>null},driverProfile:{findUnique:async()=>null},wallet:{findUnique:async()=>({id:'wallet',money:amount,user:{phone:'+77000000000'}})},topupRequest:{create:async()=>row,update:async({data})=>{updates++;return {...row,...data}}}};
+  const service=new WalletService(db,{});service.topupGateway=()=>({create:async()=>({requestRejected:true,httpStatus:401})});
+  await assert.rejects(service.createTopupRequest('user',{amount:1000},'DRIVER'),error=>{
+   assert.equal(error.getStatus(),503);const response=error.getResponse();assert.equal(response.code,'KASSA24_UNAVAILABLE');assert.equal(response.topupRequestId,row.id);assert.match(response.message,/баланс не изменён/);return true;
+  });
+  assert.equal(amount,200);assert.equal(updates,1);
+ }finally{for(const k of ['KASSA24_DEMO','KASSA24_LOGIN','KASSA24_PASSWORD'])if(saved[k]===undefined)delete process.env[k];else process.env[k]=saved[k];}
+});
