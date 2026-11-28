@@ -102,13 +102,17 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       await ApiClient().post('/auth/recovery/admin-request', data: {
         'phone': normalizeKzLocalPhone(_phoneController.text.trim()),
       });
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Если аккаунт найден, обращение передано администратору.'),
-      ));
+        ));
+      }
     } catch (_) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Не удалось отправить обращение. Проверьте связь и повторите.'),
-      ));
+        ));
+      }
     } finally {
       if (mounted) setState(() => _sending = false);
     }
