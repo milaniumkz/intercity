@@ -1,0 +1,38 @@
+name: Inspect admin push delivery counts
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/admin_push_diagnose.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - name: Configure SSH
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add - <<< "$VPS_SSH_PRIVATE_KEY"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+      - name: Read delivery counts only
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" bash -s -- "$GITHUB_RUN_ID" <<'REMOTE'
+          set -euo pipefail
+          docker exec -i intercity-backend node <<'JS'
+          const {PrismaClient}=require('@prisma/client');const db=new PrismaClient();
+          (async()=>{const since=new Date(Date.now()-86400000);const rows=await db.adminAttentionReceipt.findMany({where:{audience:'ADMIN',alert:{category:{startsWith:'whatsapp'}}},select:{pushAt:true,lastError:true,attempts:true}});console.log('DIAG',JSON.stringify({subscriptions:await db.adminWebPushSubscription.count(),events:await db.adminAttention.count({where:{category:{startsWith:'whatsapp'},createdAt:{gte:since}}}),receipts:rows.length,accepted:rows.filter(r=>r.pushAt).length,errors:rows.filter(r=>r.lastError).length,attempts:rows.map(r=>r.attempts).slice(-6)}));})().finally(()=>db.$disconnect());
+          JS
+          REMOTE

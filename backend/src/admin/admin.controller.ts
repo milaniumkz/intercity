@@ -1,4 +1,6 @@
-import {channelRequest, channelState} from '../attention/whatsapp.channel';
+import {randomInt,randomUUID} from 'crypto';
+import {PrismaService} from '../prisma.service';
+import {channelRequest, channelState, sendRecoveryCode} from '../attention/whatsapp.channel';
 import {AccountDeletionService} from '../auth/account-deletion.service';
 import { Controller, Get, Post, Body, Param, Patch, Delete, UseGuards, Request, ForbiddenException, Query, BadRequestException, Header } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -12,7 +14,37 @@ import { MonthlyBasisDto, RemittanceDto, TaxSettingsDto, VerifyTaxProfileDto } f
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class AdminController {
-    constructor(private adminService: AdminService, private taxService: TaxService, private accountDeletion:AccountDeletionService) { }
+    constructor(private adminService: AdminService, private taxService: TaxService, private accountDeletion:AccountDeletionService, private db:PrismaService) { }
+
+    private directChat(id:string) {
+        if(typeof id!=='string'||!/^\d{5,20}@(c\.us|lid)$/.test(id)) throw new BadRequestException('Выберите личный диалог');
+        return encodeURIComponent(id);
+    }
+
+    @Get('whatsapp/dialogs')
+    @Header('Cache-Control','no-store')
+    async whatsappDialogs(@Request() req) {
+        await this.ensurePermission(req,'settings.manage');
+        const chats=await channelRequest('/api/default/chats/overview?limit=100');
+        return chats.filter(c=>typeof c.id==='string' && /^\d+@(c\.us|lid)$/.test(c.id)).map(c=>({id:c.id,name:c.name||c.id.split('@')[0]}));
+    }
+
+    @Get('whatsapp/dialogs/:chat/messages')
+    @Header('Cache-Control','no-store')
+    async whatsappMessages(@Request() req,@Param('chat') chat:string) {
+        await this.ensurePermission(req,'settings.manage');
+        const rows=await channelRequest('/api/default/chats/'+this.directChat(chat)+'/messages?limit=50&downloadMedia=false');
+        return rows.map(m=>({id:m.id,mine:m.fromMe===true,time:m.timestamp,text:/^(Тестовый код InterCity|Код восстановления InterCity):/.test(m.body||'')?'Код подтверждения скрыт':m.body||'Вложение'})).sort((a,b)=>a.time-b.time);
+    }
+
+    @Post('whatsapp/dialogs/:chat/messages')
+    async replyWhatsapp(@Request() req,@Param('chat') chat:string,@Body('text') message:string) {
+        await this.ensurePermission(req,'settings.manage');
+        this.directChat(chat);
+        if(typeof message!=='string'||!message.trim()||message.length>4096)throw new BadRequestException('Введите сообщение до 4096 символов');
+        await channelRequest('/api/sendText',{session:'default',chatId:chat,text:message.trim()});
+        return {accepted:true};
+    }
 
     @Get('whatsapp')
     @Header('Cache-Control','no-store')
@@ -21,6 +53,36 @@ export class AdminController {
         const status = await channelState();
         const qr = status === 'SCAN_QR_CODE' ? await channelRequest('/api/default/auth/qr') : null;
         return {status, image:qr?.data || null};
+    }
+
+    @Post('whatsapp/test')
+    async testWhatsapp(@Request() req, @Body('phone') phone?: string) {
+        await this.ensurePermission(req,'settings.manage');
+        const actor = await this.db.user.findUniqueOrThrow({where:{id:req.user.sub},select:{phone:true}});
+        const raw = phone || actor.phone;
+        if (typeof raw !== 'string' || !/^[+0-9 ()-]{10,24}$/.test(raw)) throw new BadRequestException('Введите номер WhatsApp в формате +7');
+        const number = raw.replace(/\D/g,'');
+        const digits = number.length === 10 ? '7'+number : number.replace(/^8(?=\d{10}$)/,'7');
+        if (!/^7\d{10}$/.test(digits)) throw new BadRequestException('Укажите телефон в профиле администратора');
+        const rateKey = 'whatsapp.test.last.' + req.user.sub;
+        await this.db.$transaction(async tx => {
+            await tx.$executeRaw`SELECT id FROM "User" WHERE id=${req.user.sub} FOR UPDATE`;
+            const last = await tx.appSettings.findUnique({where:{key:rateKey}});
+            if (last && Date.now()-Number(last.value)<30000) throw new BadRequestException('Повторите через 30 секунд');
+            const value=String(Date.now());
+            await tx.appSettings.upsert({where:{key:rateKey},create:{key:rateKey,value},update:{value}});
+        });
+        const recipient = await channelRequest('/api/contacts/check-exists?session=default&phone='+digits);
+        if (recipient.numberExists === false) throw new BadRequestException('Этот номер не зарегистрирован в WhatsApp. Введите номер телефона с WhatsApp.');
+        await sendRecoveryCode(this.db,digits,String(randomInt(100000,1000000)),randomUUID(),true);
+        return {sent:true};
+    }
+
+    @Post('whatsapp/logout')
+    async logoutWhatsapp(@Request() req) {
+        await this.ensurePermission(req,'settings.manage');
+        await channelRequest('/api/sessions/default/logout',{});
+        return {loggedOut:true};
     }
 
     @Post('whatsapp/connect')

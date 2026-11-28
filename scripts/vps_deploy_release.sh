@@ -81,6 +81,20 @@ rollback_on_failure() {
 }
 trap rollback_on_failure EXIT
 
+if ! grep -q '^WHATSAPP_CHANNEL_KEY=.' "$SHARED_DIR/.env"; then
+  env_changed=1
+  python3 - "$SHARED_DIR/.env" <<'PYWA'
+import secrets,sys
+from pathlib import Path
+p=Path(sys.argv[1])
+lines=[line for line in p.read_text().splitlines() if not line.startswith('WHATSAPP_CHANNEL_KEY=')]
+lines.append('WHATSAPP_CHANNEL_KEY='+secrets.token_hex(32))
+p.write_text('\n'.join(lines)+'\n')
+PYWA
+fi
+cp "$SHARED_DIR/.env" "$RELEASE_DIR/infra/vps/.env"
+chmod 600 "$RELEASE_DIR/infra/vps/.env"
+
 # VTB sandbox credentials are sealed to a private key held only by this VPS.
 vtb_sealed="$RELEASE_DIR/infra/vps/vtb-sandbox.sealed.json"
 vtb_key="$SHARED_DIR/vtb-sandbox-secrets/private.pem"
@@ -141,6 +155,7 @@ python3 "$RELEASE_DIR/scripts/prepare_brouter_data.py" "$RELEASE_DIR/services/ro
 ln -s "$SHARED_DIR/brouter/segments4" "$RELEASE_DIR/routing-data"
 switch_started=1
 compose up -d --no-build identity routing backend caddy
+compose --profile whatsapp up -d whatsapp
 
 # Verify a real private car route before accepting the new release.
 docker exec -i intercity-backend node <<'JSROUTING'

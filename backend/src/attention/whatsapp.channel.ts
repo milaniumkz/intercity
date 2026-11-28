@@ -13,7 +13,8 @@ export async function channelRequest(path: string, body?: object) {
         signal: AbortSignal.timeout(8000),
     });
     if (!response.ok) throw new ServiceUnavailableException('Канал WhatsApp временно недоступен');
-    return response.json();
+    const content = await response.text();
+    return content.trim() ? JSON.parse(content) : null;
 }
 
 export async function channelState() {
@@ -42,9 +43,9 @@ export async function monitorWhatsapp(db: PrismaService) {
     });
 }
 
-export async function sendRecoveryCode(db: PrismaService, digits: string, code: string, attemptId: string) {
+export async function sendRecoveryCode(db: PrismaService, digits: string, code: string, attemptId: string, test = false) {
     try {
-        await channelRequest('/api/sendText',{session:'default',chatId:digits+'@c.us',text:'Код восстановления InterCity: '+code+'. Никому его не сообщайте.'});
+        await channelRequest('/api/sendText',{session:'default',chatId:digits+'@c.us',text:(test?'Тестовый код InterCity: ':'Код восстановления InterCity: ')+code+'. Никому его не сообщайте.'});
     } catch {
         await db.adminAttention.upsert({where:{eventKey:'whatsapp-send:'+attemptId},update:{},create:{
             eventKey:'whatsapp-send:'+attemptId,category:'whatsapp-send',severity:'WARNING',sourceId:attemptId,

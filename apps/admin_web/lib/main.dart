@@ -1,3 +1,4 @@
+import 'features/admin/screens/whatsapp_dialogs_page.dart';
 import 'features/admin/screens/whatsapp_page.dart';
 import 'features/admin/screens/admin_attention_page.dart';
 import 'features/admin/screens/admin_identity_history_page.dart';
@@ -132,6 +133,7 @@ class _IntercityAdminAppState extends State<IntercityAdminApp> {
         '/drivers': (context) => const AdminPeoplePage(drivers: true),
         '/cities': (context) => const AdminCitiesPage(),
         '/tariffs': (context) => const AdminTariffsPage(),
+        '/whatsapp-dialogs': (context) => const WhatsappDialogsPage(),
         '/whatsapp': (context) => const WhatsappPage(),
         '/settings': (context) => const AdminSettingsPage(),
         '/topups': (context) => const AdminTopupsPage(),
