@@ -16,6 +16,36 @@ import { MonthlyBasisDto, RemittanceDto, TaxSettingsDto, VerifyTaxProfileDto } f
 export class AdminController {
     constructor(private adminService: AdminService, private taxService: TaxService, private accountDeletion:AccountDeletionService, private db:PrismaService) { }
 
+    private directChat(id:string) {
+        if(typeof id!=='string'||!/^\d{5,20}@(c\.us|lid)$/.test(id)) throw new BadRequestException('Выберите личный диалог');
+        return encodeURIComponent(id);
+    }
+
+    @Get('whatsapp/dialogs')
+    @Header('Cache-Control','no-store')
+    async whatsappDialogs(@Request() req) {
+        await this.ensurePermission(req,'settings.manage');
+        const chats=await channelRequest('/api/default/chats/overview?limit=100');
+        return chats.filter(c=>typeof c.id==='string' && /^\d+@(c\.us|lid)$/.test(c.id)).map(c=>({id:c.id,name:c.name||c.id.split('@')[0]}));
+    }
+
+    @Get('whatsapp/dialogs/:chat/messages')
+    @Header('Cache-Control','no-store')
+    async whatsappMessages(@Request() req,@Param('chat') chat:string) {
+        await this.ensurePermission(req,'settings.manage');
+        const rows=await channelRequest('/api/default/chats/'+this.directChat(chat)+'/messages?limit=50&downloadMedia=false');
+        return rows.map(m=>({id:m.id,mine:m.fromMe===true,time:m.timestamp,text:/^(Тестовый код InterCity|Код восстановления InterCity):/.test(m.body||'')?'Код подтверждения скрыт':m.body||'Вложение'})).sort((a,b)=>a.time-b.time);
+    }
+
+    @Post('whatsapp/dialogs/:chat/messages')
+    async replyWhatsapp(@Request() req,@Param('chat') chat:string,@Body('text') message:string) {
+        await this.ensurePermission(req,'settings.manage');
+        this.directChat(chat);
+        if(typeof message!=='string'||!message.trim()||message.length>4096)throw new BadRequestException('Введите сообщение до 4096 символов');
+        await channelRequest('/api/sendText',{session:'default',chatId:chat,text:message.trim()});
+        return {accepted:true};
+    }
+
     @Get('whatsapp')
     @Header('Cache-Control','no-store')
     async whatsapp(@Request() req) {
